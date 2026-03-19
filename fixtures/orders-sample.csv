@@ -1,0 +1,7 @@
+order_id,customer_email,order_total,order_status,ship_city,ship_state,ordered_at
+O9001,alice.ng@example.com,120.50,paid,Seattle,WA,2025-03-01T09:15:00Z
+O9002,ben.ortiz@example.com,75.00,pending,Portland,OR,2025-03-01T10:20:00Z
+O9003,cara.patel@example.com,250.00,paid,San Jose,CA,2025-03-02T12:00:00Z
+O9004,,45.00,cancelled,Austin,TX,2025-03-02T13:10:00Z
+O9005,diego.ramirez@example.com,250.00,paid,Austin,TX,2025-03-03T08:00:00Z
+O9006,erin.stone@example.com,18.75,pending,Denver,CO,2025-03-03T09:30:00Z

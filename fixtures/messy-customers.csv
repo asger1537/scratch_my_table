@@ -1,0 +1,8 @@
+customer_id,full_name,email,phone,city,state,status,signup_date
+C100,"  Alice   Ng  "," ALICE.NG@example.com ","555-0100"," Seattle ","WA",,2025-02-01
+C101,"Ben Ortiz","ben.ortiz@example.com","555-0101","Portland","OR","active",2025-02-02
+C102,"Cara Patel","",,"San Jose","CA","active",2025-02-03
+C103,"Cara Patel","cara.patel@example.com","555-0103"," San   Jose ","CA","active",2025-02-03
+C104,"  Diego Ramirez","diego.ramirez@example.com",,"Austin","TX","   ",2025-02-04
+C105,"Diego Ramirez","diego.ramirez@example.com","555-0104","Austin","TX","active",2025-02-04
+C106,"  Erin   Stone  "," erin.stone@example.com ","555-0105","Denver","CO","inactive",2025-02-05
