@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "workflowId": "wf_fill_status",
+  "name": "Fill missing status",
+  "steps": [
+    {
+      "id": "step_fill_status",
+      "type": "fillEmpty",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_status"]
+      },
+      "value": "unknown",
+      "treatWhitespaceAsEmpty": false
+    }
+  ]
+}

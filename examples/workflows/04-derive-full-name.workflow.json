@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "workflowId": "wf_derive_full_name",
+  "name": "Create full name",
+  "steps": [
+    {
+      "id": "step_derive_full_name",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_full_name",
+        "displayName": "full_name"
+      },
+      "expression": {
+        "kind": "concat",
+        "parts": [
+          {
+            "kind": "column",
+            "columnId": "col_first_name"
+          },
+          {
+            "kind": "literal",
+            "value": " "
+          },
+          {
+            "kind": "column",
+            "columnId": "col_last_name"
+          }
+        ]
+      }
+    }
+  ]
+}

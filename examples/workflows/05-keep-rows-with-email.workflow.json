@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "workflowId": "wf_keep_rows_with_email",
+  "name": "Keep rows with email",
+  "steps": [
+    {
+      "id": "step_keep_rows_with_email",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "not",
+        "condition": {
+          "kind": "isEmpty",
+          "columnId": "col_email",
+          "treatWhitespaceAsEmpty": false
+        }
+      }
+    }
+  ]
+}

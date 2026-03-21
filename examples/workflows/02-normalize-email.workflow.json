@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "workflowId": "wf_normalize_email",
+  "name": "Normalize email addresses",
+  "steps": [
+    {
+      "id": "step_normalize_email",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      },
+      "trim": true,
+      "collapseWhitespace": false,
+      "case": "lower"
+    }
+  ]
+}

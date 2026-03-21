@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "workflowId": "wf_messy_customer_cleanup",
+  "name": "Messy customer cleanup",
+  "description": "Normalize text, fill defaults, remove incomplete rows, and sort for export.",
+  "steps": [
+    {
+      "id": "step_normalize_email",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      },
+      "trim": true,
+      "collapseWhitespace": false,
+      "case": "lower"
+    },
+    {
+      "id": "step_normalize_name",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_full_name", "col_city"]
+      },
+      "trim": true,
+      "collapseWhitespace": true,
+      "case": "preserve"
+    },
+    {
+      "id": "step_fill_status",
+      "type": "fillEmpty",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_status"]
+      },
+      "value": "unknown",
+      "treatWhitespaceAsEmpty": true
+    },
+    {
+      "id": "step_location",
+      "type": "combineColumns",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_city", "col_state"]
+      },
+      "separator": ", ",
+      "newColumn": {
+        "columnId": "col_location",
+        "displayName": "location"
+      }
+    },
+    {
+      "id": "step_drop_missing_email",
+      "type": "filterRows",
+      "mode": "drop",
+      "condition": {
+        "kind": "isEmpty",
+        "columnId": "col_email",
+        "treatWhitespaceAsEmpty": false
+      }
+    },
+    {
+      "id": "step_dedupe_email",
+      "type": "deduplicateRows",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      }
+    },
+    {
+      "id": "step_sort_signup",
+      "type": "sortRows",
+      "sorts": [
+        {
+          "columnId": "col_signup_date",
+          "direction": "desc"
+        },
+        {
+          "columnId": "col_full_name",
+          "direction": "asc"
+        }
+      ]
+    }
+  ]
+}

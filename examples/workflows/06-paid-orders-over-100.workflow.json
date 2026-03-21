@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "workflowId": "wf_paid_orders_over_100",
+  "name": "Paid orders over 100",
+  "steps": [
+    {
+      "id": "step_paid_orders_over_100",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "greaterThan",
+            "columnId": "col_order_total",
+            "value": 100
+          },
+          {
+            "kind": "equals",
+            "columnId": "col_order_status",
+            "value": "paid"
+          }
+        ]
+      }
+    }
+  ]
+}

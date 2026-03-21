@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "workflowId": "wf_sort_orders",
+  "name": "Sort orders",
+  "steps": [
+    {
+      "id": "step_sort_orders",
+      "type": "sortRows",
+      "sorts": [
+        {
+          "columnId": "col_ordered_at",
+          "direction": "desc"
+        },
+        {
+          "columnId": "col_order_total",
+          "direction": "desc"
+        }
+      ]
+    }
+  ]
+}

@@ -266,14 +266,62 @@ code {
 }
 
 .workflow-editor-shell {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 1rem;
   overflow: hidden;
   background: #f8f3ec;
 }
 
+.workflow-editor-shell--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  border-radius: 0;
+  border: 0;
+  background: #f8f3ec;
+}
+
+.workflow-editor-shell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  border: 0;
+}
+
+.workflow-editor-fullscreen {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.85rem;
+  z-index: 8;
+  border: 1px solid rgba(28, 26, 23, 0.12);
+  border-radius: 999px;
+  padding: 0.55rem 0.85rem;
+  background: rgba(255, 253, 249, 0.94);
+  color: var(--ink);
+  box-shadow: 0 8px 18px rgba(34, 26, 16, 0.12);
+  cursor: pointer;
+}
+
+.workflow-editor-fullscreen:hover {
+  background: #fffdf9;
+}
+
 .workflow-editor-canvas {
+  position: relative;
+  height: 38rem;
   min-height: 38rem;
+  width: 100%;
+}
+
+.workflow-editor-shell--fullscreen .workflow-editor-canvas,
+.workflow-editor-shell:fullscreen .workflow-editor-canvas {
+  height: 100%;
+  min-height: 100%;
+}
+
+.workflow-editor-canvas > div {
+  height: 100%;
   width: 100%;
 }
 
@@ -477,6 +525,7 @@ code {
   }
 
   .workflow-editor-canvas {
+    height: 30rem;
     min-height: 30rem;
   }
 

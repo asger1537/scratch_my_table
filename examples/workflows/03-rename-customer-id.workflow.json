@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "workflowId": "wf_rename_customer_id",
+  "name": "Rename customer ID",
+  "steps": [
+    {
+      "id": "step_rename_customer_id",
+      "type": "renameColumn",
+      "columnId": "col_customer_id",
+      "newDisplayName": "external_customer_id"
+    }
+  ]
+}

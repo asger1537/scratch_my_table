@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "workflowId": "wf_split_full_name",
+  "name": "Split full name",
+  "steps": [
+    {
+      "id": "step_split_full_name",
+      "type": "splitColumn",
+      "columnId": "col_full_name",
+      "delimiter": " ",
+      "outputColumns": [
+        {
+          "columnId": "col_first_name",
+          "displayName": "first_name"
+        },
+        {
+          "columnId": "col_last_name",
+          "displayName": "last_name"
+        }
+      ]
+    }
+  ]
+}

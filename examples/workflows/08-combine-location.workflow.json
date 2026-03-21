@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "workflowId": "wf_combine_location",
+  "name": "Create location column",
+  "steps": [
+    {
+      "id": "step_combine_location",
+      "type": "combineColumns",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_city", "col_state"]
+      },
+      "separator": ", ",
+      "newColumn": {
+        "columnId": "col_location",
+        "displayName": "location"
+      }
+    }
+  ]
+}
