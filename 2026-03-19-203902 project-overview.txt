@@ -1,0 +1,5328 @@
+=== PROJECT OVERVIEW ===
+Target: C:\Users\asger\Github\scratch_my_table
+Generated: 2026-03-19-203902
+
+This repository contains the Phase 1 specification package plus the Milestone 1 frontend, domain, and test code.
+The overview concatenates relevant markdown and code/config files for a quick codebase snapshot.
+
+=== READ FIRST ===
+AGENTS.md
+docs\v1-scope.md
+docs\data-model.md
+docs\data-semantics.md
+docs\workflow-ir-v1.md
+docs\validation-rules.md
+docs\example-workflows.md
+package.json
+src\App.tsx
+src\domain\model.ts
+src\domain\workbookIO.ts
+schemas\workflow-ir-v1.schema.json
+
+=== TOP-LEVEL CONTENTS ===
+.gitignore
+AGENTS.md
+docs
+fixtures
+index.html
+package.json
+project_overview.bat
+project_overview.cmd
+schemas
+src
+tsconfig.json
+V1_roadmap.md
+vite.config.mjs
+vitest.config.mjs
+
+=== FOLDER CONTENTS ===
+--- docs ---
+docs\data-model.md
+docs\data-semantics.md
+docs\example-workflows.md
+docs\out-of-scope.md
+docs\v1-scope.md
+docs\validation-rules.md
+docs\workflow-ir-v1.md
+--- src ---
+src\App.tsx
+src\main.tsx
+src\styles.css
+src\domain\csv.ts
+src\domain\model.ts
+src\domain\normalize.ts
+src\domain\workbookIO.test.ts
+src\domain\workbookIO.ts
+src\domain\xlsx.ts
+--- schemas ---
+schemas\workflow-ir-v1.schema.json
+--- fixtures ---
+fixtures\messy-customers.csv
+fixtures\orders-sample.csv
+fixtures\simple-customers.csv
+
+=== INCLUDED ROOT FILES ===
+AGENTS.md
+V1_roadmap.md
+package.json
+tsconfig.json
+index.html
+vite.config.mjs
+vitest.config.mjs
+project_overview.cmd
+project_overview.bat
+
+=== AGENTS.md ===
+# AGENTS.md
+
+## Project overview
+This repository is for an internal-only, local-first browser tool for tabular CSV/XLSX data.
+
+The product goal is:
+- user uploads CSV/XLSX
+- user selects one table/sheet
+- user builds simple tabular workflows with block-based UI
+- workflows are stored in a structured internal representation
+- user previews the effect safely before export
+
+This is not a general programming environment.
+This is a constrained tabular transformation tool.
+
+## Current phase
+We are currently in Phase 1: foundations and decisions.
+
+Phase 1 is specification work, not feature implementation.
+Do not build UI components or runtime code unless explicitly asked.
+Prefer writing clear design docs, schemas, examples, and tests/spec fixtures.
+
+## Phase 1 goals
+Codify the V1 product scope and runtime model.
+
+Required outputs for this phase:
+- V1 scope document
+- canonical table model
+- data semantics document
+- workflow IR v1 schema
+- validation rules for V1 operations
+- example workflows represented in IR
+- sample datasets or fixtures
+- explicit out-of-scope list
+
+## V1 capabilities
+These are the V1 workflow capabilities:
+- fill empty cells
+- trim / normalize text
+- rename columns
+- create a derived column
+- filter rows
+- split columns
+- combine columns
+- deduplicate rows
+- sort rows
+
+## Out of scope for V1
+Unless explicitly requested, do not design or implement:
+- joins / multi-table workflows
+- group-by / aggregation
+- pivots
+- AI workflow generation
+- collaboration
+- auth / backend services
+- spreadsheet formatting fidelity
+- Excel macros
+- formula preservation as formulas
+- full spreadsheet editing
+
+## Product constraints
+- Internal-only tool
+- Local-first architecture
+- Browser-based
+- TypeScript codebase
+- Prefer a simple, distributable frontend architecture
+- Workflows must have a typed internal representation
+- Blocks and text are views over the workflow model, not the source of truth
+- Preview/safety is more important than expressiveness
+
+## Modeling rules
+Use the following design principles:
+- Treat uploaded data as one active table at a time
+- Separate display names from stable internal column IDs
+- Separate row identity from visible row order
+- Make null/empty behavior explicit
+- Prefer deterministic operations
+- Avoid ambiguous semantics
+- Make workflow steps composable and serializable
+- Version the workflow schema from day one
+
+## Phase 1 semantics to define
+You must make explicit decisions for:
+- what counts as empty
+- how whitespace-only values are handled
+- how types are inferred
+- whether formulas are imported as values
+- how duplicate column names are normalized
+- how deduplication chooses which row to keep
+- where nulls sort by default
+- how split-column output columns are named
+- how validation behaves when referenced columns are missing
+
+## Deliverable quality bar
+Documents must be specific, opinionated, and implementation-ready.
+Avoid vague product writing.
+Every design choice should either:
+- define a rule, or
+- record an open question with a recommended default
+
+## Preferred repo structure
+When adding Phase 1 outputs, prefer:
+
+docs/
+  v1-scope.md
+  data-model.md
+  data-semantics.md
+  workflow-ir-v1.md
+  validation-rules.md
+  example-workflows.md
+  out-of-scope.md
+
+schemas/
+  workflow-ir-v1.schema.json
+
+fixtures/
+  simple-customers.csv
+  messy-customers.csv
+  orders-sample.csv
+
+## How to work
+When doing Phase 1 work:
+1. Read existing docs first
+2. Propose the minimum coherent V1
+3. Write/modify docs and schema files
+4. Keep terminology consistent across files
+5. Create examples that exercise all V1 operations
+6. Add a short completion summary listing:
+   - files changed
+   - design decisions made
+   - unresolved questions
+
+## What not to do
+- Do not introduce unnecessary abstractions
+- Do not expand scope beyond the listed V1 operations
+- Do not add backend architecture
+- Do not design for collaboration yet
+- Do not switch to a generic programming-language framing
+- Do not use loops/conditionals as the primary user abstraction if a higher-level tabular operation is clearer
+
+## Definition of done for Phase 1
+Phase 1 is done when:
+- V1 scope is explicitly documented
+- canonical table model is documented
+- data semantics are documented
+- workflow IR v1 is defined and versioned
+- all V1 operations are representable in IR
+- validation rules exist for every V1 operation
+- at least 10 concrete example workflows exist
+- at least 3 sample datasets/fixtures exist
+- unresolved questions are listed separately
+=== V1_roadmap.md ===
+# V1 Roadmap
+
+## V1 definition
+
+V1 is an internal-only, local-first browser tool for applying reusable, block-defined transformations to one uploaded table at a time, with safe preview and export.
+
+V1 should let an internal user:
+
+1. upload a CSV/XLSX file
+2. inspect the import result and select one active table
+3. inspect the active table
+4. build a simple workflow with blocks
+5. preview the result safely
+6. run the workflow
+7. export the transformed table
+8. save/load the workflow as versioned JSON
+
+That is enough for a useful first internal release.
+
+---
+
+## V1 scope
+
+### In scope
+
+The V1 workflow step catalog is exactly:
+
+- fill empty cells
+- trim / normalize text
+- rename columns
+- create a derived column
+- filter rows
+- split columns
+- combine columns
+- deduplicate rows
+- sort rows
+
+These map to the persisted IR step types:
+
+- `fillEmpty`
+- `normalizeText`
+- `renameColumn`
+- `deriveColumn`
+- `filterRows`
+- `splitColumn`
+- `combineColumns`
+- `deduplicateRows`
+- `sortRows`
+
+### Out of scope for V1
+
+Be strict here:
+
+- joins / multi-table workflows
+- group-by / aggregation
+- pivots
+- formula preservation
+- spreadsheet formatting fidelity
+- Excel macros
+- collaboration
+- auth / backend services
+- cloud persistence
+- AI-generated workflows
+- batch processing many files at once
+- full spreadsheet editing
+- arbitrary scripting, loops, or generic user-authored control flow
+- a text DSL as the execution source of truth
+
+That list is what keeps V1 coherent and shippable.
+
+---
+
+## V1 product shape
+
+I would define the product as four primary views.
+
+### 1. Import + data view
+
+Shows:
+
+- uploaded file details
+- active table / sheet selector
+- column display names
+- inferred logical types
+- row count
+- sample rows
+- import warnings
+
+### 2. Workflow view
+
+A block-based editor for the V1 step catalog.
+
+Important rule:
+
+- blocks are an authoring view over the workflow IR
+- the workflow IR is the source of truth
+- transient UI selections are allowed in the editor, but persisted workflows must use explicit `columnId` references
+
+### 3. Preview view
+
+Shows:
+
+- validation errors
+- warnings
+- before/after sample
+- affected row count
+- affected cell count
+
+### 4. Workflow library view
+
+For V1, this only needs:
+
+- save workflow
+- load workflow
+- duplicate workflow
+- export/import workflow JSON
+
+Optional for late V1:
+
+- readable DSL export as a secondary representation
+
+---
+
+## V1 user stories
+
+These are the concrete stories V1 should satisfy.
+
+### Story 1: Fill empty cells
+
+A user fills empty values in one or more columns with a specified scalar value.
+
+Example:
+
+- fill missing `status` values with `"unknown"`
+
+### Story 2: Normalize text
+
+A user trims and normalizes text in one or more columns.
+
+Examples:
+
+- trim whitespace
+- lowercase email addresses
+- collapse internal whitespace in names
+
+### Story 3: Rename columns
+
+A user changes the exported/display header for a column without changing its stable internal `columnId`.
+
+### Story 4: Create a derived column
+
+A user creates a new column from one or more existing columns.
+
+Examples:
+
+- `full_name = first_name + " " + last_name`
+- `display_label = coalesce(company_name, full_name)`
+
+### Story 5: Filter rows
+
+A user keeps or drops rows based on conditions.
+
+Examples:
+
+- keep rows with non-empty email
+- keep paid orders above 100
+
+### Story 6: Split columns
+
+A user splits one text column into two or more explicit output columns.
+
+Example:
+
+- split `full_name` into `first_name` and `last_name`
+
+### Story 7: Combine columns
+
+A user combines multiple source columns into one new string column.
+
+Example:
+
+- combine `city` and `state` into `location`
+
+### Story 8: Deduplicate rows
+
+A user removes duplicates based on one or more key columns.
+
+Example:
+
+- keep the first row for each exact email
+
+### Story 9: Sort rows
+
+A user sorts rows by one or more columns.
+
+Example:
+
+- sort by `ordered_at desc`, then `order_total desc`
+
+If V1 does these well, it is already a useful internal tool.
+
+---
+
+## Recommended V1 architecture
+
+### Frontend
+
+- TypeScript
+- local-first browser app
+- single-page application
+- distributable as a simple bundled frontend
+
+### Core runtime layers
+
+- import layer
+- canonical table model
+- workflow IR
+- validator
+- executor
+- preview/diff engine
+- block editor projection
+- persistence layer
+
+### Core principles
+
+Use:
+
+- a canonical table model for imported and transformed data
+- a typed workflow IR as the only persisted source of truth
+- a block editor as one authoring view over the IR
+- optional readable DSL export later as a secondary representation
+
+Do not use:
+
+- generated JavaScript as the workflow source of truth
+- symbolic persisted targets like “currently selected columns”
+- a general programming model as the user-facing abstraction
+
+---
+
+## Canonical table model for V1
+
+Every uploaded file should normalize into:
+
+- one `workbook`
+- one or more imported `table` objects
+- exactly one `activeTableId`
+- a canonical `schema`
+- stable `columnId` values
+- stable `rowId` values
+- `rowsById`
+- `rowOrder`
+- import warnings
+
+### Supported input
+
+- CSV
+- XLSX
+
+### Import rules
+
+CSV:
+
+- one CSV file becomes one workbook with one table
+- the first row is treated as the header row
+- subsequent rows are data rows
+- the imported table becomes the active table automatically
+
+XLSX:
+
+- one XLSX file becomes one workbook with one table per sheet
+- each sheet uses its first row as the header row
+- the user selects exactly one sheet as the active table
+
+### V1 assumptions
+
+- workflows run against one active table only
+- formulas are imported as values only
+- formatting/styling is ignored
+- merged cells are ignored
+- macros are ignored
+- dates/datetimes are stored as ISO strings with logical type metadata
+- persisted workflow references must use stable `columnId` values, not display names
+
+---
+
+## V1 data semantics
+
+These semantics are fixed for V1.
+
+### Empty handling
+
+- `null` and `""` are distinct values
+- emptiness-sensitive behavior treats both `null` and `""` as empty by default
+- whitespace-only strings are preserved as strings
+- whitespace-only is only treated as empty when a step explicitly opts in with `treatWhitespaceAsEmpty`
+
+### Text normalization
+
+`normalizeText` uses explicit flags:
+
+- `trim`
+- `collapseWhitespace`
+- `case: preserve | lower | upper`
+
+### Type inference
+
+Supported logical types:
+
+- `unknown`
+- `string`
+- `number`
+- `boolean`
+- `date`
+- `datetime`
+- `mixed`
+
+Inference is conservative and per-column.
+
+### Duplicate headers
+
+Header normalization is deterministic:
+
+- trim outer whitespace
+- collapse internal whitespace for conflict checks
+- blank headers become `Column`
+- duplicates get suffixes like `Email (2)`
+
+### Deduplication
+
+- V1 uses exact canonical value equality
+- V1 keep rule is fixed to `keep first`
+- “first” means first in current `rowOrder` when the step executes
+
+### Sorting
+
+- sorts are stable
+- nulls sort last regardless of direction
+
+### Split columns
+
+- `splitColumn` requires explicit `outputColumns`
+- output display names are not inferred at execution time
+- the final output column receives any unsplit remainder
+
+### Combine columns
+
+- `combineColumns` always creates a new string column
+- `null` and `""` are skipped
+- whitespace-only strings are not skipped automatically
+
+---
+
+## V1 workflow model
+
+The persisted workflow model is intentionally small and explicit.
+
+### Workflow object
+
+A workflow contains:
+
+- `version`
+- `workflowId`
+- `name`
+- optional `description`
+- ordered `steps`
+
+### Execution model
+
+- steps execute top to bottom
+- later steps see schema changes made by earlier valid steps
+- validation runs in step order
+- invalid steps do not contribute schema changes to later validation
+
+### Important persisted-IR rule
+
+Persisted workflows do not contain:
+
+- symbolic selected columns
+- row selections
+- arbitrary variables
+- loops
+- generic control flow
+
+Selections may exist in the UI, but before persistence they must resolve to explicit `columnId` references.
+
+---
+
+## V1 step catalog
+
+### `fillEmpty`
+
+Purpose:
+
+- fill empty cells in targeted columns with a compatible scalar value
+
+Core fields:
+
+- `target`
+- `value`
+- `treatWhitespaceAsEmpty`
+
+### `normalizeText`
+
+Purpose:
+
+- normalize existing string/unknown columns in place
+
+Core fields:
+
+- `target`
+- `trim`
+- `collapseWhitespace`
+- `case`
+
+### `renameColumn`
+
+Purpose:
+
+- change a column’s display/export name without changing `columnId`
+
+Core fields:
+
+- `columnId`
+- `newDisplayName`
+
+### `deriveColumn`
+
+Purpose:
+
+- create a new column from an expression
+
+Core fields:
+
+- `newColumn`
+- `expression`
+
+Supported expression kinds:
+
+- `literal`
+- `column`
+- `concat`
+- `coalesce`
+
+### `filterRows`
+
+Purpose:
+
+- keep or drop rows based on a condition tree
+
+Core fields:
+
+- `mode`
+- `condition`
+
+Supported condition kinds:
+
+- `isEmpty`
+- `equals`
+- `contains`
+- `startsWith`
+- `endsWith`
+- `greaterThan`
+- `lessThan`
+- `and`
+- `or`
+- `not`
+
+### `splitColumn`
+
+Purpose:
+
+- split one text column into explicit output columns
+
+Core fields:
+
+- `columnId`
+- `delimiter`
+- `outputColumns`
+
+### `combineColumns`
+
+Purpose:
+
+- combine source columns into a new string column
+
+Core fields:
+
+- `target`
+- `separator`
+- `newColumn`
+
+### `deduplicateRows`
+
+Purpose:
+
+- remove duplicates using one or more key columns
+
+Core fields:
+
+- `target`
+
+### `sortRows`
+
+Purpose:
+
+- reorder rows deterministically using one or more sort keys
+
+Core fields:
+
+- `sorts`
+
+---
+
+## Validation model
+
+Validation has two layers.
+
+### 1. Structural validation
+
+Validate against the JSON Schema for workflow IR.
+
+### 2. Semantic validation
+
+Validate against the active table schema as it exists at each step.
+
+### Global rules
+
+- missing columns are validation errors
+- workflow-authored display-name conflicts are validation errors
+- duplicate created `columnId` values are validation errors
+- `mixed` is incompatible with operations that require a single comparison or ordering model
+- invalid steps do not silently no-op
+
+### Step-level rules to enforce
+
+At minimum:
+
+- `fillEmpty`: target exists, target non-empty, fill value type-compatible
+- `normalizeText`: targets must be `string` or `unknown`
+- `renameColumn`: referenced column exists and `newDisplayName` is valid
+- `deriveColumn`: new column ID/display name unique; expression references valid
+- `filterRows`: condition operators must be type-compatible
+- `splitColumn`: source exists; source is `string` or `unknown`; delimiter non-empty; output columns valid
+- `combineColumns`: at least two source columns; no repeated source columns; new column valid
+- `deduplicateRows`: at least one key column; no repeated key references
+- `sortRows`: sort keys exist; directions valid; key types orderable
+
+---
+
+## V1 roadmap by phase
+
+## Phase 1: foundations and decisions
+
+Goal:
+
+- define the product boundary
+- define the canonical data model
+- define the workflow IR
+- define fixed V1 semantics
+- define validation rules
+- define example workflows and fixtures
+
+Deliverables:
+
+- `docs/v1-scope.md`
+- `docs/data-model.md`
+- `docs/data-semantics.md`
+- `docs/workflow-ir-v1.md`
+- `docs/validation-rules.md`
+- `docs/example-workflows.md`
+- `docs/out-of-scope.md`
+- `schemas/workflow-ir-v1.schema.json`
+- fixtures
+
+Acceptance criteria:
+
+- all V1 step types are representable in IR
+- semantics are explicit, not implied
+- terminology is consistent
+- no unresolved ambiguity around column identity, row identity, or validation order
+
+## Phase 2: import/export and data grid
+
+Goal:
+
+- make file import, active-table selection, and table inspection solid
+
+Deliverables:
+
+- CSV import
+- XLSX import
+- active-sheet selector
+- canonical import normalization
+- data grid preview
+- schema panel
+- import warnings panel
+- CSV/XLSX export
+
+Tasks:
+
+- build upload UI
+- parse CSV and normalize to canonical model
+- parse XLSX and create one table per sheet
+- choose active table
+- render first N rows in a virtualized grid
+- show column display names, `columnId`, inferred type, and missing counts
+- preserve import warnings for display
+
+Acceptance criteria:
+
+- user can load supported internal files
+- CSV always imports as one active table
+- XLSX allows one active-sheet selection
+- malformed files fail gracefully
+- export roundtrip works for supported value-only behavior
+
+## Phase 3: validator and executor
+
+Goal:
+
+- make workflows executable independently of the block editor
+
+Deliverables:
+
+- structural validator
+- semantic validator
+- executor for every V1 step type
+- diff/change summary
+- worker-based execution
+
+Tasks:
+
+- validate workflow JSON against schema
+- validate semantic compatibility against current step-visible schema
+- execute each step type deterministically
+- return transformed table snapshot, warnings, changed row count, and changed cell count
+- add deterministic tests for each step type and cross-step schema evolution
+
+Acceptance criteria:
+
+- every V1 step type has passing tests
+- execution is deterministic
+- schema changes from earlier valid steps are visible to later steps
+- validation errors are concrete and understandable
+
+## Phase 4: block editor
+
+Goal:
+
+- let users author valid workflows visually
+
+Deliverables:
+
+- V1 block catalog
+- block-to-IR conversion
+- IR-to-block reconstruction
+- validation UI in the editor
+
+Tasks:
+
+- create custom blocks for the V1 step catalog
+- support transient UI column selection but resolve it to explicit `columnId` references before persistence
+- build editors for:
+  - target column lists
+  - string/number/boolean literals
+  - expressions
+  - filter condition trees
+  - sort directions
+  - split output columns
+- support reorder / delete / disable step
+- show plain-language summary per step
+
+Acceptance criteria:
+
+- all canonical example workflows can be authored in blocks
+- saved workflows reload into blocks without loss
+- persisted IR never contains symbolic “selected columns”
+- invalid workflows are blocked or clearly flagged
+
+## Phase 5: preview and trust features
+
+Goal:
+
+- make users comfortable previewing and running workflows
+
+Deliverables:
+
+- before/after preview
+- affected rows/cells summary
+- warnings panel
+- validation results panel
+- step-focused preview
+
+Tasks:
+
+- compute preview on a sample and full metadata summary
+- show side-by-side table diff
+- show which step affects which columns/rows
+- highlight missing-column and type errors clearly
+- support session reset / rerun
+
+Acceptance criteria:
+
+- user can tell what will change before export
+- user can identify which step caused a change
+- preview remains fast on typical internal files
+
+## Phase 6: workflow persistence
+
+Goal:
+
+- let internal users reuse workflows
+
+Deliverables:
+
+- save/load workflow JSON
+- workflow metadata
+- schema compatibility checks
+- optional readable DSL export
+
+Tasks:
+
+- define on-disk workflow file format
+- save and reload workflows
+- detect missing columns on load/run
+- keep JSON as canonical persisted format
+- optionally add readable DSL export as a secondary representation only
+
+Acceptance criteria:
+
+- user can reuse workflows across compatible files
+- missing-column mismatches fail clearly
+- workflow files are versioned from day one
+
+## Phase 7: hardening and polish
+
+Goal:
+
+- make V1 dependable for internal use
+
+Deliverables:
+
+- robust error handling
+- edge-case coverage
+- example templates
+- quick-start documentation
+
+Tasks:
+
+- test duplicate headers
+- test blank headers
+- test `mixed` columns
+- test formula cells with and without cached values
+- test split/combine edge cases
+- test dedupe after sort
+- improve import warnings
+- ship built-in templates from canonical example workflows
+
+Acceptance criteria:
+
+- internal users can self-serve common cleanup workflows
+- common messy inputs are supported
+- top edge cases are documented and unsurprising
+
+---
+
+## Proposed V1 backlog by feature
+
+## A. File handling
+
+Must have:
+
+- upload CSV/XLSX
+- active-table / sheet selection
+- canonical normalization
+- import warnings
+- export CSV/XLSX
+
+Nice to have:
+
+- delimiter override
+- encoding selector
+
+## B. Data inspection
+
+Must have:
+
+- grid preview
+- schema panel
+- inferred logical types
+- missing counts
+- column selection in authoring UI
+
+Nice to have:
+
+- lightweight profiling
+- search/filter in the grid
+
+## C. Workflow authoring
+
+Must have:
+
+- block authoring for all 9 V1 step types
+- expression editor for `deriveColumn`
+- condition editor for `filterRows`
+- reorder/delete/disable steps
+
+Nice to have:
+
+- step duplication
+- template insertion
+- step descriptions
+
+## D. Validation and trust
+
+Must have:
+
+- structural validation
+- semantic validation
+- preview
+- diff
+- warnings
+
+Nice to have:
+
+- step-focused impact summary
+- intermediate snapshot inspection
+
+## E. Persistence
+
+Must have:
+
+- save/load workflow JSON
+
+Nice to have:
+
+- DSL export
+- built-in templates
+
+---
+
+## Suggested milestone sequence
+
+I would structure V1 as 5 milestones.
+
+### Milestone 1: import + table model
+
+- upload CSV/XLSX
+- active table selection
+- canonical table model
+- import warnings
+- table preview
+- export CSV/XLSX
+
+### Milestone 2: validator + executor
+
+- workflow IR support
+- schema validation
+- semantic validation
+- executor for all V1 step types
+- tests
+
+### Milestone 3: block authoring
+
+- custom blocks
+- editors for targets, expressions, and conditions
+- block ↔ IR mapping
+- save/load roundtrip
+
+### Milestone 4: preview + trust
+
+- before/after preview
+- affected-row / affected-cell summary
+- validation/warnings UI
+- step-focused explanation
+
+### Milestone 5: polish + templates
+
+- example workflow templates
+- edge-case hardening
+- quick-start docs
+- internal usability polish
+
+---
+
+## Suggested first templates to ship
+
+Ship these as built-in examples:
+
+1. Fill missing status values
+2. Normalize email addresses
+3. Rename customer ID for export
+4. Create full name
+5. Keep only rows with email
+6. Split full name into first and last name
+7. Create location from city and state
+8. Deduplicate by email
+9. Sort orders by date then total
+10. Messy customer cleanup
+
+---
+
+## Team / implementation order recommendation
+
+For a small internal build, I would work in this order:
+
+1. canonical data model
+2. import/export
+3. validator
+4. executor
+5. data grid
+6. block editor
+7. preview/diff
+8. save/load
+9. polish
+
+That order matters. It prevents the block editor from driving the runtime model.
+
+---
+
+## What I would deliberately postpone
+
+Even if tempting, postpone:
+
+- multi-table support
+- aggregation
+- pivots
+- generic loops
+- generic control flow
+- regex-heavy features
+- formula preservation
+- AI generation
+- backend storage
+
+For V1, high-level tabular operations are better than exposing a general language.
+
+---
+
+## One-sentence summary
+
+V1 is a local-first internal tool for applying reusable, block-defined transformations to one uploaded table at a time, with explicit schema-aware workflows, safe preview, and value-only export.
+=== package.json ===
+{
+  "name": "scratch-my-table",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.1",
+    "vitest": "^4.1.0"
+  }
+}
+
+=== tsconfig.json ===
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src"]
+}
+
+=== index.html ===
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scratch My Table</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+=== vite.config.mjs ===
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+});
+
+=== vitest.config.mjs ===
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
+});
+
+=== docs\data-model.md ===
+# Canonical Data Model
+
+## Purpose
+
+V1 operates on one active table at a time. Imported files, authoring state, preview state, and run results all normalize to the same canonical model so validation and execution do not depend on UI shape.
+
+## Core Entities
+
+### Workbook
+
+A `workbook` is the import container for one uploaded file.
+
+Required fields:
+
+- `workbookId`: stable identifier for the uploaded file instance
+- `sourceFileName`: original file name
+- `sourceFormat`: `csv` or `xlsx`
+- `tables`: ordered list of imported tables
+- `activeTableId`: the one table selected for workflow authoring and execution
+- `importWarnings`: warnings raised during import that are not specific to a single table
+
+Rules:
+
+- A CSV file becomes a workbook with exactly one table.
+- An XLSX file becomes a workbook with one table per imported sheet.
+- V1 workflows run against `activeTableId` only.
+
+### Active Table
+
+A `table` is the only runtime unit for V1 workflows.
+
+Required fields:
+
+- `tableId`: stable identifier for the table
+- `sourceName`: CSV file name or XLSX sheet name shown to the user
+- `schema`: canonical schema object
+- `rowsById`: map of `row ID` to row object
+- `rowOrder`: ordered list of `row ID` values representing the current visible row order
+- `importWarnings`: warnings scoped to this table
+
+Rules:
+
+- `rowOrder` is the source of visible row order.
+- `row ID` is stable even when the table is sorted or filtered.
+- A workflow step may change `rowOrder`, add columns, or create a derived table snapshot for preview, but it does not mutate row identity.
+
+### Schema
+
+A `schema` describes the active table columns in visible order.
+
+Required fields:
+
+- `columns`: ordered list of column definitions
+
+Each column definition contains:
+
+- `columnId`: stable internal identifier used by the workflow IR
+- `displayName`: user-facing column label
+- `logicalType`: one of `unknown`, `string`, `number`, `boolean`, `date`, `datetime`, or `mixed`
+- `nullable`: boolean
+- `sourceIndex`: zero-based source column position at import time
+
+Rules:
+
+- `columnId` is stable and never changes after import or workflow creation.
+- `displayName` may change through `renameColumn`.
+- Created columns must define a new `columnId` and `displayName`.
+- Column order is the order of the `columns` array.
+
+### Column
+
+A `column` is identified by `columnId`, not by `displayName`.
+
+V1 identifier rule:
+
+- Imported columns receive deterministic IDs derived from the normalized import display name.
+- The format is `col_<slug>`, where the slug is lowercase and uses underscores between alphanumeric segments.
+- Duplicate imported columns receive numeric suffixes such as `col_email`, `col_email_2`, and `col_email_3`.
+- Blank imported headers normalize to `Column`, which becomes `col_column`, `col_column_2`, and so on.
+- Workflow-created columns follow the same rule from the proposed new display name unless the authoring layer already supplies an explicit unique `columnId`.
+- Once assigned, a `columnId` never changes when the display name changes.
+
+### Row
+
+A `row` is a stable record keyed by `row ID`.
+
+Required fields:
+
+- `rowId`: stable internal identifier
+- `cellsByColumnId`: map of `columnId` to cell value
+
+V1 identifier rule:
+
+- Imported rows receive deterministic IDs based on source order, such as `row_1`, `row_2`, and `row_3`.
+- The `row ID` remains stable even if the row later moves in `rowOrder`.
+
+### Cell
+
+A `cell` is the intersection of one `row ID` and one `columnId`.
+
+Canonical cell values are JSON-compatible scalars:
+
+- `null`
+- `string`
+- `number`
+- `boolean`
+
+Rules:
+
+- Dates and datetimes are stored as ISO-8601 strings and distinguished by column `logicalType`.
+- A cell has no separate user-visible identifier in V1.
+- Formula text is not part of the canonical cell model for V1; only imported values are preserved.
+
+### Selection
+
+A `selection` is transient authoring state, not the source of truth.
+
+V1 selection shapes:
+
+- column selection: ordered `columnId[]`
+- row selection: ordered `rowId[]`
+- cell selection: one or more `(row ID, columnId)` pairs for preview/highlighting only
+
+Rules:
+
+- Persisted workflows must reference explicit `columnId` values.
+- The workflow IR must not contain symbolic targets such as “currently selected columns”.
+
+### Workflow
+
+A `workflow` is a versioned, serializable description of tabular changes.
+
+Required fields:
+
+- `version`: workflow IR version number
+- `workflowId`: stable workflow identifier
+- `name`: workflow name
+- `steps`: ordered list of workflow steps
+
+Rules:
+
+- A workflow is independent of any specific workbook file.
+- A workflow step may reference imported columns and columns created by earlier workflow steps.
+- Blocks and any future text view are projections of the workflow IR, not alternative sources of truth.
+- Workflow reuse across files depends on the imported active table producing the same `columnId` values after header normalization; otherwise validation raises missing-column errors.
+
+### Run
+
+A `run` is one validation or execution attempt of a workflow against one active table.
+
+Required fields:
+
+- `runId`: stable identifier for the attempt
+- `workflowId`: workflow being used
+- `tableId`: active table being processed
+- `mode`: `preview` or `run`
+- `validationErrors`: semantic errors found against the current table schema
+- `warnings`: non-fatal issues raised during preview or execution
+
+Run outputs:
+
+- transformed table snapshot
+- changed row count
+- changed cell count
+- exportable result table if validation passes
+
+## Import Mapping
+
+### CSV
+
+CSV import rules:
+
+- One CSV file becomes one workbook with one table.
+- The first row is treated as the header row.
+- Subsequent rows become data rows.
+- Blank header cells receive generated display names.
+- The single imported table is the active table automatically.
+
+### XLSX
+
+XLSX import rules:
+
+- One XLSX file becomes one workbook with one table per sheet.
+- Each sheet uses its first row as the header row.
+- The user selects exactly one sheet as the active table.
+- V1 ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
+
+## Stable Identity Requirements
+
+### Column Identity
+
+- `columnId` is the only stable way to reference a column in a workflow.
+- `displayName` exists for UI readability and export headers.
+- Renaming a column changes `displayName` only.
+
+### Row Identity
+
+- `rowId` identifies the logical row across preview, sort, filter, and deduplicate operations.
+- `rowOrder` controls visible order.
+- Deduplication removes rows from the output table snapshot but does not redefine the identity of surviving rows.
+
+## Import Warnings
+
+Import warnings do not block authoring or preview, but they must be preserved and shown to the user.
+
+Minimum warning object:
+
+- `code`: stable machine-readable code
+- `message`: human-readable explanation
+- `scope`: `workbook`, `table`, `column`, or `cell`
+- `tableId`: optional when scope is narrower than workbook
+- `columnId`: optional when warning is column-specific
+- `rowId`: optional when warning is cell-specific
+
+Required warning scenarios for V1:
+
+- duplicate header names were normalized
+- blank header names were generated
+- formulas were imported as values
+- a formula cell had no cached value and was imported as `null`
+- a column inferred as `mixed`
+- spreadsheet formatting or macros were ignored
+
+## Minimal Example
+
+```json
+{
+  "tableId": "tbl_customers",
+  "sourceName": "simple-customers.csv",
+  "schema": {
+    "columns": [
+      {
+        "columnId": "col_customer_id",
+        "displayName": "customer_id",
+        "logicalType": "string",
+        "nullable": false,
+        "sourceIndex": 0
+      },
+      {
+        "columnId": "col_email",
+        "displayName": "email",
+        "logicalType": "string",
+        "nullable": false,
+        "sourceIndex": 3
+      }
+    ]
+  },
+  "rowsById": {
+    "row_1": {
+      "rowId": "row_1",
+      "cellsByColumnId": {
+        "col_customer_id": "C001",
+        "col_email": "alice.ng@example.com"
+      }
+    }
+  },
+  "rowOrder": ["row_1"],
+  "importWarnings": []
+}
+```
+
+=== docs\data-semantics.md ===
+# Data Semantics
+
+## Canonical Value Rules
+
+### Null vs Empty String
+
+V1 preserves `null` and empty string as different values.
+
+Rules:
+
+- `null` means the source cell had no value.
+- `""` means the source explicitly contained an empty text value.
+- Emptiness-sensitive workflow behavior treats both `null` and `""` as empty by default.
+- `null` is not equal to `""` for deduplication, equality filters, or sort comparison.
+
+### Whitespace-Only Values
+
+Whitespace-only text is preserved on import as a string.
+
+Rules:
+
+- `"   "` is not automatically converted to `null`.
+- `"   "` is not automatically treated as empty.
+- A step may opt in to treating whitespace-only strings as empty where the IR supports `treatWhitespaceAsEmpty`.
+- `normalizeText` may turn whitespace-only strings into `""` when `trim` is enabled.
+
+### String Normalization
+
+`normalizeText` uses explicit flags instead of hidden behavior.
+
+Rules:
+
+- `trim: true` removes leading and trailing Unicode whitespace.
+- `collapseWhitespace: true` replaces one or more consecutive whitespace characters inside the string with a single ASCII space.
+- `case: "preserve" | "lower" | "upper"` is applied after trimming and whitespace collapsing.
+- If normalization produces an empty string, the stored value becomes `""`, not `null`.
+
+## Type Inference
+
+### Supported Logical Types
+
+The schema-level logical types for V1 are:
+
+- `unknown`
+- `string`
+- `number`
+- `boolean`
+- `date`
+- `datetime`
+- `mixed`
+
+### Inference Algorithm
+
+Type inference runs per column after import and uses all non-null cells in that column.
+
+Rules:
+
+1. Ignore `null` values for inference.
+2. If no non-null values remain, the column type is `unknown`.
+3. If every non-null value is a boolean, the column type is `boolean`.
+4. If every non-null value is a finite number, the column type is `number`.
+5. If every non-null value is an ISO `YYYY-MM-DD` string, the column type is `date`.
+6. If every non-null value is an ISO-8601 datetime string, the column type is `datetime`.
+7. If every non-null value is a string and none of the rules above apply, the column type is `string`.
+8. Otherwise the column type is `mixed`.
+
+Conservative parsing rules:
+
+- CSV values are only promoted beyond `string` when the parse is unambiguous.
+- Locale-dependent formats such as `03/04/2025` remain `string`.
+- Numbers with thousands separators remain `string`.
+- Dates and datetimes are stored as ISO strings in cells, with the logical type recorded in the schema.
+
+## Duplicate Column Names
+
+Header normalization is deterministic and happens at import time.
+
+Rules:
+
+1. Trim leading and trailing whitespace from each header.
+2. Collapse internal whitespace runs to a single space for conflict checks.
+3. If the normalized header is empty, use `Column`.
+4. If a normalized display name already exists, append ` (2)`, ` (3)`, and so on.
+5. Duplicate checks are case-insensitive.
+6. `columnId` is generated separately and does not depend on later renames.
+
+Examples:
+
+- `Email`, ` email `, and `EMAIL` become `Email`, `Email (2)`, and `Email (3)`.
+- blank, blank become `Column` and `Column (2)`.
+
+## Formulas on Import
+
+V1 imports spreadsheet formulas as values only.
+
+Rules:
+
+- If a formula cell has a cached calculated value, import that value.
+- If a formula cell has no cached value, import `null` and emit an import warning.
+- Formula text is not preserved.
+- Formula dependency graphs are not preserved.
+
+## Deduplication Semantics
+
+`deduplicateRows` uses exact canonical values on the current table state.
+
+Rules:
+
+- Deduplication keys are evaluated after all prior workflow steps.
+- The default and only V1 keep rule is `keep first`.
+- “First” means first row in the current `rowOrder` when the step executes.
+- `null` equals `null`.
+- `""` equals `""`.
+- `null` does not equal `""`.
+- String comparison is exact and case-sensitive.
+
+## Sorting Semantics
+
+`sortRows` is deterministic and stable.
+
+Rules:
+
+- Nulls sort last, regardless of ascending or descending direction.
+- Empty string sorts as a non-null string.
+- String sorting uses raw string code-point order.
+- Number sorting uses numeric order.
+- Boolean sorting uses `false < true`.
+- Date and datetime sorting use chronological order of valid ISO strings.
+- Sorts are stable: rows equal on all sort keys preserve their previous relative order.
+
+## Split-Column Semantics
+
+`splitColumn` creates explicit output columns.
+
+Rules:
+
+- The IR must contain explicit `outputColumns`; output names are not inferred at execution time.
+- The default UI suggestion for new display names is `<source display name>_1`, `<source display name>_2`, and so on.
+- Output display names must still pass the normal duplicate-name validation rules.
+- The number of output columns controls the maximum number of produced parts.
+- If the input has fewer parts than output columns, trailing outputs become `null`.
+- If the input has more parts than output columns, the final output column receives the unsplit remainder.
+- Split does not trim parts automatically.
+
+## Combine-Column Semantics
+
+`combineColumns` always creates a new string column.
+
+Rules:
+
+- Source columns are read left to right.
+- `null` and `""` are skipped when building the combined string.
+- Whitespace-only strings are not skipped automatically.
+- The separator is inserted only between kept values.
+- Source columns remain in the output table.
+
+## Open Questions
+
+None for V1. The Phase 1 default is to fix the semantics above instead of introducing configurable import or execution modes.
+
+=== docs\example-workflows.md ===
+# Example Workflows
+
+Examples below use illustrative internal `columnId` values such as `col_email` and `col_status`. In real data these IDs are stable internal identifiers, not user-facing names.
+
+## 1. Fill Missing Status Values
+
+Description:
+
+- Fill empty values in the status column with `unknown`.
+
+Intended effect:
+
+- Rows with `null` or `""` in `status` become `unknown`.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_fill_status",
+  "name": "Fill missing status",
+  "steps": [
+    {
+      "id": "step_fill_status",
+      "type": "fillEmpty",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_status"]
+      },
+      "value": "unknown",
+      "treatWhitespaceAsEmpty": false
+    }
+  ]
+}
+```
+
+## 2. Trim and Lowercase Email Addresses
+
+Description:
+
+- Normalize email formatting in a messy import.
+
+Intended effect:
+
+- Leading/trailing spaces are removed and all email text becomes lowercase.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_normalize_email",
+  "name": "Normalize email addresses",
+  "steps": [
+    {
+      "id": "step_normalize_email",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      },
+      "trim": true,
+      "collapseWhitespace": false,
+      "case": "lower"
+    }
+  ]
+}
+```
+
+## 3. Rename a Column for Export
+
+Description:
+
+- Rename the customer ID header without changing the stable internal column reference.
+
+Intended effect:
+
+- The exported header becomes `external_customer_id`.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_rename_customer_id",
+  "name": "Rename customer ID",
+  "steps": [
+    {
+      "id": "step_rename_customer_id",
+      "type": "renameColumn",
+      "columnId": "col_customer_id",
+      "newDisplayName": "external_customer_id"
+    }
+  ]
+}
+```
+
+## 4. Create a Full Name Column
+
+Description:
+
+- Derive a new `full_name` column from first and last name.
+
+Intended effect:
+
+- The output table gains a new `full_name` column while keeping the original source columns.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_derive_full_name",
+  "name": "Create full name",
+  "steps": [
+    {
+      "id": "step_derive_full_name",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_full_name",
+        "displayName": "full_name"
+      },
+      "expression": {
+        "kind": "concat",
+        "parts": [
+          {
+            "kind": "column",
+            "columnId": "col_first_name"
+          },
+          {
+            "kind": "literal",
+            "value": " "
+          },
+          {
+            "kind": "column",
+            "columnId": "col_last_name"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## 5. Keep Only Rows With an Email Address
+
+Description:
+
+- Remove rows that do not have a usable email value.
+
+Intended effect:
+
+- Any row whose `email` cell is empty is dropped from the output table.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_keep_rows_with_email",
+  "name": "Keep rows with email",
+  "steps": [
+    {
+      "id": "step_keep_rows_with_email",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "not",
+        "condition": {
+          "kind": "isEmpty",
+          "columnId": "col_email",
+          "treatWhitespaceAsEmpty": false
+        }
+      }
+    }
+  ]
+}
+```
+
+## 6. Keep Only Paid Orders Above 100
+
+Description:
+
+- Filter orders to a smaller export set.
+
+Intended effect:
+
+- Only rows where `order_total > 100` and `order_status == "paid"` remain.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_paid_orders_over_100",
+  "name": "Paid orders over 100",
+  "steps": [
+    {
+      "id": "step_paid_orders_over_100",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "and",
+        "conditions": [
+          {
+            "kind": "greaterThan",
+            "columnId": "col_order_total",
+            "value": 100
+          },
+          {
+            "kind": "equals",
+            "columnId": "col_order_status",
+            "value": "paid"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## 7. Split Full Name Into First and Last Name
+
+Description:
+
+- Split a single text column into two explicit output columns.
+
+Intended effect:
+
+- The table gains `first_name` and `last_name` columns derived from `full_name`.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_split_full_name",
+  "name": "Split full name",
+  "steps": [
+    {
+      "id": "step_split_full_name",
+      "type": "splitColumn",
+      "columnId": "col_full_name",
+      "delimiter": " ",
+      "outputColumns": [
+        {
+          "columnId": "col_first_name",
+          "displayName": "first_name"
+        },
+        {
+          "columnId": "col_last_name",
+          "displayName": "last_name"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## 8. Combine City and State Into One Location Column
+
+Description:
+
+- Create a display-friendly location string from two existing columns.
+
+Intended effect:
+
+- The table gains `location`, for example `Seattle, WA`.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_combine_location",
+  "name": "Create location column",
+  "steps": [
+    {
+      "id": "step_combine_location",
+      "type": "combineColumns",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_city", "col_state"]
+      },
+      "separator": ", ",
+      "newColumn": {
+        "columnId": "col_location",
+        "displayName": "location"
+      }
+    }
+  ]
+}
+```
+
+## 9. Deduplicate Customers by Email
+
+Description:
+
+- Remove duplicate customer rows using email as the uniqueness key.
+
+Intended effect:
+
+- Only the first row for each exact email value survives.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_deduplicate_email",
+  "name": "Deduplicate by email",
+  "steps": [
+    {
+      "id": "step_deduplicate_email",
+      "type": "deduplicateRows",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      }
+    }
+  ]
+}
+```
+
+## 10. Sort Orders by Date Then Total
+
+Description:
+
+- Order exported rows so the newest and highest-value records appear first.
+
+Intended effect:
+
+- Orders sort by `ordered_at` descending, then by `order_total` descending.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_sort_orders",
+  "name": "Sort orders",
+  "steps": [
+    {
+      "id": "step_sort_orders",
+      "type": "sortRows",
+      "sorts": [
+        {
+          "columnId": "col_ordered_at",
+          "direction": "desc"
+        },
+        {
+          "columnId": "col_order_total",
+          "direction": "desc"
+        }
+      ]
+    }
+  ]
+}
+```
+
+## 11. Clean Up a Messy Customer Export
+
+Description:
+
+- Run a realistic multi-step workflow on `messy-customers.csv`.
+
+Intended effect:
+
+- Normalize text, fill missing status values, derive a location column, remove rows without email, deduplicate by email, and sort the final export.
+
+IR example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_messy_customer_cleanup",
+  "name": "Messy customer cleanup",
+  "description": "Normalize text, fill defaults, remove incomplete rows, and sort for export.",
+  "steps": [
+    {
+      "id": "step_normalize_email",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      },
+      "trim": true,
+      "collapseWhitespace": false,
+      "case": "lower"
+    },
+    {
+      "id": "step_normalize_name",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_full_name", "col_city"]
+      },
+      "trim": true,
+      "collapseWhitespace": true,
+      "case": "preserve"
+    },
+    {
+      "id": "step_fill_status",
+      "type": "fillEmpty",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_status"]
+      },
+      "value": "unknown",
+      "treatWhitespaceAsEmpty": true
+    },
+    {
+      "id": "step_location",
+      "type": "combineColumns",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_city", "col_state"]
+      },
+      "separator": ", ",
+      "newColumn": {
+        "columnId": "col_location",
+        "displayName": "location"
+      }
+    },
+    {
+      "id": "step_drop_missing_email",
+      "type": "filterRows",
+      "mode": "drop",
+      "condition": {
+        "kind": "isEmpty",
+        "columnId": "col_email",
+        "treatWhitespaceAsEmpty": false
+      }
+    },
+    {
+      "id": "step_dedupe_email",
+      "type": "deduplicateRows",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      }
+    },
+    {
+      "id": "step_sort_signup",
+      "type": "sortRows",
+      "sorts": [
+        {
+          "columnId": "col_signup_date",
+          "direction": "desc"
+        },
+        {
+          "columnId": "col_full_name",
+          "direction": "asc"
+        }
+      ]
+    }
+  ]
+}
+```
+
+=== docs\out-of-scope.md ===
+# Out of Scope for V1
+
+## Boundary Rule
+
+If a feature requires more than one active table, introduces a general programming model, or depends on preserving spreadsheet presentation instead of tabular values, it is out of scope for V1.
+
+## Explicit Non-Goals
+
+### Multi-Table and Analytical Features
+
+V1 does not include:
+
+- joins or multi-table workflows
+- group-by or aggregation
+- pivots
+- rollups, subtotals, or summary tables
+
+Reason:
+
+- V1 is deliberately scoped to one active table and row-by-row deterministic transformations.
+
+### Programming-Language Features
+
+V1 does not include:
+
+- arbitrary scripting
+- user-authored loops
+- user-authored variables
+- generic control flow
+
+Reason:
+
+- The product goal is a constrained tabular workflow tool, not a general programming environment.
+
+### Spreadsheet Fidelity Features
+
+V1 does not include:
+
+- formula preservation
+- Excel macro support
+- formatting or style fidelity
+- merged-cell fidelity
+- charts, comments, or workbook metadata preservation
+
+Reason:
+
+- V1 preserves table values only.
+
+### Collaboration and Backend Features
+
+V1 does not include:
+
+- collaboration
+- auth
+- backend services
+- cloud persistence
+- remote execution
+
+Reason:
+
+- The tool is internal-only and local-first.
+
+### Editing and Authoring Features Outside the Core Workflow Model
+
+V1 does not include:
+
+- full spreadsheet editing
+- freeform cell editing in the grid
+- manual row-by-row editing workflows
+- block types outside the V1 step catalog
+- a text DSL as the execution source of truth
+
+Reason:
+
+- Phase 1 is defining a typed workflow model, not building a spreadsheet editor.
+
+### Batch and Automation Features
+
+V1 does not include:
+
+- batch processing many files at once
+- scheduled runs
+- workflow triggers
+- AI workflow generation
+
+Reason:
+
+- V1 is an interactive local tool for one uploaded table at a time.
+
+=== docs\v1-scope.md ===
+# V1 Scope
+
+## Product Definition
+
+V1 is an internal-only, local-first browser tool for applying reusable, block-defined transformations to one uploaded table at a time, with safe preview and export.
+
+## Target User
+
+V1 is for internal users cleaning and transforming tabular CSV/XLSX data. It is not a spreadsheet editor, notebook, or general programming environment.
+
+## V1 Capabilities
+
+The V1 workflow step catalog is exactly:
+
+- fill empty cells
+- trim / normalize text
+- rename columns
+- create a derived column
+- filter rows
+- split columns
+- combine columns
+- deduplicate rows
+- sort rows
+
+No additional workflow step types are in scope for Phase 1.
+
+## User Flow
+
+The canonical V1 user flow is:
+
+1. Upload a CSV or XLSX file.
+2. Inspect the import result and select the active table.
+   - CSV imports as one table.
+   - XLSX imports as a workbook and the user selects one sheet as the active table.
+3. Inspect the active table.
+   - Show column display names, inferred types, row count, sample rows, and import warnings.
+4. Build a workflow with blocks.
+   - Blocks are an authoring view over a typed workflow IR.
+   - The workflow IR is the source of truth.
+5. Preview the result before applying it.
+   - Show validation errors, warnings, affected rows/cells, and a before/after sample.
+6. Run the workflow against the active table.
+7. Export the transformed table.
+   - V1 export is table data only, not workbook formatting or formulas.
+8. Save or load the workflow as versioned JSON.
+
+## Product Boundaries
+
+V1 is intentionally narrow:
+
+- The runtime unit is one active table at a time.
+- Workflows are deterministic, serializable, and schema-aware.
+- Preview and validation take priority over expressiveness.
+- The system models tabular operations directly instead of exposing a generic programming language.
+
+## Explicit Non-Goals
+
+V1 does not attempt to provide:
+
+- joins or multi-table workflows
+- group-by or aggregation
+- pivots
+- AI workflow generation
+- collaboration
+- auth or backend services
+- spreadsheet style or formatting fidelity
+- formula preservation
+- Excel macros
+- full spreadsheet editing
+- arbitrary scripting, loops, or user-authored control flow
+- batch processing across many files in one run
+- a text DSL as the execution source of truth
+
+=== docs\validation-rules.md ===
+# Validation Rules
+
+## Validation Model
+
+V1 validation has two layers:
+
+1. Structural validation against `schemas/workflow-ir-v1.schema.json`.
+2. Semantic validation against the active table schema as it exists at each workflow step.
+
+Rules:
+
+- Validation runs in step order.
+- A valid step may change the schema seen by later steps.
+- An invalid step does not contribute schema changes to later validation.
+- The validator should continue after an error to collect more concrete issues.
+- Missing columns are always validation errors, never silent no-ops.
+
+## Global Rules
+
+### Workflow-Level Rules
+
+- `version` must equal `1`.
+- `workflowId` must be present.
+- `name` must be present.
+- Step `id` values must be unique within the workflow.
+
+### Column Reference Rules
+
+- Every referenced `columnId` must exist in the schema visible at that step.
+- A step may reference a column created by an earlier valid step.
+- A step may not reference a column created by a later step.
+
+Error code:
+
+- `missingColumn`
+
+### Display Name Conflict Rules
+
+Display name conflict checks use the same normalization as import:
+
+1. trim outer whitespace
+2. collapse internal whitespace runs to one space
+3. compare case-insensitively
+
+Rules:
+
+- `renameColumn`, `deriveColumn`, `splitColumn`, and `combineColumns` must not create a conflicting display name.
+- Workflow-authored naming conflicts are validation errors.
+- V1 does not auto-suffix workflow-authored names.
+
+Error code:
+
+- `nameConflict`
+
+### Created Column ID Rules
+
+- Any new `columnId` must be unique within the schema visible at that step.
+- `splitColumn` output column IDs must be distinct from one another.
+- A new `columnId` must not reuse an existing imported or previously created column ID.
+
+Error code:
+
+- `duplicateColumnId`
+
+### Type Compatibility Rules
+
+Validation uses the column `logicalType` visible at that step.
+
+Rules:
+
+- `unknown` is treated as compatible when the active table provides no contradictory non-null values.
+- `mixed` is incompatible with operations that require a single ordering or comparison model.
+- String operations do not silently coerce number or boolean columns in place.
+
+Error code:
+
+- `incompatibleType`
+
+## Step Rules
+
+### `fillEmpty`
+
+Valid when:
+
+- every targeted column exists
+- the target is not empty
+- the fill value is compatible with every targeted column
+
+Compatibility rules:
+
+- `string`, `date`, and `datetime` columns require a string fill value
+- `number` columns require a numeric fill value
+- `boolean` columns require a boolean fill value
+- `unknown` columns accept any non-null scalar fill value
+- `mixed` columns are invalid targets
+
+Additional rule:
+
+- `treatWhitespaceAsEmpty: true` is only valid when every targeted column is `string` or `unknown`
+
+Errors:
+
+- `missingColumn`
+- `incompatibleType`
+- `emptyTarget`
+
+### `normalizeText`
+
+Valid when:
+
+- every targeted column exists
+- every targeted column is `string` or `unknown`
+
+Rules:
+
+- `trim`, `collapseWhitespace`, and `case` are explicit; omitted behavior is not inferred
+- Number, boolean, date, datetime, and mixed columns are invalid targets
+
+Errors:
+
+- `missingColumn`
+- `incompatibleType`
+- `emptyTarget`
+
+### `renameColumn`
+
+Valid when:
+
+- the referenced `columnId` exists
+- `newDisplayName` is non-empty after trimming
+- the normalized new display name does not conflict with any other visible display name
+
+Rules:
+
+- Renaming does not change `columnId`
+- Renaming a column to its current display name is valid
+
+Errors:
+
+- `missingColumn`
+- `nameConflict`
+- `invalidDisplayName`
+
+### `deriveColumn`
+
+Valid when:
+
+- `newColumn.columnId` is unique
+- `newColumn.displayName` is unique after normalization
+- every referenced column in the expression exists at that step
+
+Expression rules:
+
+- `literal` is always valid
+- `column` requires an existing `columnId`
+- `concat` must contain at least one part and returns a string
+- `coalesce` must contain at least two inputs
+- `coalesce` inputs must resolve to compatible logical types or `unknown`
+
+Errors:
+
+- `duplicateColumnId`
+- `nameConflict`
+- `missingColumn`
+- `invalidExpression`
+- `incompatibleType`
+
+### `filterRows`
+
+Valid when:
+
+- every referenced column in the condition exists
+- each condition uses a comparator compatible with the referenced column type
+
+Comparator rules:
+
+- `isEmpty` is valid for any column type
+- `equals` is valid for any non-mixed column if the literal value matches the column type
+- `contains`, `startsWith`, and `endsWith` require `string` or `unknown`
+- `greaterThan` and `lessThan` require `number`, `date`, `datetime`, or `unknown`
+- `and` and `or` require at least two child conditions
+- `not` requires exactly one child condition
+
+Errors:
+
+- `missingColumn`
+- `invalidCondition`
+- `incompatibleType`
+
+### `splitColumn`
+
+Valid when:
+
+- the source `columnId` exists
+- the source column is `string` or `unknown`
+- `delimiter` is non-empty
+- `outputColumns` contains at least two entries
+- every output `columnId` is unique
+- every output `displayName` is unique and does not conflict with existing display names
+
+Execution edge cases:
+
+- null input produces null in every output column
+- fewer parts than outputs produces trailing nulls
+- more parts than outputs merges the remainder into the last output column
+- the source column remains in the schema
+
+Errors:
+
+- `missingColumn`
+- `duplicateColumnId`
+- `nameConflict`
+- `incompatibleType`
+- `invalidDelimiter`
+
+### `combineColumns`
+
+Valid when:
+
+- every targeted source column exists
+- at least two source columns are provided
+- the new column ID and display name are unique
+
+Rules:
+
+- source column order is the order listed in the target
+- the result column logical type is `string`
+- source columns remain in the schema
+- repeated source column references are invalid
+
+Errors:
+
+- `missingColumn`
+- `duplicateColumnReference`
+- `duplicateColumnId`
+- `nameConflict`
+- `emptyTarget`
+
+### `deduplicateRows`
+
+Valid when:
+
+- every targeted key column exists
+- at least one key column is provided
+- key column references are unique
+
+Edge cases:
+
+- duplicate rows are detected using exact canonical value equality on the current table state
+- if all key values are equal, the first row in current `rowOrder` survives
+- if `sortRows` appears earlier in the workflow, its order determines which row is kept
+
+Errors:
+
+- `missingColumn`
+- `duplicateColumnReference`
+- `emptyTarget`
+
+### `sortRows`
+
+Valid when:
+
+- at least one sort key is present
+- every sort key column exists
+- each sort key is unique within the step
+- every sort key column is not `mixed`
+
+Edge cases:
+
+- nulls sort last in both ascending and descending order
+- rows equal on all sort keys preserve prior relative order
+- string sort is case-sensitive code-point order
+- number sort is numeric
+- boolean sort is `false < true`
+- date/datetime sort uses ISO chronological order
+
+Errors:
+
+- `missingColumn`
+- `duplicateColumnReference`
+- `incompatibleType`
+- `emptySort`
+
+## Missing-Column Behavior
+
+Missing-column behavior is fixed for V1:
+
+- A referenced missing `columnId` is a validation error.
+- Preview and run are blocked until the error is resolved.
+- The system must not silently skip the step.
+- The system must not fall back to matching on display name.
+
+## Incompatible-Type Behavior
+
+Incompatible-type behavior is also fixed:
+
+- Semantic incompatibility is a validation error, not a warning.
+- V1 does not silently cast target columns for in-place operations.
+- The only intentional stringification operations are `concat` inside `deriveColumn` and `combineColumns`.
+
+## Error Reporting
+
+Every semantic error should include:
+
+- error code
+- human-readable message
+- step ID
+- JSON path
+- enough detail to explain the failing `columnId`, comparator, or proposed display name
+
+=== docs\workflow-ir-v1.md ===
+# Workflow IR v1
+
+## Design Rules
+
+The V1 workflow IR is intentionally small.
+
+Rules:
+
+- `version` is required from day one.
+- A workflow is an ordered list of explicit tabular operations.
+- Steps execute top to bottom.
+- Later steps see schema changes made by earlier valid steps.
+- The persisted IR never refers to “selected columns” or any other transient UI state.
+- The IR does not contain loops, arbitrary variables, or general control flow.
+
+## Workflow Object
+
+Required fields:
+
+- `version`: integer, always `1` for V1
+- `workflowId`: stable workflow identifier
+- `name`: human-readable workflow name
+- `steps`: ordered list of workflow steps
+
+Optional fields:
+
+- `description`: human-readable workflow description
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_customer_cleanup",
+  "name": "Customer cleanup",
+  "description": "Normalize customer text fields and remove duplicate emails.",
+  "steps": []
+}
+```
+
+## Step Object
+
+Every workflow step has:
+
+- `id`: stable step identifier unique within the workflow
+- `type`: one of the V1 step types below
+
+V1 step types:
+
+- `fillEmpty`
+- `normalizeText`
+- `renameColumn`
+- `deriveColumn`
+- `filterRows`
+- `splitColumn`
+- `combineColumns`
+- `deduplicateRows`
+- `sortRows`
+
+## Target Object
+
+V1 uses one persisted target shape for explicit column references:
+
+```json
+{
+  "kind": "columns",
+  "columnIds": ["col_email", "col_status"]
+}
+```
+
+Rules:
+
+- `columnIds` must be explicit internal `columnId` values.
+- Order matters when the consuming step is order-sensitive, such as `combineColumns`.
+- The target object is not a symbolic selection.
+
+## Condition Object
+
+`filterRows` uses a recursive condition tree.
+
+Leaf conditions:
+
+- `isEmpty`
+- `equals`
+- `contains`
+- `startsWith`
+- `endsWith`
+- `greaterThan`
+- `lessThan`
+
+Boolean combinators:
+
+- `and`
+- `or`
+- `not`
+
+Examples:
+
+```json
+{
+  "kind": "isEmpty",
+  "columnId": "col_email",
+  "treatWhitespaceAsEmpty": false
+}
+```
+
+```json
+{
+  "kind": "and",
+  "conditions": [
+    {
+      "kind": "greaterThan",
+      "columnId": "col_order_total",
+      "value": 100
+    },
+    {
+      "kind": "equals",
+      "columnId": "col_order_status",
+      "value": "paid"
+    }
+  ]
+}
+```
+
+## Expression Object
+
+`deriveColumn` uses a small recursive expression tree.
+
+Expression kinds:
+
+- `literal`
+- `column`
+- `concat`
+- `coalesce`
+
+Rules:
+
+- `literal` returns a scalar value.
+- `column` reads one existing column by `columnId`.
+- `concat` returns a string by concatenating its parts left to right.
+- `coalesce` returns the first non-null input.
+
+Examples:
+
+```json
+{
+  "kind": "literal",
+  "value": " "
+}
+```
+
+```json
+{
+  "kind": "concat",
+  "parts": [
+    {
+      "kind": "column",
+      "columnId": "col_first_name"
+    },
+    {
+      "kind": "literal",
+      "value": " "
+    },
+    {
+      "kind": "column",
+      "columnId": "col_last_name"
+    }
+  ]
+}
+```
+
+## Validation Error Object
+
+Semantic validation returns structured errors; this object is not part of the persisted workflow itself.
+
+Required fields:
+
+- `code`: stable machine-readable code such as `missingColumn` or `nameConflict`
+- `severity`: `error` or `warning`
+- `message`: human-readable explanation
+- `path`: JSON-style location such as `steps[2].sorts[0].columnId`
+
+Optional fields:
+
+- `stepId`: the offending workflow step
+- `details`: machine-readable context payload
+
+Example:
+
+```json
+{
+  "code": "missingColumn",
+  "severity": "error",
+  "message": "Column 'col_email' does not exist at step 'step_filter_email'.",
+  "path": "steps[1].condition.columnId",
+  "stepId": "step_filter_email",
+  "details": {
+    "columnId": "col_email"
+  }
+}
+```
+
+## Step Definitions
+
+### `fillEmpty`
+
+Fills empty cells in the targeted columns with one literal value.
+
+Fields:
+
+- `target`
+- `value`: string, number, or boolean
+- `treatWhitespaceAsEmpty`: boolean
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_fill_status",
+  "name": "Fill missing status",
+  "steps": [
+    {
+      "id": "step_fill_status",
+      "type": "fillEmpty",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_status"]
+      },
+      "value": "unknown",
+      "treatWhitespaceAsEmpty": false
+    }
+  ]
+}
+```
+
+### `normalizeText`
+
+Normalizes text in the targeted columns.
+
+Fields:
+
+- `target`
+- `trim`: boolean
+- `collapseWhitespace`: boolean
+- `case`: `preserve`, `lower`, or `upper`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_normalize_email",
+  "name": "Normalize email text",
+  "steps": [
+    {
+      "id": "step_normalize_email",
+      "type": "normalizeText",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      },
+      "trim": true,
+      "collapseWhitespace": false,
+      "case": "lower"
+    }
+  ]
+}
+```
+
+### `renameColumn`
+
+Changes the display name of one existing column without changing its `columnId`.
+
+Fields:
+
+- `columnId`
+- `newDisplayName`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_rename_customer_id",
+  "name": "Rename customer ID column",
+  "steps": [
+    {
+      "id": "step_rename_customer_id",
+      "type": "renameColumn",
+      "columnId": "col_customer_id",
+      "newDisplayName": "external_customer_id"
+    }
+  ]
+}
+```
+
+### `deriveColumn`
+
+Creates one new column from an expression.
+
+Fields:
+
+- `newColumn`
+  - `columnId`
+  - `displayName`
+- `expression`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_derive_full_name",
+  "name": "Create full name",
+  "steps": [
+    {
+      "id": "step_derive_full_name",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_full_name",
+        "displayName": "full_name"
+      },
+      "expression": {
+        "kind": "concat",
+        "parts": [
+          {
+            "kind": "column",
+            "columnId": "col_first_name"
+          },
+          {
+            "kind": "literal",
+            "value": " "
+          },
+          {
+            "kind": "column",
+            "columnId": "col_last_name"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+### `filterRows`
+
+Keeps or drops rows based on a condition.
+
+Fields:
+
+- `mode`: `keep` or `drop`
+- `condition`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_filter_missing_email",
+  "name": "Drop rows with missing email",
+  "steps": [
+    {
+      "id": "step_filter_missing_email",
+      "type": "filterRows",
+      "mode": "drop",
+      "condition": {
+        "kind": "isEmpty",
+        "columnId": "col_email",
+        "treatWhitespaceAsEmpty": false
+      }
+    }
+  ]
+}
+```
+
+### `splitColumn`
+
+Splits one string column into explicit output columns using a delimiter.
+
+Fields:
+
+- `columnId`
+- `delimiter`
+- `outputColumns`
+  - `columnId`
+  - `displayName`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_split_full_name",
+  "name": "Split full name",
+  "steps": [
+    {
+      "id": "step_split_full_name",
+      "type": "splitColumn",
+      "columnId": "col_full_name",
+      "delimiter": " ",
+      "outputColumns": [
+        {
+          "columnId": "col_first_name",
+          "displayName": "first_name"
+        },
+        {
+          "columnId": "col_last_name",
+          "displayName": "last_name"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### `combineColumns`
+
+Creates a new string column by joining values from existing columns.
+
+Fields:
+
+- `target`
+- `separator`
+- `newColumn`
+  - `columnId`
+  - `displayName`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_combine_location",
+  "name": "Create location column",
+  "steps": [
+    {
+      "id": "step_combine_location",
+      "type": "combineColumns",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_city", "col_state"]
+      },
+      "separator": ", ",
+      "newColumn": {
+        "columnId": "col_location",
+        "displayName": "location"
+      }
+    }
+  ]
+}
+```
+
+### `deduplicateRows`
+
+Removes duplicate rows using one or more key columns.
+
+Fields:
+
+- `target`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_deduplicate_email",
+  "name": "Deduplicate by email",
+  "steps": [
+    {
+      "id": "step_deduplicate_email",
+      "type": "deduplicateRows",
+      "target": {
+        "kind": "columns",
+        "columnIds": ["col_email"]
+      }
+    }
+  ]
+}
+```
+
+### `sortRows`
+
+Sorts rows using one or more sort keys.
+
+Fields:
+
+- `sorts`
+  - `columnId`
+  - `direction`: `asc` or `desc`
+
+Example:
+
+```json
+{
+  "version": 1,
+  "workflowId": "wf_sort_orders",
+  "name": "Sort orders",
+  "steps": [
+    {
+      "id": "step_sort_orders",
+      "type": "sortRows",
+      "sorts": [
+        {
+          "columnId": "col_ordered_at",
+          "direction": "desc"
+        },
+        {
+          "columnId": "col_order_total",
+          "direction": "desc"
+        }
+      ]
+    }
+  ]
+}
+```
+
+=== src\domain\csv.ts ===
+import { Table, Workbook, CellValue, getOrderedRows } from './model';
+import { ImportedCellInput, normalizeImportedWorkbook, isIsoDate, isIsoDateTime } from './normalize';
+
+interface CsvFieldToken {
+  rawText: string;
+  quoted: boolean;
+}
+
+export function importCsvWorkbook(sourceFileName: string, text: string): Workbook {
+  const rows = parseCsv(text).map((row) => row.map(convertCsvFieldToImportedCell));
+
+  return normalizeImportedWorkbook({
+    sourceFileName,
+    sourceFormat: 'csv',
+    tables: [
+      {
+        sourceName: sourceFileName,
+        rows,
+      },
+    ],
+  });
+}
+
+export function exportTableToCsv(table: Table): string {
+  const header = table.schema.columns.map((column) => escapeCsvField(column.displayName)).join(',');
+  const lines = [header];
+
+  for (const row of getOrderedRows(table)) {
+    const values = table.schema.columns.map((column) => escapeCsvField(serializeCellValue(row.cellsByColumnId[column.columnId])));
+    lines.push(values.join(','));
+  }
+
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+export function parseCsv(text: string): CsvFieldToken[][] {
+  if (text === '') {
+    return [];
+  }
+
+  const rows: CsvFieldToken[][] = [];
+  let currentRow: CsvFieldToken[] = [];
+  let currentValue = '';
+  let inQuotes = false;
+  let quoted = false;
+
+  const pushField = () => {
+    currentRow.push({
+      rawText: currentValue,
+      quoted,
+    });
+    currentValue = '';
+    quoted = false;
+  };
+
+  const pushRow = () => {
+    rows.push(currentRow);
+    currentRow = [];
+  };
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+
+    if (inQuotes) {
+      if (character === '"') {
+        if (text[index + 1] === '"') {
+          currentValue += '"';
+          index += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        currentValue += character;
+      }
+
+      continue;
+    }
+
+    if (character === ',' && !inQuotes) {
+      pushField();
+      continue;
+    }
+
+    if (character === '\r' || character === '\n') {
+      pushField();
+      pushRow();
+
+      if (character === '\r' && text[index + 1] === '\n') {
+        index += 1;
+      }
+
+      continue;
+    }
+
+    if (character === '"' && currentValue === '') {
+      inQuotes = true;
+      quoted = true;
+      continue;
+    }
+
+    currentValue += character;
+  }
+
+  pushField();
+
+  if (currentRow.length > 1 || currentRow[0]?.rawText !== '' || currentRow[0]?.quoted) {
+    pushRow();
+  }
+
+  return rows;
+}
+
+function convertCsvFieldToImportedCell(field: CsvFieldToken): ImportedCellInput {
+  return {
+    headerText: field.rawText,
+    value: parseCsvCellValue(field),
+  };
+}
+
+function parseCsvCellValue(field: CsvFieldToken): CellValue {
+  if (field.rawText === '' && !field.quoted) {
+    return null;
+  }
+
+  if (field.rawText === '' && field.quoted) {
+    return '';
+  }
+
+  if (/^(true|false)$/i.test(field.rawText)) {
+    return /^true$/i.test(field.rawText);
+  }
+
+  if (isUnambiguousNumber(field.rawText)) {
+    return Number(field.rawText);
+  }
+
+  if (isIsoDate(field.rawText) || isIsoDateTime(field.rawText)) {
+    return field.rawText;
+  }
+
+  return field.rawText;
+}
+
+function serializeCellValue(value: CellValue): string {
+  if (value === null) {
+    return '';
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+
+  return String(value);
+}
+
+function escapeCsvField(value: string): string {
+  if (value === '') {
+    return '""';
+  }
+
+  if (/[",\r\n]/.test(value) || /^\s/.test(value) || /\s$/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  return value;
+}
+
+function isUnambiguousNumber(value: string): boolean {
+  return /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value);
+}
+
+=== src\domain\model.ts ===
+export type SourceFormat = 'csv' | 'xlsx';
+
+export type LogicalType =
+  | 'unknown'
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'datetime'
+  | 'mixed';
+
+export type CellValue = string | number | boolean | null;
+
+export type ImportWarningScope = 'workbook' | 'table' | 'column' | 'cell';
+
+export interface ImportWarning {
+  code: string;
+  message: string;
+  scope: ImportWarningScope;
+  tableId?: string;
+  columnId?: string;
+  rowId?: string;
+}
+
+export interface Column {
+  columnId: string;
+  displayName: string;
+  logicalType: LogicalType;
+  nullable: boolean;
+  sourceIndex: number;
+  missingCount: number;
+}
+
+export interface Schema {
+  columns: Column[];
+}
+
+export interface TableRow {
+  rowId: string;
+  cellsByColumnId: Record<string, CellValue>;
+}
+
+export interface Table {
+  tableId: string;
+  sourceName: string;
+  schema: Schema;
+  rowsById: Record<string, TableRow>;
+  rowOrder: string[];
+  importWarnings: ImportWarning[];
+}
+
+export interface Workbook {
+  workbookId: string;
+  sourceFileName: string;
+  sourceFormat: SourceFormat;
+  tables: Table[];
+  activeTableId: string;
+  importWarnings: ImportWarning[];
+}
+
+export function getActiveTable(workbook: Workbook | null): Table | null {
+  if (!workbook) {
+    return null;
+  }
+
+  return workbook.tables.find((table) => table.tableId === workbook.activeTableId) ?? null;
+}
+
+export function requireActiveTable(workbook: Workbook): Table {
+  const table = getActiveTable(workbook);
+
+  if (!table) {
+    throw new Error(`Active table '${workbook.activeTableId}' was not found.`);
+  }
+
+  return table;
+}
+
+export function setActiveTable(workbook: Workbook, tableId: string): Workbook {
+  if (!workbook.tables.some((table) => table.tableId === tableId)) {
+    throw new Error(`Cannot select missing table '${tableId}'.`);
+  }
+
+  return {
+    ...workbook,
+    activeTableId: tableId,
+  };
+}
+
+export function getOrderedRows(table: Table): TableRow[] {
+  return table.rowOrder
+    .map((rowId) => table.rowsById[rowId])
+    .filter((row): row is TableRow => Boolean(row));
+}
+
+export function isMissingValue(value: CellValue): boolean {
+  return value === null || value === '';
+}
+
+=== src\domain\normalize.ts ===
+import { CellValue, Column, ImportWarning, LogicalType, SourceFormat, Table, TableRow, Workbook, isMissingValue } from './model';
+
+export interface ImportedCellInput {
+  headerText: string;
+  value: CellValue;
+  hadFormula?: boolean;
+  missingFormulaValue?: boolean;
+}
+
+export interface ImportedTableInput {
+  sourceName: string;
+  rows: ImportedCellInput[][];
+}
+
+export interface NormalizeWorkbookInput {
+  sourceFileName: string;
+  sourceFormat: SourceFormat;
+  tables: ImportedTableInput[];
+  importWarnings?: ImportWarning[];
+}
+
+export function normalizeImportedWorkbook(input: NormalizeWorkbookInput): Workbook {
+  const tableIdCounts = new Map<string, number>();
+  const tables = input.tables.map((tableInput) => normalizeImportedTable(tableInput, tableIdCounts));
+
+  return {
+    workbookId: `workbook_${slugify(stripFileExtension(input.sourceFileName))}`,
+    sourceFileName: input.sourceFileName,
+    sourceFormat: input.sourceFormat,
+    tables,
+    activeTableId: tables[0]?.tableId ?? '',
+    importWarnings: input.importWarnings ?? [],
+  };
+}
+
+function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<string, number>): Table {
+  const width = input.rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const headerRow = input.rows[0] ?? [];
+  const columnNameCounts = new Map<string, number>();
+  const duplicateBaseNames = new Map<string, string>();
+  const columnIdCounts = new Map<string, number>();
+  const baseTableId = `table_${slugify(stripFileExtension(input.sourceName))}`;
+  const tableId = makeUniqueId(baseTableId, tableIdCounts);
+  const importWarnings: ImportWarning[] = [];
+  const columns: Column[] = [];
+
+  for (let sourceIndex = 0; sourceIndex < width; sourceIndex += 1) {
+    const rawHeaderText = headerRow[sourceIndex]?.headerText ?? '';
+    const normalizedHeader = normalizeHeaderText(rawHeaderText);
+    const duplicateKey = normalizedHeader.toLocaleLowerCase();
+    const duplicateCount = (columnNameCounts.get(duplicateKey) ?? 0) + 1;
+
+    columnNameCounts.set(duplicateKey, duplicateCount);
+
+    if (!duplicateBaseNames.has(duplicateKey)) {
+      duplicateBaseNames.set(duplicateKey, normalizedHeader);
+    }
+
+    const baseDisplayName = duplicateBaseNames.get(duplicateKey) ?? normalizedHeader;
+    const displayName = duplicateCount === 1 ? baseDisplayName : `${baseDisplayName} (${duplicateCount})`;
+    const columnId = makeUniqueId(`col_${slugify(baseDisplayName)}`, columnIdCounts);
+
+    if (normalizeWhitespace(rawHeaderText) === '') {
+      importWarnings.push({
+        code: 'blankHeaderGenerated',
+        message: `Column ${sourceIndex + 1} had a blank header. Generated display name '${displayName}'.`,
+        scope: 'column',
+        tableId,
+        columnId,
+      });
+    }
+
+    if (duplicateCount > 1) {
+      importWarnings.push({
+        code: 'duplicateHeaderNormalized',
+        message: `Column ${sourceIndex + 1} duplicated header '${baseDisplayName}'. Renamed to '${displayName}'.`,
+        scope: 'column',
+        tableId,
+        columnId,
+      });
+    }
+
+    columns.push({
+      columnId,
+      displayName,
+      logicalType: 'unknown',
+      nullable: false,
+      sourceIndex,
+      missingCount: 0,
+    });
+  }
+
+  const rowsById: Record<string, TableRow> = {};
+  const rowOrder: string[] = [];
+
+  for (let rowIndex = 1; rowIndex < input.rows.length; rowIndex += 1) {
+    const rowId = `row_${rowIndex}`;
+    const sourceRow = input.rows[rowIndex] ?? [];
+    const cellsByColumnId: Record<string, CellValue> = {};
+
+    columns.forEach((column) => {
+      cellsByColumnId[column.columnId] = sourceRow[column.sourceIndex]?.value ?? null;
+    });
+
+    rowsById[rowId] = {
+      rowId,
+      cellsByColumnId,
+    };
+    rowOrder.push(rowId);
+  }
+
+  columns.forEach((column) => {
+    const values = rowOrder.map((rowId) => rowsById[rowId].cellsByColumnId[column.columnId]);
+    const logicalType = inferLogicalType(values);
+
+    column.logicalType = logicalType;
+    column.nullable = values.some((value) => value === null);
+    column.missingCount = values.filter(isMissingValue).length;
+
+    if (logicalType === 'mixed') {
+      importWarnings.push({
+        code: 'mixedTypeColumn',
+        message: `Column '${column.displayName}' inferred as mixed type.`,
+        scope: 'column',
+        tableId,
+        columnId: column.columnId,
+      });
+    }
+  });
+
+  let formulaImportedCount = 0;
+  let formulaMissingValueCount = 0;
+
+  for (let rowIndex = 1; rowIndex < input.rows.length; rowIndex += 1) {
+    const row = input.rows[rowIndex] ?? [];
+
+    for (const cell of row) {
+      if (cell.hadFormula) {
+        formulaImportedCount += 1;
+      }
+
+      if (cell.missingFormulaValue) {
+        formulaMissingValueCount += 1;
+      }
+    }
+  }
+
+  if (formulaImportedCount > 0) {
+    importWarnings.push({
+      code: 'formulaImportedAsValue',
+      message: `${formulaImportedCount} ${pluralize(formulaImportedCount, 'formula cell')} in '${input.sourceName}' ${formulaImportedCount === 1 ? 'was' : 'were'} imported as value${formulaImportedCount === 1 ? '' : 's'}.`,
+      scope: 'table',
+      tableId,
+    });
+  }
+
+  if (formulaMissingValueCount > 0) {
+    importWarnings.push({
+      code: 'formulaValueUnavailable',
+      message: `${formulaMissingValueCount} ${pluralize(formulaMissingValueCount, 'formula cell')} in '${input.sourceName}' had no cached value and ${formulaMissingValueCount === 1 ? 'was' : 'were'} imported as null.`,
+      scope: 'table',
+      tableId,
+    });
+  }
+
+  return {
+    tableId,
+    sourceName: input.sourceName,
+    schema: { columns },
+    rowsById,
+    rowOrder,
+    importWarnings,
+  };
+}
+
+export function inferLogicalType(values: CellValue[]): LogicalType {
+  const nonNullValues = values.filter((value): value is Exclude<CellValue, null> => value !== null);
+
+  if (nonNullValues.length === 0) {
+    return 'unknown';
+  }
+
+  if (nonNullValues.every((value) => typeof value === 'boolean')) {
+    return 'boolean';
+  }
+
+  if (nonNullValues.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    return 'number';
+  }
+
+  if (nonNullValues.every((value) => typeof value === 'string' && isIsoDate(value))) {
+    return 'date';
+  }
+
+  if (nonNullValues.every((value) => typeof value === 'string' && isIsoDateTime(value))) {
+    return 'datetime';
+  }
+
+  if (nonNullValues.every((value) => typeof value === 'string')) {
+    return 'string';
+  }
+
+  return 'mixed';
+}
+
+export function normalizeHeaderText(value: string): string {
+  const normalized = normalizeWhitespace(value);
+  return normalized === '' ? 'Column' : normalized;
+}
+
+export function normalizeWhitespace(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+export function slugify(value: string): string {
+  const slug = value
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+
+  return slug === '' ? 'column' : slug;
+}
+
+export function cellValueToHeaderText(value: CellValue): string {
+  if (value === null) {
+    return '';
+  }
+
+  return String(value);
+}
+
+export function isIsoDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const timestamp = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(timestamp);
+}
+
+export function isIsoDateTime(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return false;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp);
+}
+
+function stripFileExtension(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '');
+}
+
+function makeUniqueId(baseId: string, counts: Map<string, number>): string {
+  const nextCount = (counts.get(baseId) ?? 0) + 1;
+  counts.set(baseId, nextCount);
+
+  return nextCount === 1 ? baseId : `${baseId}_${nextCount}`;
+}
+
+function pluralize(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`;
+}
+
+=== src\domain\workbookIO.test.ts ===
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import * as XLSX from 'xlsx';
+import { describe, expect, it } from 'vitest';
+
+import { exportTableToCsv, importCsvWorkbook } from './csv';
+import { getActiveTable, setActiveTable } from './model';
+import { importXlsxWorkbook, exportTableToXlsxBytes } from './xlsx';
+
+describe('Milestone 1 normalization and export', () => {
+  it('normalizes the simple customers CSV fixture', async () => {
+    const workbook = importCsvWorkbook('simple-customers.csv', await readFixture('simple-customers.csv'));
+    const table = getActiveTable(workbook);
+
+    expect(workbook.sourceFormat).toBe('csv');
+    expect(workbook.tables).toHaveLength(1);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual([
+      'col_customer_id',
+      'col_first_name',
+      'col_last_name',
+      'col_email',
+      'col_city',
+      'col_state',
+      'col_created_at',
+    ]);
+    expect(table?.rowOrder).toEqual(['row_1', 'row_2', 'row_3', 'row_4', 'row_5']);
+    expect(table?.schema.columns.find((column) => column.columnId === 'col_created_at')?.logicalType).toBe('date');
+    expect(table?.schema.columns.find((column) => column.columnId === 'col_email')?.missingCount).toBe(0);
+  });
+
+  it('normalizes duplicate headers deterministically', () => {
+    const workbook = importCsvWorkbook('duplicates.csv', 'Email, email ,EMAIL\r\none,two,three\r\n');
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['Email', 'Email (2)', 'Email (3)']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_email', 'col_email_2', 'col_email_3']);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'duplicateHeaderNormalized')).toHaveLength(2);
+  });
+
+  it('normalizes blank headers deterministically', () => {
+    const workbook = importCsvWorkbook('blanks.csv', 'name,,\r\nAlice,,\r\n');
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['name', 'Column', 'Column (2)']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_name', 'col_column', 'col_column_2']);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'blankHeaderGenerated')).toHaveLength(2);
+  });
+
+  it('keeps column IDs stable when slugs collide', () => {
+    const workbook = importCsvWorkbook('slug-collisions.csv', 'Customer ID,Customer-ID,Customer/ID\r\n1,2,3\r\n');
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual([
+      'col_customer_id',
+      'col_customer_id_2',
+      'col_customer_id_3',
+    ]);
+  });
+
+  it('keeps row IDs stable and sequential from source order', () => {
+    const workbook = importCsvWorkbook('rows.csv', 'name,value\r\nAlice,1\r\n,2\r\nCharlie,\r\n');
+    const table = getActiveTable(workbook);
+
+    expect(table?.rowOrder).toEqual(['row_1', 'row_2', 'row_3']);
+    expect(table?.rowsById.row_2.cellsByColumnId.col_name).toBe(null);
+    expect(table?.rowsById.row_3.cellsByColumnId.col_value).toBe(null);
+  });
+
+  it('infers logical types on the provided fixtures', async () => {
+    const customersWorkbook = importCsvWorkbook('simple-customers.csv', await readFixture('simple-customers.csv'));
+    const ordersWorkbook = importCsvWorkbook('orders-sample.csv', await readFixture('orders-sample.csv'));
+    const customersTable = getActiveTable(customersWorkbook);
+    const ordersTable = getActiveTable(ordersWorkbook);
+
+    expect(customersTable?.schema.columns.find((column) => column.columnId === 'col_created_at')?.logicalType).toBe('date');
+    expect(ordersTable?.schema.columns.find((column) => column.columnId === 'col_order_total')?.logicalType).toBe('number');
+    expect(ordersTable?.schema.columns.find((column) => column.columnId === 'col_ordered_at')?.logicalType).toBe('datetime');
+    expect(ordersTable?.schema.columns.find((column) => column.columnId === 'col_customer_email')?.missingCount).toBe(1);
+  });
+
+  it('normalizes XLSX workbooks with one table per sheet and supports active table selection', () => {
+    const workbook = importXlsxWorkbook('multi-sheet.xlsx', buildMultiSheetWorkbook());
+
+    expect(workbook.sourceFormat).toBe('xlsx');
+    expect(workbook.tables.map((table) => table.sourceName)).toEqual(['Customers', 'Orders']);
+    expect(workbook.activeTableId).toBe(workbook.tables[0].tableId);
+
+    const updatedWorkbook = setActiveTable(workbook, workbook.tables[1].tableId);
+    expect(getActiveTable(updatedWorkbook)?.sourceName).toBe('Orders');
+  });
+
+  it('treats formulas with cached results as imported values', () => {
+    const workbook = importXlsxWorkbook('formulas.xlsx', buildFormulaWorkbook());
+    const table = getActiveTable(workbook);
+
+    expect(table?.rowsById.row_1.cellsByColumnId.col_total).toBe(3);
+    expect(table?.rowsById.row_1.cellsByColumnId.col_missing_total).toBe(null);
+    expect(table?.importWarnings.some((warning) => warning.code === 'formulaImportedAsValue')).toBe(true);
+  });
+
+  it('roundtrips exported CSV back into the canonical model', async () => {
+    const originalWorkbook = importCsvWorkbook('messy-customers.csv', await readFixture('messy-customers.csv'));
+    const originalTable = getActiveTable(originalWorkbook);
+
+    if (!originalTable) {
+      throw new Error('Expected active table for CSV roundtrip test.');
+    }
+
+    const exportedCsv = exportTableToCsv(originalTable);
+    const roundtripWorkbook = importCsvWorkbook('roundtrip.csv', exportedCsv);
+    const roundtripTable = getActiveTable(roundtripWorkbook);
+
+    expect(roundtripTable?.schema.columns.map((column) => column.displayName)).toEqual(
+      originalTable.schema.columns.map((column) => column.displayName),
+    );
+    expect(roundtripTable?.rowOrder).toEqual(originalTable.rowOrder);
+    expect(roundtripTable?.rowsById.row_1.cellsByColumnId.col_full_name).toBe('  Alice   Ng  ');
+    expect(roundtripTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('');
+  });
+
+  it('roundtrips exported XLSX back into the canonical model', async () => {
+    const originalWorkbook = importCsvWorkbook('orders-sample.csv', await readFixture('orders-sample.csv'));
+    const originalTable = getActiveTable(originalWorkbook);
+
+    if (!originalTable) {
+      throw new Error('Expected active table for XLSX roundtrip test.');
+    }
+
+    const exportedWorkbook = importXlsxWorkbook('orders-sample.xlsx', exportTableToXlsxBytes(originalTable));
+    const roundtripTable = getActiveTable(exportedWorkbook);
+
+    expect(roundtripTable?.schema.columns.map((column) => column.displayName)).toEqual(
+      originalTable.schema.columns.map((column) => column.displayName),
+    );
+    expect(roundtripTable?.rowsById.row_1.cellsByColumnId.col_order_total).toBe(120.5);
+    expect(roundtripTable?.rowsById.row_4.cellsByColumnId.col_customer_email).toBe(null);
+  });
+});
+
+async function readFixture(fileName: string): Promise<string> {
+  const fixturePath = path.resolve(process.cwd(), 'fixtures', fileName);
+  return readFile(fixturePath, 'utf8');
+}
+
+function buildMultiSheetWorkbook(): ArrayBuffer {
+  const workbook = XLSX.utils.book_new();
+  const customers = XLSX.utils.aoa_to_sheet([
+    ['customer_id', 'email'],
+    ['C001', 'alice.ng@example.com'],
+  ]);
+  const orders = XLSX.utils.aoa_to_sheet([
+    ['order_id', 'order_total'],
+    ['O100', 42],
+  ]);
+
+  XLSX.utils.book_append_sheet(workbook, customers, 'Customers');
+  XLSX.utils.book_append_sheet(workbook, orders, 'Orders');
+
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+}
+
+function buildFormulaWorkbook(): ArrayBuffer {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    ['left', 'right', 'total', 'missing_total'],
+    [1, 2, null, null],
+  ]);
+
+  sheet.C2 = { t: 'n', f: 'A2+B2', v: 3 };
+  sheet.D2 = { t: 'n', f: 'A2+B2' };
+  sheet['!ref'] = 'A1:D2';
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Formulas');
+
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+}
+
+=== src\domain\workbookIO.ts ===
+import { SourceFormat, Table, Workbook } from './model';
+import { exportTableToCsv, importCsvWorkbook } from './csv';
+import { exportTableToXlsxBytes, importXlsxWorkbook } from './xlsx';
+
+type FileLike = Pick<File, 'name' | 'text' | 'arrayBuffer'>;
+
+export async function importWorkbookFromFile(file: FileLike): Promise<Workbook> {
+  const format = detectSourceFormat(file.name);
+
+  if (format === 'csv') {
+    return importCsvWorkbook(file.name, await file.text());
+  }
+
+  return importXlsxWorkbook(file.name, await file.arrayBuffer());
+}
+
+export function detectSourceFormat(fileName: string): SourceFormat {
+  if (/\.csv$/i.test(fileName)) {
+    return 'csv';
+  }
+
+  if (/\.xlsx$/i.test(fileName)) {
+    return 'xlsx';
+  }
+
+  throw new Error(`Unsupported file format for '${fileName}'. Expected .csv or .xlsx.`);
+}
+
+export function exportTableCsvBlob(table: Table): Blob {
+  return new Blob([exportTableToCsv(table)], {
+    type: 'text/csv;charset=utf-8',
+  });
+}
+
+export function exportTableXlsxBlob(table: Table): Blob {
+  return new Blob([exportTableToXlsxBytes(table)], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
+export function buildCsvExportFileName(table: Table): string {
+  return `${slugifyFileStem(table.sourceName)}.csv`;
+}
+
+export function buildXlsxExportFileName(table: Table): string {
+  return `${slugifyFileStem(table.sourceName)}.xlsx`;
+}
+
+function slugifyFileStem(value: string): string {
+  const stem = value.replace(/\.[^.]+$/, '');
+  const slug = stem
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, ' ')
+    .replace(/\s+/g, '-');
+
+  return slug === '' ? 'export' : slug;
+}
+
+=== src\domain\xlsx.ts ===
+import * as XLSX from 'xlsx';
+
+import { CellValue, ImportWarning, Table, Workbook, getOrderedRows } from './model';
+import { ImportedCellInput, cellValueToHeaderText, normalizeImportedWorkbook } from './normalize';
+
+export function importXlsxWorkbook(sourceFileName: string, data: ArrayBuffer): Workbook {
+  const workbook = XLSX.read(data, {
+    type: 'array',
+    cellDates: true,
+    cellFormula: true,
+    raw: true,
+  });
+
+  const importWarnings: ImportWarning[] = [
+    {
+      code: 'xlsxValueOnlyImport',
+      message: 'XLSX import preserves cell values only. Formatting, charts, comments, and macros are ignored.',
+      scope: 'workbook',
+    },
+  ];
+
+  return normalizeImportedWorkbook({
+    sourceFileName,
+    sourceFormat: 'xlsx',
+    importWarnings,
+    tables: workbook.SheetNames.map((sheetName) => ({
+      sourceName: sheetName,
+      rows: convertSheetToImportedRows(workbook.Sheets[sheetName]),
+    })),
+  });
+}
+
+export function exportTableToXlsxBytes(table: Table): ArrayBuffer {
+  const headerRow = table.schema.columns.map((column) => column.displayName);
+  const bodyRows = getOrderedRows(table).map((row) =>
+    table.schema.columns.map((column) => serializeCellValue(row.cellsByColumnId[column.columnId])),
+  );
+  const sheet = XLSX.utils.aoa_to_sheet([headerRow, ...bodyRows]);
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(workbook, sheet, sanitizeSheetName(table.sourceName));
+
+  return XLSX.write(workbook, {
+    type: 'array',
+    bookType: 'xlsx',
+  }) as ArrayBuffer;
+}
+
+function convertSheetToImportedRows(sheet: XLSX.WorkSheet): ImportedCellInput[][] {
+  const ref = sheet['!ref'];
+
+  if (!ref) {
+    return [];
+  }
+
+  const range = XLSX.utils.decode_range(ref);
+  const rows: ImportedCellInput[][] = [];
+
+  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+    const row: ImportedCellInput[] = [];
+
+    for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
+      const address = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      const cell = sheet[address] as XLSX.CellObject | undefined;
+
+      row.push(convertSheetCell(cell));
+    }
+
+    rows.push(trimTrailingBlankCells(row));
+  }
+
+  return trimTrailingBlankRows(rows);
+}
+
+function convertSheetCell(cell: XLSX.CellObject | undefined): ImportedCellInput {
+  if (!cell) {
+    return {
+      headerText: '',
+      value: null,
+    };
+  }
+
+  if (cell.f && typeof cell.v === 'undefined') {
+    return {
+      headerText: '',
+      value: null,
+      hadFormula: true,
+      missingFormulaValue: true,
+    };
+  }
+
+  const value = normalizeCellValue(cell);
+
+  return {
+    headerText: cellValueToHeaderText(value),
+    value,
+    hadFormula: Boolean(cell.f),
+    missingFormulaValue: false,
+  };
+}
+
+function normalizeCellValue(cell: XLSX.CellObject): CellValue {
+  if (cell.v === null || typeof cell.v === 'undefined') {
+    return null;
+  }
+
+  if (isDateCell(cell)) {
+    return normalizeDateCellValue(cell);
+  }
+
+  if (typeof cell.v === 'boolean') {
+    return cell.v;
+  }
+
+  if (typeof cell.v === 'number') {
+    return cell.v;
+  }
+
+  if (typeof cell.v === 'string') {
+    return cell.v;
+  }
+
+  if (cell.v instanceof Date) {
+    return formatDateValue(cell.v);
+  }
+
+  return String(cell.v);
+}
+
+function isDateCell(cell: XLSX.CellObject): boolean {
+  if (cell.t === 'd' || cell.v instanceof Date) {
+    return true;
+  }
+
+  return typeof cell.v === 'number' && typeof cell.z === 'string' && XLSX.SSF.is_date(cell.z);
+}
+
+function normalizeDateCellValue(cell: XLSX.CellObject): string | null {
+  if (cell.v instanceof Date) {
+    return formatDateValue(cell.v);
+  }
+
+  if (cell.t === 'd') {
+    return formatDateValue(new Date(String(cell.v)));
+  }
+
+  if (typeof cell.v === 'number') {
+    const parsed = XLSX.SSF.parse_date_code(cell.v);
+
+    if (!parsed) {
+      return null;
+    }
+
+    return formatParsedExcelDate(parsed);
+  }
+
+  if (typeof cell.v === 'string') {
+    return cell.v;
+  }
+
+  return null;
+}
+
+function formatDateValue(value: Date): string {
+  const year = value.getFullYear();
+  const month = pad(value.getMonth() + 1);
+  const day = pad(value.getDate());
+  const hours = value.getHours();
+  const minutes = value.getMinutes();
+  const seconds = value.getSeconds();
+  const milliseconds = value.getMilliseconds();
+
+  if (hours === 0 && minutes === 0 && seconds === 0 && milliseconds === 0) {
+    return `${year}-${month}-${day}`;
+  }
+
+  return `${year}-${month}-${day}T${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function formatParsedExcelDate(parsed: ParsedExcelDate): string {
+  const year = parsed.y;
+  const month = pad(parsed.m);
+  const day = pad(parsed.d);
+  const hours = parsed.H ?? 0;
+  const minutes = parsed.M ?? 0;
+  const seconds = Math.floor(parsed.S ?? 0);
+
+  if (hours === 0 && minutes === 0 && seconds === 0) {
+    return `${year}-${month}-${day}`;
+  }
+
+  return `${year}-${month}-${day}T${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function trimTrailingBlankCells(row: ImportedCellInput[]): ImportedCellInput[] {
+  let lastMeaningfulIndex = row.length - 1;
+
+  while (lastMeaningfulIndex >= 0) {
+    const cell = row[lastMeaningfulIndex];
+
+    if (cell.headerText !== '' || cell.value !== null || cell.hadFormula || cell.missingFormulaValue) {
+      break;
+    }
+
+    lastMeaningfulIndex -= 1;
+  }
+
+  return row.slice(0, lastMeaningfulIndex + 1);
+}
+
+function trimTrailingBlankRows(rows: ImportedCellInput[][]): ImportedCellInput[][] {
+  let lastMeaningfulIndex = rows.length - 1;
+
+  while (lastMeaningfulIndex >= 0) {
+    const row = rows[lastMeaningfulIndex];
+    const hasMeaningfulCell = row.some(
+      (cell) => cell.headerText !== '' || cell.value !== null || cell.hadFormula || cell.missingFormulaValue,
+    );
+
+    if (hasMeaningfulCell) {
+      break;
+    }
+
+    lastMeaningfulIndex -= 1;
+  }
+
+  return rows.slice(0, lastMeaningfulIndex + 1);
+}
+
+function sanitizeSheetName(sourceName: string): string {
+  const sanitized = sourceName.replace(/[\\/?*[\]:]/g, ' ').trim();
+  const fallback = sanitized === '' ? 'Sheet1' : sanitized;
+  return fallback.slice(0, 31);
+}
+
+function serializeCellValue(value: CellValue): CellValue {
+  return value;
+}
+
+interface ParsedExcelDate {
+  y: number;
+  m: number;
+  d: number;
+  H?: number;
+  M?: number;
+  S?: number;
+}
+
+=== src\App.tsx ===
+import { ChangeEvent, startTransition, useState } from 'react';
+
+import { getActiveTable, getOrderedRows, setActiveTable, type ImportWarning, type Table, type Workbook } from './domain/model';
+import {
+  buildCsvExportFileName,
+  buildXlsxExportFileName,
+  exportTableCsvBlob,
+  exportTableXlsxBlob,
+  importWorkbookFromFile,
+} from './domain/workbookIO';
+
+const PREVIEW_ROW_LIMIT = 50;
+
+export default function App() {
+  const [workbook, setWorkbookState] = useState<Workbook | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const activeTable = getActiveTable(workbook);
+  const previewRows = activeTable ? getOrderedRows(activeTable).slice(0, PREVIEW_ROW_LIMIT) : [];
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const importedWorkbook = await importWorkbookFromFile(file);
+      startTransition(() => {
+        setWorkbookState(importedWorkbook);
+      });
+    } catch (caughtError) {
+      setWorkbookState(null);
+      setError(caughtError instanceof Error ? caughtError.message : 'Import failed.');
+    } finally {
+      setLoading(false);
+      event.target.value = '';
+    }
+  }
+
+  function handleActiveTableChange(event: ChangeEvent<HTMLSelectElement>) {
+    if (!workbook) {
+      return;
+    }
+
+    setWorkbookState(setActiveTable(workbook, event.target.value));
+  }
+
+  function handleExportCsv() {
+    if (!activeTable) {
+      return;
+    }
+
+    downloadBlob(exportTableCsvBlob(activeTable), buildCsvExportFileName(activeTable));
+  }
+
+  function handleExportXlsx() {
+    if (!activeTable) {
+      return;
+    }
+
+    downloadBlob(exportTableXlsxBlob(activeTable), buildXlsxExportFileName(activeTable));
+  }
+
+  const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
+
+  return (
+    <main className="app-shell">
+      <section className="hero">
+        <div>
+          <p className="eyebrow">Milestone 1</p>
+          <h1>Scratch My Table</h1>
+          <p className="hero-copy">
+            Import one CSV or XLSX workbook, inspect the normalized active table, and export the active table values back out.
+          </p>
+        </div>
+        <label className="upload-card">
+          <span>Upload CSV or XLSX</span>
+          <input accept=".csv,.xlsx" onChange={handleFileChange} type="file" />
+        </label>
+      </section>
+
+      {loading ? <section className="status-card">Importing file...</section> : null}
+      {error ? <section className="status-card status-card--error">{error}</section> : null}
+
+      {!workbook || !activeTable ? (
+        <section className="empty-state">
+          <h2>No workbook loaded</h2>
+          <p>Start with one of the provided fixtures: <code>simple-customers.csv</code>, <code>messy-customers.csv</code>, or <code>orders-sample.csv</code>.</p>
+        </section>
+      ) : (
+        <>
+          <section className="toolbar">
+            <div className="summary-card">
+              <p className="summary-label">Source file</p>
+              <strong>{workbook.sourceFileName}</strong>
+              <p>{workbook.sourceFormat.toUpperCase()} import</p>
+            </div>
+            <div className="summary-card">
+              <p className="summary-label">Active table</p>
+              <strong>{activeTable.sourceName}</strong>
+              <p>
+                {activeTable.schema.columns.length} columns, {activeTable.rowOrder.length} rows
+              </p>
+            </div>
+            <div className="summary-card summary-card--actions">
+              <label className="selector">
+                <span>Active table / sheet</span>
+                <select onChange={handleActiveTableChange} value={workbook.activeTableId}>
+                  {workbook.tables.map((table) => (
+                    <option key={table.tableId} value={table.tableId}>
+                      {table.sourceName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="export-actions">
+                <button onClick={handleExportCsv} type="button">
+                  Export CSV
+                </button>
+                <button onClick={handleExportXlsx} type="button">
+                  Export XLSX
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel-grid">
+            <SchemaPanel table={activeTable} />
+            <WarningsPanel warnings={visibleWarnings} />
+          </section>
+
+          <PreviewPanel previewRows={previewRows} table={activeTable} />
+        </>
+      )}
+    </main>
+  );
+}
+
+function SchemaPanel({ table }: { table: Table }) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Schema</h2>
+        <p>Normalized headers and inferred logical types.</p>
+      </div>
+      <div className="table-frame">
+        <table className="data-table data-table--compact">
+          <thead>
+            <tr>
+              <th>Display name</th>
+              <th>Column ID</th>
+              <th>Type</th>
+              <th>Missing count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {table.schema.columns.map((column) => (
+              <tr key={column.columnId}>
+                <td>{column.displayName}</td>
+                <td>
+                  <code>{column.columnId}</code>
+                </td>
+                <td>{column.logicalType}</td>
+                <td>{column.missingCount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function WarningsPanel({ warnings }: { warnings: ImportWarning[] }) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Import warnings</h2>
+        <p>Notable normalization and workbook import events.</p>
+      </div>
+      {warnings.length === 0 ? (
+        <div className="empty-panel">No import warnings.</div>
+      ) : (
+        <ul className="warning-list">
+          {warnings.map((warning, index) => (
+            <li className="warning-item" key={`${warning.code}-${warning.tableId ?? 'workbook'}-${warning.columnId ?? 'all'}-${index}`}>
+              <div className="warning-code">{warning.code}</div>
+              <div>
+                <p>{warning.message}</p>
+                <small>{warning.scope}</small>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function PreviewPanel({ table, previewRows }: { table: Table; previewRows: ReturnType<typeof getOrderedRows> }) {
+  return (
+    <section className="panel panel--full">
+      <div className="panel-header">
+        <h2>Preview grid</h2>
+        <p>
+          Showing {previewRows.length} of {table.rowOrder.length} rows.
+        </p>
+      </div>
+      <div className="table-frame">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Row ID</th>
+              {table.schema.columns.map((column) => (
+                <th key={column.columnId}>
+                  <div className="column-heading">
+                    <span>{column.displayName}</span>
+                    <small>{column.columnId}</small>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.map((row) => (
+              <tr key={row.rowId}>
+                <td>
+                  <code>{row.rowId}</code>
+                </td>
+                {table.schema.columns.map((column) => (
+                  <td key={`${row.rowId}-${column.columnId}`}>{formatCellValue(row.cellsByColumnId[column.columnId])}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function formatCellValue(value: Table['rowsById'][string]['cellsByColumnId'][string]) {
+  if (value === null) {
+    return '';
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false';
+  }
+
+  return String(value);
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+=== src\main.tsx ===
+import ReactDOM from 'react-dom/client';
+
+import App from './App';
+import './styles.css';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
+
+=== src\styles.css ===
+:root {
+  color-scheme: light;
+  --paper: #f4efe7;
+  --panel: #fffdf9;
+  --ink: #1c1a17;
+  --muted: #645d53;
+  --line: #d8ccba;
+  --accent: #b04a1f;
+  --accent-soft: #f6d9cb;
+  --shadow: 0 18px 40px rgba(34, 26, 16, 0.08);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(176, 74, 31, 0.08), transparent 28rem),
+    linear-gradient(180deg, #fbf7f1 0%, var(--paper) 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+code {
+  font-family: "Consolas", "Courier New", monospace;
+}
+
+.app-shell {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.hero {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.8fr);
+  align-items: stretch;
+  margin-bottom: 1.5rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.8rem);
+  line-height: 0.96;
+}
+
+.hero-copy {
+  max-width: 60ch;
+  color: var(--muted);
+}
+
+.upload-card,
+.status-card,
+.empty-state,
+.summary-card,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1.1rem;
+  box-shadow: var(--shadow);
+}
+
+.upload-card {
+  display: grid;
+  place-content: center;
+  min-height: 10rem;
+  padding: 1.5rem;
+  gap: 0.8rem;
+  border-style: dashed;
+  background: linear-gradient(180deg, #fffaf4 0%, #fffdf9 100%);
+  font-weight: 700;
+}
+
+.upload-card input {
+  width: 100%;
+}
+
+.status-card,
+.empty-state {
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.status-card--error {
+  border-color: #cf8c74;
+  background: #fff1ec;
+}
+
+.toolbar {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 1rem;
+}
+
+.summary-card {
+  padding: 1rem 1.25rem;
+}
+
+.summary-label {
+  margin: 0 0 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.summary-card strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.summary-card--actions {
+  display: grid;
+  gap: 1rem;
+}
+
+.selector {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.selector select {
+  width: 100%;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fff;
+}
+
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.export-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  background: var(--ink);
+  color: #fff7ef;
+  cursor: pointer;
+}
+
+.export-actions button:last-child {
+  background: var(--accent);
+}
+
+.panel-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  margin-bottom: 1rem;
+}
+
+.panel {
+  padding: 1rem 1.25rem;
+}
+
+.panel--full {
+  padding-bottom: 1.25rem;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: baseline;
+  margin-bottom: 0.85rem;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.panel-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.table-frame {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: #fff;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.data-table--compact {
+  min-width: 560px;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid #efe4d6;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table thead th {
+  position: sticky;
+  top: 0;
+  background: #fff7ed;
+  z-index: 1;
+}
+
+.column-heading {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.column-heading small {
+  color: var(--muted);
+}
+
+.warning-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.warning-item {
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  gap: 0.8rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fff8f3;
+}
+
+.warning-item p,
+.warning-item small {
+  margin: 0;
+}
+
+.warning-code {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: #7b2f0d;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0 0.8rem;
+}
+
+.empty-panel {
+  padding: 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 0.8rem;
+  color: var(--muted);
+}
+
+@media (max-width: 1024px) {
+  .hero,
+  .toolbar,
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 1rem;
+  }
+
+  .panel,
+  .summary-card,
+  .upload-card,
+  .empty-state,
+  .status-card {
+    border-radius: 0.9rem;
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+=== schemas\workflow-ir-v1.schema.json ===
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scratch-my-table.local/schemas/workflow-ir-v1.schema.json",
+  "title": "Workflow IR v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "workflowId", "name", "steps"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "workflowId": {
+      "$ref": "#/$defs/id"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scalar": {
+      "type": ["string", "number", "boolean", "null"]
+    },
+    "nonNullScalar": {
+      "type": ["string", "number", "boolean"]
+    },
+    "columnTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "columnIds"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "columns"
+        },
+        "columnIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "columnSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columnId", "displayName"],
+      "properties": {
+        "columnId": {
+          "$ref": "#/$defs/id"
+        },
+        "displayName": {
+          "$ref": "#/$defs/displayName"
+        }
+      }
+    },
+    "expression": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": {
+              "$ref": "#/$defs/scalar"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "column"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "parts"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "concat"
+            },
+            "parts": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "inputs"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "coalesce"
+            },
+            "inputs": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "treatWhitespaceAsEmpty"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "isEmpty"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "treatWhitespaceAsEmpty": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "equals"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "$ref": "#/$defs/nonNullScalar"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "contains"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "startsWith"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "endsWith"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "greaterThan"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "$ref": "#/$defs/nonNullScalar"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "columnId", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "lessThan"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "$ref": "#/$defs/nonNullScalar"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "conditions"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "and"
+            },
+            "conditions": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "conditions"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "or"
+            },
+            "conditions": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "condition"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not"
+            },
+            "condition": {
+              "$ref": "#/$defs/condition"
+            }
+          }
+        }
+      ]
+    },
+    "sortKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columnId", "direction"],
+      "properties": {
+        "columnId": {
+          "$ref": "#/$defs/id"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["asc", "desc"]
+        }
+      }
+    },
+    "step": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "target", "value", "treatWhitespaceAsEmpty"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "fillEmpty"
+            },
+            "target": {
+              "$ref": "#/$defs/columnTarget"
+            },
+            "value": {
+              "$ref": "#/$defs/nonNullScalar"
+            },
+            "treatWhitespaceAsEmpty": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "target", "trim", "collapseWhitespace", "case"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "normalizeText"
+            },
+            "target": {
+              "$ref": "#/$defs/columnTarget"
+            },
+            "trim": {
+              "type": "boolean"
+            },
+            "collapseWhitespace": {
+              "type": "boolean"
+            },
+            "case": {
+              "type": "string",
+              "enum": ["preserve", "lower", "upper"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "columnId", "newDisplayName"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "renameColumn"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "newDisplayName": {
+              "$ref": "#/$defs/displayName"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "newColumn", "expression"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "deriveColumn"
+            },
+            "newColumn": {
+              "$ref": "#/$defs/columnSpec"
+            },
+            "expression": {
+              "$ref": "#/$defs/expression"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "mode", "condition"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "filterRows"
+            },
+            "mode": {
+              "type": "string",
+              "enum": ["keep", "drop"]
+            },
+            "condition": {
+              "$ref": "#/$defs/condition"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "columnId", "delimiter", "outputColumns"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "splitColumn"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "delimiter": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outputColumns": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/columnSpec"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "target", "separator", "newColumn"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "combineColumns"
+            },
+            "target": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/columnTarget"
+                },
+                {
+                  "properties": {
+                    "columnIds": {
+                      "minItems": 2
+                    }
+                  }
+                }
+              ]
+            },
+            "separator": {
+              "type": "string"
+            },
+            "newColumn": {
+              "$ref": "#/$defs/columnSpec"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "target"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "deduplicateRows"
+            },
+            "target": {
+              "$ref": "#/$defs/columnTarget"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "sorts"],
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "type": {
+              "type": "string",
+              "const": "sortRows"
+            },
+            "sorts": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/sortKey"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+
+=== fixtures\messy-customers.csv ===
+customer_id,full_name,email,phone,city,state,status,signup_date
+C100,"  Alice   Ng  "," ALICE.NG@example.com ","555-0100"," Seattle ","WA",,2025-02-01
+C101,"Ben Ortiz","ben.ortiz@example.com","555-0101","Portland","OR","active",2025-02-02
+C102,"Cara Patel","",,"San Jose","CA","active",2025-02-03
+C103,"Cara Patel","cara.patel@example.com","555-0103"," San   Jose ","CA","active",2025-02-03
+C104,"  Diego Ramirez","diego.ramirez@example.com",,"Austin","TX","   ",2025-02-04
+C105,"Diego Ramirez","diego.ramirez@example.com","555-0104","Austin","TX","active",2025-02-04
+C106,"  Erin   Stone  "," erin.stone@example.com ","555-0105","Denver","CO","inactive",2025-02-05
+
+=== fixtures\orders-sample.csv ===
+order_id,customer_email,order_total,order_status,ship_city,ship_state,ordered_at
+O9001,alice.ng@example.com,120.50,paid,Seattle,WA,2025-03-01T09:15:00Z
+O9002,ben.ortiz@example.com,75.00,pending,Portland,OR,2025-03-01T10:20:00Z
+O9003,cara.patel@example.com,250.00,paid,San Jose,CA,2025-03-02T12:00:00Z
+O9004,,45.00,cancelled,Austin,TX,2025-03-02T13:10:00Z
+O9005,diego.ramirez@example.com,250.00,paid,Austin,TX,2025-03-03T08:00:00Z
+O9006,erin.stone@example.com,18.75,pending,Denver,CO,2025-03-03T09:30:00Z
+
+=== fixtures\simple-customers.csv ===
+customer_id,first_name,last_name,email,city,state,created_at
+C001,Alice,Ng,alice.ng@example.com,Seattle,WA,2025-01-10
+C002,Ben,Ortiz,ben.ortiz@example.com,Portland,OR,2025-01-12
+C003,Cara,Patel,cara.patel@example.com,San Jose,CA,2025-01-16
+C004,Diego,Ramirez,diego.ramirez@example.com,Austin,TX,2025-01-20
+C005,Erin,Stone,erin.stone@example.com,Denver,CO,2025-01-24

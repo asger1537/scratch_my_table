@@ -1,0 +1,29 @@
+{
+  "name": "scratch-my-table",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && node scripts/build-local-dist.mjs",
+    "build:web": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ajv": "^8.18.0",
+    "blockly": "^12.5.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "esbuild": "^0.27.4",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.1",
+    "vitest": "^4.1.0"
+  }
+}

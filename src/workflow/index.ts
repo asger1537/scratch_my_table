@@ -1,0 +1,15 @@
+export { executeWorkflow } from './execute';
+export { cloneTable, executeValidatedWorkflow, summarizeWorkflowChanges, validateWorkflowSemantics } from './runtime';
+export { validateWorkflowStructure } from './structural';
+export type {
+  Workflow,
+  WorkflowCondition,
+  WorkflowExecutionResult,
+  WorkflowExecutionWarning,
+  WorkflowExpression,
+  WorkflowSemanticStepResult,
+  WorkflowSemanticValidationResult,
+  WorkflowStep,
+  WorkflowStructuralValidationResult,
+  WorkflowValidationIssue,
+} from './types';
