@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "workflowId": "wf_drop_internal_columns",
+  "name": "Drop internal columns",
+  "description": "Remove columns that should not appear in the final export.",
+  "steps": [
+    {
+      "id": "step_drop_internal_columns",
+      "type": "dropColumns",
+      "columnIds": ["col_notes", "col_internal_flag"]
+    }
+  ]
+}

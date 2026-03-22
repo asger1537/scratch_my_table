@@ -2,9 +2,11 @@ import type { CellValue, LogicalType, Schema, Table } from '../domain/model';
 
 export type WorkflowScalar = CellValue;
 export type WorkflowNonNullScalar = Exclude<WorkflowScalar, null>;
+export type WorkflowVersion = 2;
+
 export type WorkflowStepType =
-  | 'fillEmpty'
-  | 'normalizeText'
+  | 'scopedTransform'
+  | 'dropColumns'
   | 'renameColumn'
   | 'deriveColumn'
   | 'filterRows'
@@ -14,16 +16,11 @@ export type WorkflowStepType =
   | 'sortRows';
 
 export interface Workflow {
-  version: 1;
+  version: WorkflowVersion;
   workflowId: string;
   name: string;
   description?: string;
   steps: WorkflowStep[];
-}
-
-export interface WorkflowColumnTarget {
-  kind: 'columns';
-  columnIds: string[];
 }
 
 export interface WorkflowNewColumn {
@@ -31,11 +28,28 @@ export interface WorkflowNewColumn {
   displayName: string;
 }
 
+export type WorkflowExpressionFunctionName =
+  | 'trim'
+  | 'lower'
+  | 'upper'
+  | 'collapseWhitespace'
+  | 'substring'
+  | 'replace'
+  | 'split'
+  | 'first'
+  | 'last'
+  | 'coalesce'
+  | 'concat';
+
 export type WorkflowExpression =
+  | WorkflowValueExpression
   | WorkflowLiteralExpression
   | WorkflowColumnExpression
-  | WorkflowConcatExpression
-  | WorkflowCoalesceExpression;
+  | WorkflowCallExpression;
+
+export interface WorkflowValueExpression {
+  kind: 'value';
+}
 
 export interface WorkflowLiteralExpression {
   kind: 'literal';
@@ -47,14 +61,10 @@ export interface WorkflowColumnExpression {
   columnId: string;
 }
 
-export interface WorkflowConcatExpression {
-  kind: 'concat';
-  parts: WorkflowExpression[];
-}
-
-export interface WorkflowCoalesceExpression {
-  kind: 'coalesce';
-  inputs: WorkflowExpression[];
+export interface WorkflowCallExpression {
+  kind: 'call';
+  name: WorkflowExpressionFunctionName;
+  args: WorkflowExpression[];
 }
 
 export type WorkflowCondition =
@@ -126,21 +136,13 @@ export interface WorkflowNotCondition {
   condition: WorkflowCondition;
 }
 
-export interface WorkflowFillEmptyStep {
+export interface WorkflowScopedTransformStep {
   id: string;
-  type: 'fillEmpty';
-  target: WorkflowColumnTarget;
-  value: WorkflowNonNullScalar;
+  type: 'scopedTransform';
+  columnIds: string[];
+  rowCondition?: WorkflowCondition;
+  expression: WorkflowExpression;
   treatWhitespaceAsEmpty: boolean;
-}
-
-export interface WorkflowNormalizeTextStep {
-  id: string;
-  type: 'normalizeText';
-  target: WorkflowColumnTarget;
-  trim: boolean;
-  collapseWhitespace: boolean;
-  case: 'preserve' | 'lower' | 'upper';
 }
 
 export interface WorkflowRenameColumnStep {
@@ -148,6 +150,12 @@ export interface WorkflowRenameColumnStep {
   type: 'renameColumn';
   columnId: string;
   newDisplayName: string;
+}
+
+export interface WorkflowDropColumnsStep {
+  id: string;
+  type: 'dropColumns';
+  columnIds: string[];
 }
 
 export interface WorkflowDeriveColumnStep {
@@ -175,7 +183,7 @@ export interface WorkflowSplitColumnStep {
 export interface WorkflowCombineColumnsStep {
   id: string;
   type: 'combineColumns';
-  target: WorkflowColumnTarget;
+  columnIds: string[];
   separator: string;
   newColumn: WorkflowNewColumn;
 }
@@ -183,7 +191,7 @@ export interface WorkflowCombineColumnsStep {
 export interface WorkflowDeduplicateRowsStep {
   id: string;
   type: 'deduplicateRows';
-  target: WorkflowColumnTarget;
+  columnIds: string[];
 }
 
 export interface WorkflowSortKey {
@@ -198,8 +206,8 @@ export interface WorkflowSortRowsStep {
 }
 
 export type WorkflowStep =
-  | WorkflowFillEmptyStep
-  | WorkflowNormalizeTextStep
+  | WorkflowScopedTransformStep
+  | WorkflowDropColumnsStep
   | WorkflowRenameColumnStep
   | WorkflowDeriveColumnStep
   | WorkflowFilterRowsStep
@@ -262,5 +270,6 @@ export interface WorkflowExecutionResult {
 
 export interface WorkflowExpressionValidationResult {
   logicalType: LogicalType;
+  valueKind: 'scalar' | 'list';
   issues: WorkflowValidationIssue[];
 }

@@ -1,18 +1,30 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_normalize_email",
   "name": "Normalize email addresses",
   "steps": [
     {
       "id": "step_normalize_email",
-      "type": "normalizeText",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_email"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "lower",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          }
+        ]
       },
-      "trim": true,
-      "collapseWhitespace": false,
-      "case": "lower"
+      "treatWhitespaceAsEmpty": false
     }
   ]
 }

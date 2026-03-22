@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_derive_full_name",
   "name": "Create full name",
   "steps": [
@@ -11,8 +11,9 @@
         "displayName": "full_name"
       },
       "expression": {
-        "kind": "concat",
-        "parts": [
+        "kind": "call",
+        "name": "concat",
+        "args": [
           {
             "kind": "column",
             "columnId": "col_first_name"

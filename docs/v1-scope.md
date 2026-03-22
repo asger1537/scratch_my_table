@@ -14,6 +14,7 @@ The V1 workflow step catalog is exactly:
 
 - fill empty cells
 - trim / normalize text
+- drop columns
 - rename columns
 - create a derived column
 - filter rows
@@ -22,7 +23,7 @@ The V1 workflow step catalog is exactly:
 - deduplicate rows
 - sort rows
 
-No additional workflow step types are in scope for Phase 1.
+No additional workflow step types are in scope beyond this catalog.
 
 ## User Flow
 

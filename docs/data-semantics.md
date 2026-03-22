@@ -10,7 +10,7 @@ Rules:
 
 - `null` means the source cell had no value.
 - `""` means the source explicitly contained an empty text value.
-- Emptiness-sensitive workflow behavior treats both `null` and `""` as empty by default.
+- Emptiness-sensitive workflow behavior treats both `null` and `""` as empty where the step semantics say “empty”.
 - `null` is not equal to `""` for deduplication, equality filters, or sort comparison.
 
 ### Whitespace-Only Values
@@ -20,20 +20,48 @@ Whitespace-only text is preserved on import as a string.
 Rules:
 
 - `"   "` is not automatically converted to `null`.
-- `"   "` is not automatically treated as empty.
-- A step may opt in to treating whitespace-only strings as empty where the IR supports `treatWhitespaceAsEmpty`.
-- `normalizeText` may turn whitespace-only strings into `""` when `trim` is enabled.
+- whitespace-only strings are treated as empty by default for emptiness-sensitive workflow behavior.
+- `isEmpty` treats whitespace-only strings as empty unless `treatWhitespaceAsEmpty` is explicitly `false`.
+- `scopedTransform` treats whitespace-only strings as empty for `coalesce(...)` unless `treatWhitespaceAsEmpty` is explicitly `false`.
+- String functions such as `trim(value)` or `collapseWhitespace(value)` may turn whitespace-only strings into `""`.
 
-### String Normalization
+## Expression Semantics
 
-`normalizeText` uses explicit flags instead of hidden behavior.
+Workflow IR v2 uses one explicit expression AST.
+
+Expression node kinds:
+
+- `value`
+- `literal`
+- `column`
+- `call`
 
 Rules:
 
-- `trim: true` removes leading and trailing Unicode whitespace.
-- `collapseWhitespace: true` replaces one or more consecutive whitespace characters inside the string with a single ASCII space.
-- `case: "preserve" | "lower" | "upper"` is applied after trimming and whitespace collapsing.
-- If normalization produces an empty string, the stored value becomes `""`, not `null`.
+- `value` means the current selected cell and is valid only inside `scopedTransform`.
+- `column` means another column in the current row and is valid inside both `deriveColumn` and `scopedTransform`.
+- `literal` may be `string`, `number`, `boolean`, or `null`.
+- `call` applies one built-in pure function.
+
+Built-in function semantics:
+
+- `trim(x)`: trims leading and trailing whitespace from string inputs
+- `lower(x)`: lowercases string inputs
+- `upper(x)`: uppercases string inputs
+- `collapseWhitespace(x)`: replaces one or more whitespace runs with one ASCII space
+- `substring(x, start, length)`: returns the selected string slice
+- `replace(x, from, to)`: replaces all exact `from` matches with `to`
+- `split(x, delimiter)`: splits a string into a list of string parts
+- `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
+- `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
+- `coalesce(a, b)`: returns `a` unless `a` is considered empty for this step, otherwise returns `b`
+- `concat(a, b, ...)`: stringifies non-null values and joins them with no separator
+
+Determinism rules:
+
+- Functions are pure and deterministic.
+- No function can mutate other cells, rows, or schema.
+- V1 does not support user-defined functions, loops, or recursion.
 
 ## Type Inference
 
@@ -51,7 +79,7 @@ The schema-level logical types for V1 are:
 
 ### Inference Algorithm
 
-Type inference runs per column after import and uses all non-null cells in that column.
+Type inference runs per column after import and after workflow execution using all non-null cells in that column.
 
 Rules:
 
@@ -156,4 +184,4 @@ Rules:
 
 ## Open Questions
 
-None for V1. The Phase 1 default is to fix the semantics above instead of introducing configurable import or execution modes.
+None for the current milestone. The current defaults are fixed instead of configurable.

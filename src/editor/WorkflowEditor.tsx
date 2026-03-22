@@ -1,13 +1,21 @@
-import { type MutableRefObject, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
 
 import * as Blockly from 'blockly';
 
 import type { Table } from '../domain/model';
 import type { Workflow } from '../workflow';
 
+import type { AuthoringWorkflowMetadata } from './authoring';
 import { BLOCK_TYPES, getWorkflowToolboxDefinition, registerWorkflowBlocks } from './blocks';
-import { createDefaultWorkflow, type WorkspaceWorkflowResult, workflowToWorkspace, workspaceToWorkflow } from './mapping';
+import {
+  createDefaultWorkflow,
+  getWorkspaceMetadata,
+  setWorkspaceMetadata,
+  workflowToWorkspace,
+  workspaceToWorkflow,
+} from './mapping';
 import { collectWorkflowColumnIds, setEditorSchemaColumns } from './schemaOptions';
+import type { WorkspaceWorkflowResult } from './types';
 
 interface WorkflowEditorProps {
   table: Table;
@@ -17,14 +25,25 @@ interface WorkflowEditorProps {
   onWorkspaceChange: (result: WorkspaceWorkflowResult) => void;
 }
 
+const STEP_BLOCK_TYPES = new Set<string>([
+  BLOCK_TYPES.scopedTransformStep,
+  BLOCK_TYPES.renameColumnStep,
+  BLOCK_TYPES.deriveColumnStep,
+  BLOCK_TYPES.filterRowsStep,
+  BLOCK_TYPES.splitColumnStep,
+  BLOCK_TYPES.combineColumnsStep,
+  BLOCK_TYPES.deduplicateRowsStep,
+  BLOCK_TYPES.sortRowsStep,
+]);
+
 export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, onWorkspaceChange }: WorkflowEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const suppressChangesRef = useRef(false);
-  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false);
+  const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow));
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
-  const isFullscreen = isBrowserFullscreen || isFallbackFullscreen;
+  const isFullscreen = isFallbackFullscreen;
 
   useEffect(() => {
     registerWorkflowBlocks();
@@ -66,6 +85,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     window.addEventListener('resize', handleResize);
 
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    setMetadata(getWorkspaceMetadata(workspace));
     resizeWorkspace(workspace, true);
 
     return () => {
@@ -77,6 +97,10 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
 
   useEffect(() => {
     setEditorSchemaColumns(table.schema.columns, extraColumnIds);
+
+    if (workspaceRef.current) {
+      resizeWorkspace(workspaceRef.current);
+    }
   }, [extraColumnIds, table.schema.columns]);
 
   useEffect(() => {
@@ -87,31 +111,9 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     }
 
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    setMetadata(getWorkspaceMetadata(workspace));
     resizeWorkspace(workspace, true);
   }, [loadVersion]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const shell = shellRef.current;
-      const nextIsBrowserFullscreen = shell !== null && document.fullscreenElement === shell;
-
-      setIsBrowserFullscreen(nextIsBrowserFullscreen);
-
-      if (!nextIsBrowserFullscreen) {
-        const workspace = workspaceRef.current;
-
-        if (workspace) {
-          resizeWorkspace(workspace);
-        }
-      }
-    };
-
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
-
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange);
-    };
-  }, []);
 
   useEffect(() => {
     if (!isFallbackFullscreen) {
@@ -147,32 +149,31 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
   }, [isFullscreen]);
 
   async function handleToggleFullscreen() {
-    const shell = shellRef.current;
-
-    if (!shell) {
-      return;
-    }
-
-    if (isBrowserFullscreen) {
-      await document.exitFullscreen();
-      return;
-    }
-
     if (isFallbackFullscreen) {
       setIsFallbackFullscreen(false);
       return;
     }
 
-    if ('requestFullscreen' in shell && typeof shell.requestFullscreen === 'function') {
-      try {
-        await shell.requestFullscreen();
-        return;
-      } catch {
-        // Fall back to an in-page expanded editor when browser fullscreen is unavailable.
-      }
-    }
-
     setIsFallbackFullscreen(true);
+  }
+
+  function handleMetadataChange(field: keyof Pick<AuthoringWorkflowMetadata, 'name' | 'description'>) {
+    return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const workspace = workspaceRef.current;
+
+      if (!workspace) {
+        return;
+      }
+
+      const nextMetadata = {
+        ...metadata,
+        [field]: event.target.value,
+      };
+
+      setMetadata(nextMetadata);
+      setWorkspaceMetadata(workspace, nextMetadata);
+      onWorkspaceChange(workspaceToWorkflow(workspace));
+    };
   }
 
   return (
@@ -188,6 +189,16 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
       >
         {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       </button>
+      <div className="workflow-editor-metadata">
+        <label className="workflow-meta-field">
+          <span>Workflow name</span>
+          <input onChange={handleMetadataChange('name')} type="text" value={metadata.name} />
+        </label>
+        <label className="workflow-meta-field workflow-meta-field--wide">
+          <span>Description</span>
+          <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
+        </label>
+      </div>
       <div className="workflow-editor-canvas" ref={containerRef} />
     </div>
   );
@@ -203,23 +214,16 @@ function loadWorkspace(
   suppressChangesRef.current = true;
   setEditorSchemaColumns(table.schema.columns, collectWorkflowColumnIds(workflow));
   workflowToWorkspace(workspace, workflow);
-  const root = workspace.getTopBlocks(false).find((block) => block.type === BLOCK_TYPES.workflowRoot);
-
-  if (root) {
-    root.setDeletable(false);
-    root.setMovable(false);
-  }
-
   suppressChangesRef.current = false;
   onWorkspaceChange(workspaceToWorkflow(workspace));
 }
 
-function focusWorkflowRoot(workspace: Blockly.Workspace) {
+function focusPrimaryStep(workspace: Blockly.Workspace) {
   if (!('centerOnBlock' in workspace)) {
     return;
   }
 
-  const root = workspace.getTopBlocks(false).find((block) => block.type === BLOCK_TYPES.workflowRoot);
+  const root = workspace.getTopBlocks(true).find((block) => isStepBlockType(block.type));
 
   if (!root) {
     return;
@@ -233,7 +237,21 @@ function resizeWorkspace(workspace: Blockly.WorkspaceSvg, focusRoot = false) {
     Blockly.svgResize(workspace);
 
     if (focusRoot) {
-      focusWorkflowRoot(workspace);
+      focusPrimaryStep(workspace);
     }
   });
+}
+
+function getDefaultMetadata(table: Table, workflow: Workflow | null): AuthoringWorkflowMetadata {
+  const seedWorkflow = workflow ?? createDefaultWorkflow(table);
+
+  return {
+    workflowId: seedWorkflow.workflowId,
+    name: seedWorkflow.name,
+    description: seedWorkflow.description,
+  };
+}
+
+function isStepBlockType(type: string) {
+  return STEP_BLOCK_TYPES.has(type);
 }

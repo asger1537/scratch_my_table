@@ -1,15 +1,14 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_deduplicate_email",
   "name": "Deduplicate by email",
   "steps": [
     {
       "id": "step_deduplicate_email",
       "type": "deduplicateRows",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
-      }
+      "columnIds": [
+        "col_email"
+      ]
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_paid_orders_over_100",
   "name": "Paid orders over 100",
   "steps": [

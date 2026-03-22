@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_rename_customer_id",
   "name": "Rename customer ID",
   "steps": [

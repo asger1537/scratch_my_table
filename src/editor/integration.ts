@@ -3,7 +3,8 @@ import type * as Blockly from 'blockly';
 import type { Table } from '../domain/model';
 import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from '../workflow';
 
-import { type EditorIssue, workspaceToWorkflow } from './mapping';
+import { workspaceToWorkflow } from './mapping';
+import type { EditorIssue } from './types';
 
 export interface EditorValidationResult {
   workflow: Workflow | null;

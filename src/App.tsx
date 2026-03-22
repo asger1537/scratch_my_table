@@ -1,4 +1,4 @@
-import { ChangeEvent, startTransition, useEffect, useState } from 'react';
+import { ChangeEvent, DragEvent, startTransition, useEffect, useRef, useState } from 'react';
 
 import {
   WorkflowEditor,
@@ -21,6 +21,8 @@ import {
 const PREVIEW_ROW_LIMIT = 50;
 
 export default function App() {
+  const workflowImportInputRef = useRef<HTMLInputElement | null>(null);
+  const workflowImportDragDepthRef = useRef(0);
   const [workbook, setWorkbookState] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,6 +32,10 @@ export default function App() {
   const [loadWorkflow, setLoadWorkflow] = useState<Workflow | null>(null);
   const [workflowLoadVersion, setWorkflowLoadVersion] = useState(0);
   const [workflowJsonError, setWorkflowJsonError] = useState<string | null>(null);
+  const [isWorkflowImportDialogOpen, setIsWorkflowImportDialogOpen] = useState(false);
+  const [workflowImportMode, setWorkflowImportMode] = useState<'choice' | 'paste'>('choice');
+  const [workflowImportPasteValue, setWorkflowImportPasteValue] = useState('');
+  const [isWorkflowImportDragActive, setIsWorkflowImportDragActive] = useState(false);
   const [executionResult, setExecutionResult] = useState<WorkflowExecutionResult | null>(null);
 
   const activeTable = getActiveTable(workbook);
@@ -134,26 +140,97 @@ export default function App() {
     downloadBlob(new Blob([authoredWorkflowJson], { type: 'application/json;charset=utf-8' }), `${authoredWorkflow.workflowId || 'workflow'}.json`);
   }
 
-  async function handleImportWorkflowJson(event: ChangeEvent<HTMLInputElement>) {
+  async function handleImportWorkflowJsonFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
     if (!file) {
       return;
     }
 
-    const parsed = parseWorkflowJson(await file.text());
+    await importWorkflowJsonFile(file);
+    event.target.value = '';
+  }
+
+  async function importWorkflowJsonFile(file: File) {
+    await importWorkflowJsonText(await file.text());
+  }
+
+  async function importWorkflowJsonText(text: string) {
+    const parsed = parseWorkflowJson(text);
 
     if (!parsed.workflow) {
       setWorkflowJsonError(parsed.issues.map((issue) => issue.message).join('\n'));
-      event.target.value = '';
-      return;
+      return false;
     }
 
     setWorkflowJsonError(null);
     setExecutionResult(null);
     setLoadWorkflow(parsed.workflow);
     setWorkflowLoadVersion((version) => version + 1);
-    event.target.value = '';
+    setIsWorkflowImportDialogOpen(false);
+    setWorkflowImportMode('choice');
+    setWorkflowImportPasteValue('');
+    return true;
+  }
+
+  function handleOpenWorkflowImportDialog() {
+    setWorkflowImportMode('choice');
+    setWorkflowImportPasteValue('');
+    setWorkflowJsonError(null);
+    workflowImportDragDepthRef.current = 0;
+    setIsWorkflowImportDragActive(false);
+    setIsWorkflowImportDialogOpen(true);
+  }
+
+  function handleCloseWorkflowImportDialog() {
+    setWorkflowImportMode('choice');
+    setWorkflowImportPasteValue('');
+    workflowImportDragDepthRef.current = 0;
+    setIsWorkflowImportDragActive(false);
+    setIsWorkflowImportDialogOpen(false);
+  }
+
+  function handleChooseWorkflowImportFile() {
+    workflowImportInputRef.current?.click();
+  }
+
+  async function handleImportWorkflowPaste() {
+    await importWorkflowJsonText(workflowImportPasteValue);
+  }
+
+  function handleWorkflowImportDragEnter(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    workflowImportDragDepthRef.current += 1;
+    setIsWorkflowImportDragActive(true);
+  }
+
+  function handleWorkflowImportDragOver(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsWorkflowImportDragActive(true);
+  }
+
+  function handleWorkflowImportDragLeave(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    workflowImportDragDepthRef.current = Math.max(0, workflowImportDragDepthRef.current - 1);
+
+    if (workflowImportDragDepthRef.current === 0) {
+      setIsWorkflowImportDragActive(false);
+    }
+  }
+
+  async function handleWorkflowImportDrop(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    workflowImportDragDepthRef.current = 0;
+    setIsWorkflowImportDragActive(false);
+
+    const file = event.dataTransfer.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    await importWorkflowJsonFile(file);
   }
 
   function resetWorkflowEditor(nextWorkflow: Workflow | null) {
@@ -175,10 +252,10 @@ export default function App() {
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">Milestone 3</p>
+          <p className="eyebrow">Selection-first authoring</p>
           <h1>Scratch My Table</h1>
           <p className="hero-copy">
-            Import one table, author a V1 workflow in blocks, validate it against the active schema, and run it through the existing executor.
+            Import one table, author V1 workflows as compact scope-and-expression steps, validate them against the active schema, and run them through the existing executor.
           </p>
         </div>
         <label className="upload-card">
@@ -244,16 +321,15 @@ export default function App() {
               <div className="panel-header">
                 <div>
                   <h2>Workflow editor</h2>
-                  <p>Blocks are an authoring view over the canonical workflow IR.</p>
+                  <p>Select columns, optionally scope rows, then apply an expression. The canonical workflow IR remains the runtime source of truth.</p>
                 </div>
                 <div className="workflow-actions">
                   <button disabled={!authoredWorkflow} onClick={handleExportWorkflowJson} type="button">
                     Export workflow JSON
                   </button>
-                  <label className="workflow-file-input">
-                    <span>Import workflow JSON</span>
-                    <input accept=".json,application/json" onChange={handleImportWorkflowJson} type="file" />
-                  </label>
+                  <button onClick={handleOpenWorkflowImportDialog} type="button">
+                    Import workflow JSON
+                  </button>
                   <button disabled={!canRunWorkflow} onClick={handleRunWorkflow} type="button">
                     Run workflow
                   </button>
@@ -286,6 +362,76 @@ export default function App() {
           ) : null}
         </>
       )}
+
+      <input
+        accept=".json,application/json"
+        className="workflow-hidden-input"
+        onChange={handleImportWorkflowJsonFile}
+        ref={workflowImportInputRef}
+        type="file"
+      />
+
+      {isWorkflowImportDialogOpen ? (
+        <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="workflow-import-title">
+          <div className="workflow-import-modal__scrim" onClick={handleCloseWorkflowImportDialog} />
+          <section className="workflow-import-modal__panel">
+            <div className="panel-header">
+              <div>
+                <h2 id="workflow-import-title">Import workflow JSON</h2>
+                <p>Choose whether to load a workflow from a file or paste canonical workflow JSON directly.</p>
+              </div>
+            </div>
+
+            {workflowJsonError ? <pre className="json-error-panel">{workflowJsonError}</pre> : null}
+
+            {workflowImportMode === 'choice' ? (
+              <div className="workflow-import-options">
+                <button
+                  className={`workflow-import-option${isWorkflowImportDragActive ? ' workflow-import-option--drag-active' : ''}`}
+                  onClick={handleChooseWorkflowImportFile}
+                  onDragEnter={handleWorkflowImportDragEnter}
+                  onDragLeave={handleWorkflowImportDragLeave}
+                  onDragOver={handleWorkflowImportDragOver}
+                  onDrop={(event) => {
+                    void handleWorkflowImportDrop(event);
+                  }}
+                  type="button"
+                >
+                  <strong>Import from file</strong>
+                  <span>Open the file selector or drop a `.json` workflow file here.</span>
+                </button>
+                <button className="workflow-import-option" onClick={() => setWorkflowImportMode('paste')} type="button">
+                  <strong>Paste workflow JSON</strong>
+                  <span>Paste canonical workflow JSON into a text area and import it directly.</span>
+                </button>
+              </div>
+            ) : (
+              <div className="workflow-import-paste">
+                <textarea
+                  className="json-viewer"
+                  onChange={(event) => setWorkflowImportPasteValue(event.target.value)}
+                  placeholder="Paste workflow JSON here"
+                  value={workflowImportPasteValue}
+                />
+                <div className="workflow-import-actions">
+                  <button onClick={() => setWorkflowImportMode('choice')} type="button">
+                    Back
+                  </button>
+                  <button disabled={workflowImportPasteValue.trim() === ''} onClick={() => void handleImportWorkflowPaste()} type="button">
+                    Import pasted JSON
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="workflow-import-actions">
+              <button onClick={handleCloseWorkflowImportDialog} type="button">
+                Close
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

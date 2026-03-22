@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "workflowId": "wf_customers_messy",
+  "name": "Customers Messy",
+  "steps": [
+    {
+      "id": "step_scoped_transform_1",
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_email"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "value"
+          },
+          {
+            "kind": "column",
+            "columnId": "col_email_2"
+          }
+        ]
+      },
+      "treatWhitespaceAsEmpty": true
+    },
+    {
+      "id": "step_filterrows_2",
+      "type": "filterRows",
+      "mode": "drop",
+      "condition": {
+        "kind": "isEmpty",
+        "columnId": "col_email",
+        "treatWhitespaceAsEmpty": true
+      }
+    },
+    {
+      "id": "step_dropcolumns_3",
+      "type": "dropColumns",
+      "columnIds": [
+        "col_email_2"
+      ]
+    }
+  ]
+}

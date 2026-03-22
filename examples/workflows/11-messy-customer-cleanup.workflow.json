@@ -1,48 +1,84 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_messy_customer_cleanup",
   "name": "Messy customer cleanup",
   "description": "Normalize text, fill defaults, remove incomplete rows, and sort for export.",
   "steps": [
     {
       "id": "step_normalize_email",
-      "type": "normalizeText",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_email"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "lower",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          }
+        ]
       },
-      "trim": true,
-      "collapseWhitespace": false,
-      "case": "lower"
+      "treatWhitespaceAsEmpty": false
     },
     {
       "id": "step_normalize_name",
-      "type": "normalizeText",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_full_name", "col_city"]
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_full_name",
+        "col_city"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "collapseWhitespace",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          }
+        ]
       },
-      "trim": true,
-      "collapseWhitespace": true,
-      "case": "preserve"
+      "treatWhitespaceAsEmpty": false
     },
     {
       "id": "step_fill_status",
-      "type": "fillEmpty",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_status"]
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_status"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "value"
+          },
+          {
+            "kind": "literal",
+            "value": "unknown"
+          }
+        ]
       },
-      "value": "unknown",
       "treatWhitespaceAsEmpty": true
     },
     {
       "id": "step_location",
       "type": "combineColumns",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_city", "col_state"]
-      },
+      "columnIds": [
+        "col_city",
+        "col_state"
+      ],
       "separator": ", ",
       "newColumn": {
         "columnId": "col_location",
@@ -56,16 +92,15 @@
       "condition": {
         "kind": "isEmpty",
         "columnId": "col_email",
-        "treatWhitespaceAsEmpty": false
+        "treatWhitespaceAsEmpty": true
       }
     },
     {
       "id": "step_dedupe_email",
       "type": "deduplicateRows",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
-      }
+      "columnIds": [
+        "col_email"
+      ]
     },
     {
       "id": "step_sort_signup",

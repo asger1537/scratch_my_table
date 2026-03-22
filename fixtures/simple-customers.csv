@@ -1,6 +1,6 @@
 customer_id,first_name,last_name,email,city,state,created_at
 C001,Alice,Ng,alice.ng@example.com,Seattle,WA,2025-01-10
 C002,Ben,Ortiz,ben.ortiz@example.com,Portland,OR,2025-01-12
-C003,Cara,Patel,cara.patel@example.com,San Jose,CA,2025-01-16
-C004,Diego,Ramirez,diego.ramirez@example.com,Austin,TX,2025-01-20
-C005,Erin,Stone,erin.stone@example.com,Denver,CO,2025-01-24
+C003,Cara,Patel Singh,cara.patel@example.com,San Jose,CA,2025-01-16
+C004,Diego,Ramirez Lopez,diego.ramirez@example.com,Austin,TX,2025-01-20
+C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24

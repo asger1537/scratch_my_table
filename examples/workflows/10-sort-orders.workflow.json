@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_sort_orders",
   "name": "Sort orders",
   "steps": [

@@ -22,6 +22,10 @@ export function getSchemaColumnOptions(): [string, string][] {
   return options.length > 0 ? options : [['No columns loaded', '']];
 }
 
+export function getEditorSchemaColumns() {
+  return currentColumns.map((column) => ({ ...column }));
+}
+
 export function collectWorkflowColumnIds(workflow: Workflow): string[] {
   const columnIds = new Set<string>();
 
@@ -34,11 +38,17 @@ export function collectWorkflowColumnIds(workflow: Workflow): string[] {
 
 function collectStepColumnIds(step: WorkflowStep, columnIds: Set<string>) {
   switch (step.type) {
-    case 'fillEmpty':
-    case 'normalizeText':
+    case 'scopedTransform':
+      step.columnIds.forEach((columnId) => columnIds.add(columnId));
+      if (step.rowCondition) {
+        collectConditionColumnIds(step.rowCondition, columnIds);
+      }
+      collectExpressionColumnIds(step.expression, columnIds);
+      return;
+    case 'dropColumns':
     case 'combineColumns':
     case 'deduplicateRows':
-      step.target.columnIds.forEach((columnId) => columnIds.add(columnId));
+      step.columnIds.forEach((columnId) => columnIds.add(columnId));
       return;
     case 'renameColumn':
     case 'splitColumn':
@@ -63,11 +73,8 @@ function collectExpressionColumnIds(expression: WorkflowExpression, columnIds: S
     case 'column':
       columnIds.add(expression.columnId);
       return;
-    case 'concat':
-      expression.parts.forEach((part) => collectExpressionColumnIds(part, columnIds));
-      return;
-    case 'coalesce':
-      expression.inputs.forEach((input) => collectExpressionColumnIds(input, columnIds));
+    case 'call':
+      expression.args.forEach((argument) => collectExpressionColumnIds(argument, columnIds));
       return;
     default:
       return;

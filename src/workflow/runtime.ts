@@ -10,11 +10,14 @@ import { inferLogicalType, isIsoDate, isIsoDateTime, normalizeWhitespace } from 
 
 import type {
   Workflow,
-  WorkflowColumnTarget,
+  WorkflowCallExpression,
+  WorkflowCombineColumnsStep,
   WorkflowCondition,
+  WorkflowDeduplicateRowsStep,
   WorkflowExecutionWarning,
   WorkflowExpression,
   WorkflowExpressionValidationResult,
+  WorkflowScopedTransformStep,
   WorkflowSemanticStepResult,
   WorkflowSemanticValidationResult,
   WorkflowStep,
@@ -35,6 +38,20 @@ interface WorkflowChangeSummary {
   removedRowCount: number;
   rowOrderChanged: boolean;
 }
+
+interface ExpressionContext {
+  scope: 'scopedTransform' | 'deriveColumn';
+  valueLogicalType?: LogicalType;
+}
+
+interface ExpressionExecutionContext {
+  scope: 'scopedTransform' | 'deriveColumn';
+  row: TableRow;
+  currentValue: CellValue;
+  treatWhitespaceAsEmpty: boolean;
+}
+
+type ExpressionRuntimeValue = CellValue | string[];
 
 const MISSING_CELL = Symbol('missingCell');
 
@@ -165,10 +182,10 @@ function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: numbe
   const basePath = `steps[${stepIndex}]`;
 
   switch (step.type) {
-    case 'fillEmpty':
-      return validateFillEmptyStep(step, table, basePath);
-    case 'normalizeText':
-      return validateNormalizeTextStep(step, table, basePath);
+    case 'scopedTransform':
+      return validateScopedTransformStep(step, table, basePath);
+    case 'dropColumns':
+      return validateDropColumnsStep(step, table, basePath);
     case 'renameColumn':
       return validateRenameColumnStep(step, table, basePath);
     case 'deriveColumn':
@@ -188,68 +205,64 @@ function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: numbe
   }
 }
 
-function validateFillEmptyStep(step: Extract<WorkflowStep, { type: 'fillEmpty' }>, table: Table, basePath: string) {
+function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: Table, basePath: string) {
   const issues: WorkflowValidationIssue[] = [];
-  const columns = resolveTargetColumns(step.target, table, `${basePath}.target.columnIds`, step.id, issues);
+  const columns = resolveColumnIds(step.columnIds, table, `${basePath}.columnIds`, step.id, issues);
 
-  if (step.target.columnIds.length === 0) {
-    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least one column.`, `${basePath}.target.columnIds`, step.id));
+  if (step.columnIds.length === 0) {
+    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least one column.`, `${basePath}.columnIds`, step.id));
+  }
+
+  validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
+
+  if (step.rowCondition) {
+    issues.push(...validateCondition(step.rowCondition, table, `${basePath}.rowCondition`, step.id));
   }
 
   columns.forEach((column, columnIndex) => {
-    if (column.logicalType === 'mixed') {
+    const expressionResult = validateExpression(
+      step.expression,
+      table,
+      `${basePath}.expression`,
+      step.id,
+      {
+        scope: 'scopedTransform',
+        valueLogicalType: column.logicalType,
+      },
+    );
+
+    issues.push(
+      ...expressionResult.issues.map((issue) =>
+        issue.code === 'incompatibleValueReference'
+          ? {
+              ...issue,
+              path: `${basePath}.columnIds[${columnIndex}]`,
+              details: {
+                ...issue.details,
+                columnId: column.columnId,
+              },
+            }
+          : issue,
+      ),
+    );
+
+    if (expressionResult.valueKind === 'list') {
       issues.push(
         makeIssue(
-          'incompatibleType',
-          `Column '${column.columnId}' has logical type 'mixed' and cannot be used by step '${step.id}'.`,
-          `${basePath}.target.columnIds[${columnIndex}]`,
+          'invalidExpression',
+          `Scoped transform expression in step '${step.id}' must resolve to a scalar cell value.`,
+          `${basePath}.expression`,
           step.id,
-          { columnId: column.columnId, logicalType: column.logicalType },
-        ),
-      );
-    } else if (!isFillValueCompatible(step.value, column.logicalType)) {
-      issues.push(
-        makeIssue(
-          'incompatibleType',
-          `Fill value is incompatible with column '${column.columnId}' of type '${column.logicalType}'.`,
-          `${basePath}.value`,
-          step.id,
-          { columnId: column.columnId, logicalType: column.logicalType, value: step.value },
         ),
       );
     }
 
-    if (step.treatWhitespaceAsEmpty && !isStringLikeType(column.logicalType)) {
+    if (step.treatWhitespaceAsEmpty && !isStringLikeType(column.logicalType) && expressionUsesCoalesce(step.expression)) {
       issues.push(
         makeIssue(
           'incompatibleType',
-          `Whitespace-only matching is only valid for string or unknown columns, but '${column.columnId}' is '${column.logicalType}'.`,
+          `Whitespace-only empty matching is only valid for string or unknown columns, but '${column.columnId}' is '${column.logicalType}'.`,
           `${basePath}.treatWhitespaceAsEmpty`,
-          step.id,
-          { columnId: column.columnId, logicalType: column.logicalType },
-        ),
-      );
-    }
-  });
-
-  return issues;
-}
-
-function validateNormalizeTextStep(step: Extract<WorkflowStep, { type: 'normalizeText' }>, table: Table, basePath: string) {
-  const issues: WorkflowValidationIssue[] = [];
-  const columns = resolveTargetColumns(step.target, table, `${basePath}.target.columnIds`, step.id, issues);
-
-  if (step.target.columnIds.length === 0) {
-    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least one column.`, `${basePath}.target.columnIds`, step.id));
-  }
-
-  columns.forEach((column, columnIndex) => {
-    if (!isStringLikeType(column.logicalType)) {
-      issues.push(
-        makeIssue(
-          'incompatibleType',
-          `Column '${column.columnId}' has type '${column.logicalType}' and cannot be normalized as text.`,
-          `${basePath}.target.columnIds[${columnIndex}]`,
           step.id,
           { columnId: column.columnId, logicalType: column.logicalType },
         ),
@@ -295,13 +308,52 @@ function validateRenameColumnStep(step: Extract<WorkflowStep, { type: 'renameCol
   return issues;
 }
 
+function validateDropColumnsStep(step: Extract<WorkflowStep, { type: 'dropColumns' }>, table: Table, basePath: string) {
+  const issues: WorkflowValidationIssue[] = [];
+  resolveColumnIds(step.columnIds, table, `${basePath}.columnIds`, step.id, issues);
+  validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
+
+  if (step.columnIds.length === 0) {
+    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least one column.`, `${basePath}.columnIds`, step.id));
+    return issues;
+  }
+
+  const existingDropCount = new Set(step.columnIds.filter((columnId) => findColumn(table, columnId))).size;
+
+  if (existingDropCount >= table.schema.columns.length) {
+    issues.push(
+      makeIssue(
+        'emptySchema',
+        `Step '${step.id}' must leave at least one column in the table.`,
+        `${basePath}.columnIds`,
+        step.id,
+      ),
+    );
+  }
+
+  return issues;
+}
+
 function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveColumn' }>, table: Table, basePath: string) {
   const issues: WorkflowValidationIssue[] = [];
 
   validateNewColumn(table, step.newColumn.columnId, step.newColumn.displayName, `${basePath}.newColumn`, step.id, issues);
 
-  const expressionResult = validateExpression(step.expression, table, `${basePath}.expression`, step.id);
+  const expressionResult = validateExpression(step.expression, table, `${basePath}.expression`, step.id, {
+    scope: 'deriveColumn',
+  });
   issues.push(...expressionResult.issues);
+
+  if (expressionResult.valueKind === 'list') {
+    issues.push(
+      makeIssue(
+        'invalidExpression',
+        `deriveColumn expression in step '${step.id}' must resolve to a scalar cell value.`,
+        `${basePath}.expression`,
+        step.id,
+      ),
+    );
+  }
 
   return issues;
 }
@@ -341,13 +393,13 @@ function validateSplitColumnStep(step: Extract<WorkflowStep, { type: 'splitColum
   return issues;
 }
 
-function validateCombineColumnsStep(step: Extract<WorkflowStep, { type: 'combineColumns' }>, table: Table, basePath: string) {
+function validateCombineColumnsStep(step: WorkflowCombineColumnsStep, table: Table, basePath: string) {
   const issues: WorkflowValidationIssue[] = [];
-  resolveTargetColumns(step.target, table, `${basePath}.target.columnIds`, step.id, issues);
-  validateUniqueReferences(step.target.columnIds, `${basePath}.target.columnIds`, step.id, issues);
+  resolveColumnIds(step.columnIds, table, `${basePath}.columnIds`, step.id, issues);
+  validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
 
-  if (step.target.columnIds.length < 2) {
-    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least two source columns.`, `${basePath}.target.columnIds`, step.id));
+  if (step.columnIds.length < 2) {
+    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least two source columns.`, `${basePath}.columnIds`, step.id));
   }
 
   validateNewColumn(table, step.newColumn.columnId, step.newColumn.displayName, `${basePath}.newColumn`, step.id, issues);
@@ -355,13 +407,13 @@ function validateCombineColumnsStep(step: Extract<WorkflowStep, { type: 'combine
   return issues;
 }
 
-function validateDeduplicateRowsStep(step: Extract<WorkflowStep, { type: 'deduplicateRows' }>, table: Table, basePath: string) {
+function validateDeduplicateRowsStep(step: WorkflowDeduplicateRowsStep, table: Table, basePath: string) {
   const issues: WorkflowValidationIssue[] = [];
-  resolveTargetColumns(step.target, table, `${basePath}.target.columnIds`, step.id, issues);
-  validateUniqueReferences(step.target.columnIds, `${basePath}.target.columnIds`, step.id, issues);
+  resolveColumnIds(step.columnIds, table, `${basePath}.columnIds`, step.id, issues);
+  validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
 
-  if (step.target.columnIds.length === 0) {
-    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least one key column.`, `${basePath}.target.columnIds`, step.id));
+  if (step.columnIds.length === 0) {
+    issues.push(makeIssue('emptyTarget', `Step '${step.id}' must target at least one key column.`, `${basePath}.columnIds`, step.id));
   }
 
   return issues;
@@ -413,9 +465,10 @@ function validateSortRowsStep(step: Extract<WorkflowStep, { type: 'sortRows' }>,
           { columnId: sort.columnId },
         ),
       );
-    } else {
-      seen.add(sort.columnId);
+      return;
     }
+
+    seen.add(sort.columnId);
   });
 
   return issues;
@@ -426,11 +479,27 @@ function validateExpression(
   table: Table,
   path: string,
   stepId: string,
+  context: ExpressionContext,
 ): WorkflowExpressionValidationResult {
   switch (expression.kind) {
+    case 'value':
+      if (context.scope !== 'scopedTransform') {
+        return {
+          logicalType: 'unknown',
+          valueKind: 'scalar',
+          issues: [makeIssue('invalidExpression', `Value references are only valid inside scoped transforms.`, path, stepId)],
+        };
+      }
+
+      return {
+        logicalType: context.valueLogicalType ?? 'unknown',
+        valueKind: 'scalar',
+        issues: [],
+      };
     case 'literal':
       return {
         logicalType: inferLiteralLogicalType(expression.value),
+        valueKind: 'scalar',
         issues: [],
       };
     case 'column': {
@@ -439,34 +508,190 @@ function validateExpression(
       if (!column) {
         return {
           logicalType: 'unknown',
+          valueKind: 'scalar',
           issues: [makeIssue('missingColumn', `Column '${expression.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: expression.columnId })],
         };
       }
 
       return {
         logicalType: column.logicalType,
+        valueKind: 'scalar',
         issues: [],
       };
     }
-    case 'concat': {
-      const issues = expression.parts.flatMap((part, index) => validateExpression(part, table, `${path}.parts[${index}]`, stepId).issues);
+    case 'call':
+      return validateCallExpression(expression, table, path, stepId, context);
+    default:
       return {
-        logicalType: 'string',
+        logicalType: 'unknown',
+        valueKind: 'scalar',
+        issues: [makeIssue('invalidExpression', `Unsupported expression kind in step '${stepId}'.`, path, stepId)],
+      };
+  }
+}
+
+function validateCallExpression(
+  expression: WorkflowCallExpression,
+  table: Table,
+  path: string,
+  stepId: string,
+  context: ExpressionContext,
+): WorkflowExpressionValidationResult {
+  const results = expression.args.map((argument, index) => validateExpression(argument, table, `${path}.args[${index}]`, stepId, context));
+  const issues = results.flatMap((result) => result.issues);
+
+  switch (expression.name) {
+    case 'trim':
+    case 'lower':
+    case 'upper':
+    case 'collapseWhitespace': {
+      const [input] = results;
+
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly one argument.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (input.valueKind !== 'scalar' || !isStringLikeType(input.logicalType)) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function '${expression.name}' requires a string input but received '${input.logicalType}'.`,
+            `${path}.args[0]`,
+            stepId,
+            { logicalType: input.logicalType, functionName: expression.name },
+          ),
+        );
+      }
+
+      return {
+        logicalType: input.logicalType === 'string' ? 'string' : 'unknown',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'substring': {
+      if (results.length !== 3) {
+        issues.push(makeIssue('invalidExpression', `Function 'substring' requires exactly three arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (results[0].valueKind !== 'scalar' || !isStringLikeType(results[0].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'substring' requires a string input.`, `${path}.args[0]`, stepId));
+      }
+
+      if (results[1].valueKind !== 'scalar' || !isNumberLikeType(results[1].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'substring' requires a numeric start value.`, `${path}.args[1]`, stepId));
+      }
+
+      if (results[2].valueKind !== 'scalar' || !isNumberLikeType(results[2].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'substring' requires a numeric length value.`, `${path}.args[2]`, stepId));
+      }
+
+      return {
+        logicalType: results[0].logicalType === 'string' ? 'string' : 'unknown',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'replace': {
+      if (results.length !== 3) {
+        issues.push(makeIssue('invalidExpression', `Function 'replace' requires exactly three arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (results[0].valueKind !== 'scalar' || !isStringLikeType(results[0].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'replace' requires a string input.`, `${path}.args[0]`, stepId));
+      }
+
+      if (results[1].valueKind !== 'scalar' || !isStringLikeType(results[1].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'replace' requires a string 'from' value.`, `${path}.args[1]`, stepId));
+      }
+
+      if (results[2].valueKind !== 'scalar' || !isStringLikeType(results[2].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'replace' requires a string 'to' value.`, `${path}.args[2]`, stepId));
+      }
+
+      return {
+        logicalType: results[0].logicalType === 'string' ? 'string' : 'unknown',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'split': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'split' requires exactly two arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'list', issues };
+      }
+
+      if (results[0].valueKind !== 'scalar' || !isStringLikeType(results[0].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'split' requires a string input.`, `${path}.args[0]`, stepId));
+      }
+
+      if (results[1].valueKind !== 'scalar' || !isStringLikeType(results[1].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'split' requires a string delimiter.`, `${path}.args[1]`, stepId));
+      }
+
+      return {
+        logicalType: results[0].logicalType === 'string' ? 'string' : 'unknown',
+        valueKind: 'list',
+        issues,
+      };
+    }
+    case 'first':
+    case 'last': {
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly one argument.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      const [input] = results;
+
+      if (input.valueKind === 'list') {
+        return {
+          logicalType: 'string',
+          valueKind: 'scalar',
+          issues,
+        };
+      }
+
+      if (!isStringLikeType(input.logicalType)) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function '${expression.name}' requires a string or list input but received '${input.logicalType}'.`,
+            `${path}.args[0]`,
+            stepId,
+            { logicalType: input.logicalType, functionName: expression.name },
+          ),
+        );
+      }
+
+      return {
+        logicalType: input.logicalType === 'string' ? 'string' : 'unknown',
+        valueKind: 'scalar',
         issues,
       };
     }
     case 'coalesce': {
-      const results = expression.inputs.map((input, index) => validateExpression(input, table, `${path}.inputs[${index}]`, stepId));
-      const issues = results.flatMap((result) => result.issues);
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'coalesce' requires exactly two arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (results.some((result) => result.valueKind !== 'scalar')) {
+        issues.push(makeIssue('invalidExpression', `Function 'coalesce' only accepts scalar inputs.`, path, stepId));
+      }
+
       const concreteTypes = [...new Set(results.map((result) => result.logicalType).filter((logicalType) => logicalType !== 'unknown'))];
 
       if (concreteTypes.includes('mixed')) {
-        issues.push(makeIssue('incompatibleType', `Coalesce inputs in step '${stepId}' must not include mixed types.`, path, stepId));
+        issues.push(makeIssue('incompatibleType', `Function 'coalesce' must not include mixed inputs.`, path, stepId));
       } else if (concreteTypes.length > 1) {
         issues.push(
           makeIssue(
             'incompatibleType',
-            `Coalesce inputs in step '${stepId}' must resolve to one compatible type.`,
+            `Function 'coalesce' inputs must resolve to one compatible type.`,
             path,
             stepId,
             { logicalTypes: concreteTypes },
@@ -476,13 +701,29 @@ function validateExpression(
 
       return {
         logicalType: (concreteTypes[0] ?? 'unknown') as LogicalType,
+        valueKind: 'scalar',
         issues,
       };
     }
+    case 'concat':
+      if (results.length < 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'concat' requires at least two arguments.`, path, stepId));
+      }
+
+      if (results.some((result) => result.valueKind !== 'scalar')) {
+        issues.push(makeIssue('invalidExpression', `Function 'concat' only accepts scalar inputs.`, path, stepId));
+      }
+
+      return {
+        logicalType: 'string',
+        valueKind: 'scalar',
+        issues,
+      };
     default:
       return {
         logicalType: 'unknown',
-        issues: [makeIssue('invalidExpression', `Unsupported expression kind in step '${stepId}'.`, path, stepId)],
+        valueKind: 'scalar',
+        issues: [...issues, makeIssue('invalidExpression', `Unsupported function '${expression.name}' in step '${stepId}'.`, path, stepId)],
       };
   }
 }
@@ -574,24 +815,14 @@ function validateCondition(condition: WorkflowCondition, table: Table, path: str
       return [];
     }
     case 'and':
-    case 'or': {
-      const issues = condition.conditions.flatMap((child, index) => validateCondition(child, table, `${path}.conditions[${index}]`, stepId));
-
+    case 'or':
       if (condition.conditions.length < 2) {
-        issues.push(makeIssue('invalidCondition', `Condition '${condition.kind}' in step '${stepId}' requires at least two child conditions.`, `${path}.conditions`, stepId));
+        return [makeIssue('invalidCondition', `Condition '${condition.kind}' in step '${stepId}' requires at least two child conditions.`, path, stepId)];
       }
 
-      return issues;
-    }
-    case 'not': {
-      const issues = validateCondition(condition.condition, table, `${path}.condition`, stepId);
-
-      if (!condition.condition) {
-        issues.push(makeIssue('invalidCondition', `Condition 'not' in step '${stepId}' requires one child condition.`, `${path}.condition`, stepId));
-      }
-
-      return issues;
-    }
+      return condition.conditions.flatMap((child, index) => validateCondition(child, table, `${path}.conditions[${index}]`, stepId));
+    case 'not':
+      return validateCondition(condition.condition, table, `${path}.condition`, stepId);
     default:
       return [makeIssue('invalidCondition', `Unsupported condition kind in step '${stepId}'.`, path, stepId)];
   }
@@ -607,14 +838,14 @@ function validateColumnCondition(columnId: string, table: Table, path: string, s
   return [];
 }
 
-function resolveTargetColumns(
-  target: WorkflowColumnTarget,
+function resolveColumnIds(
+  columnIds: string[],
   table: Table,
   path: string,
   stepId: string,
   issues: WorkflowValidationIssue[],
 ) {
-  return target.columnIds.flatMap((columnId, index) => {
+  return columnIds.flatMap((columnId, index) => {
     const column = findColumn(table, columnId);
 
     if (!column) {
@@ -717,10 +948,10 @@ function validateNewColumn(
 
 function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep): WorkflowStepApplyResult {
   switch (step.type) {
-    case 'fillEmpty':
-      return applyFillEmptyStep(table, step);
-    case 'normalizeText':
-      return applyNormalizeTextStep(table, step);
+    case 'scopedTransform':
+      return applyScopedTransformStep(table, step);
+    case 'dropColumns':
+      return applyDropColumnsStep(table, step);
     case 'renameColumn':
       return applyRenameColumnStep(table, step);
     case 'deriveColumn':
@@ -745,16 +976,27 @@ function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep): WorkflowS
   }
 }
 
-function applyFillEmptyStep(table: Table, step: Extract<WorkflowStep, { type: 'fillEmpty' }>): WorkflowStepApplyResult {
+function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformStep): WorkflowStepApplyResult {
   const rowsById = mapRows(table, (row) => {
+    if (step.rowCondition && !evaluateCondition(step.rowCondition, row)) {
+      return {
+        rowId: row.rowId,
+        cellsByColumnId: { ...row.cellsByColumnId },
+      };
+    }
+
     const cellsByColumnId = { ...row.cellsByColumnId };
 
-    step.target.columnIds.forEach((columnId) => {
+    step.columnIds.forEach((columnId) => {
       const currentValue = cellsByColumnId[columnId] ?? null;
+      const nextValue = toCellValue(evaluateExpression(step.expression, {
+        scope: 'scopedTransform',
+        row,
+        currentValue,
+        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
+      }));
 
-      if (shouldTreatAsEmpty(currentValue, step.treatWhitespaceAsEmpty) && !Object.is(currentValue, step.value)) {
-        cellsByColumnId[columnId] = step.value;
-      }
+      cellsByColumnId[columnId] = nextValue;
     });
 
     return {
@@ -774,45 +1016,27 @@ function applyFillEmptyStep(table: Table, step: Extract<WorkflowStep, { type: 'f
   };
 }
 
-function applyNormalizeTextStep(table: Table, step: Extract<WorkflowStep, { type: 'normalizeText' }>): WorkflowStepApplyResult {
-  const rowsById = mapRows(table, (row) => {
-    const cellsByColumnId = { ...row.cellsByColumnId };
-
-    step.target.columnIds.forEach((columnId) => {
-      const currentValue = cellsByColumnId[columnId];
-
-      if (typeof currentValue !== 'string') {
-        return;
-      }
-
-      let nextValue = currentValue;
-
-      if (step.trim) {
-        nextValue = nextValue.trim();
-      }
-
-      if (step.collapseWhitespace) {
-        nextValue = nextValue.replace(/\s+/g, ' ');
-      }
-
-      if (step.case === 'lower') {
-        nextValue = nextValue.toLocaleLowerCase();
-      } else if (step.case === 'upper') {
-        nextValue = nextValue.toLocaleUpperCase();
-      }
-
-      cellsByColumnId[columnId] = nextValue;
-    });
-
-    return {
-      rowId: row.rowId,
-      cellsByColumnId,
-    };
-  });
+function applyDropColumnsStep(table: Table, step: Extract<WorkflowStep, { type: 'dropColumns' }>): WorkflowStepApplyResult {
+  const removedColumnIds = new Set(step.columnIds);
+  const columns = table.schema.columns
+    .filter((column) => !removedColumnIds.has(column.columnId))
+    .map((column, index) => ({
+      ...column,
+      sourceIndex: index,
+    }));
+  const rowsById = mapRows(table, (row) => ({
+    rowId: row.rowId,
+    cellsByColumnId: Object.fromEntries(
+      Object.entries(row.cellsByColumnId).filter(([columnId]) => !removedColumnIds.has(columnId)),
+    ),
+  }));
 
   return {
     table: refreshTableSchema({
       ...table,
+      schema: {
+        columns,
+      },
       rowsById,
     }),
     createdColumnIds: [],
@@ -850,7 +1074,12 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
     rowId: row.rowId,
     cellsByColumnId: {
       ...row.cellsByColumnId,
-      [newColumn.columnId]: evaluateExpression(step.expression, row),
+      [newColumn.columnId]: toCellValue(evaluateExpression(step.expression, {
+        scope: 'deriveColumn',
+        row,
+        currentValue: null,
+        treatWhitespaceAsEmpty: false,
+      })),
     },
   }));
 
@@ -933,10 +1162,10 @@ function applySplitColumnStep(table: Table, step: Extract<WorkflowStep, { type: 
   };
 }
 
-function applyCombineColumnsStep(table: Table, step: Extract<WorkflowStep, { type: 'combineColumns' }>): WorkflowStepApplyResult {
+function applyCombineColumnsStep(table: Table, step: WorkflowCombineColumnsStep): WorkflowStepApplyResult {
   const newColumn = buildCreatedColumn(step.newColumn.columnId, step.newColumn.displayName, table.schema.columns.length);
   const rowsById = mapRows(table, (row) => {
-    const values = step.target.columnIds
+    const values = step.columnIds
       .map((columnId) => row.cellsByColumnId[columnId])
       .filter((value): value is Exclude<CellValue, null> => value !== null && value !== '');
 
@@ -963,13 +1192,13 @@ function applyCombineColumnsStep(table: Table, step: Extract<WorkflowStep, { typ
   };
 }
 
-function applyDeduplicateRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'deduplicateRows' }>): WorkflowStepApplyResult {
+function applyDeduplicateRowsStep(table: Table, step: WorkflowDeduplicateRowsStep): WorkflowStepApplyResult {
   const seenKeys = new Set<string>();
   const keptRowIds: string[] = [];
 
   table.rowOrder.forEach((rowId) => {
     const row = table.rowsById[rowId];
-    const key = JSON.stringify(step.target.columnIds.map((columnId) => row.cellsByColumnId[columnId] ?? null));
+    const key = JSON.stringify(step.columnIds.map((columnId) => row.cellsByColumnId[columnId] ?? null));
 
     if (seenKeys.has(key)) {
       return;
@@ -1032,27 +1261,121 @@ function applySortRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'so
   };
 }
 
-function evaluateExpression(expression: WorkflowExpression, row: TableRow): CellValue {
+function evaluateExpression(expression: WorkflowExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
   switch (expression.kind) {
+    case 'value':
+      return context.currentValue;
     case 'literal':
       return expression.value;
     case 'column':
-      return row.cellsByColumnId[expression.columnId] ?? null;
-    case 'concat':
-      return expression.parts
-        .map((part) => evaluateExpression(part, row))
-        .map((value) => (value === null ? '' : String(value)))
-        .join('');
-    case 'coalesce':
-      for (const input of expression.inputs) {
-        const value = evaluateExpression(input, row);
+      return context.row.cellsByColumnId[expression.columnId] ?? null;
+    case 'call':
+      return evaluateCallExpression(expression, context);
+    default:
+      return null;
+  }
+}
 
-        if (value !== null) {
-          return value;
-        }
+function evaluateCallExpression(expression: WorkflowCallExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
+  switch (expression.name) {
+    case 'trim': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'string' ? value.trim() : value;
+    }
+    case 'lower': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'string' ? value.toLocaleLowerCase() : value;
+    }
+    case 'upper': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'string' ? value.toLocaleUpperCase() : value;
+    }
+    case 'collapseWhitespace': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'string' ? value.replace(/\s+/g, ' ') : value;
+    }
+    case 'substring': {
+      const value = evaluateExpression(expression.args[0], context);
+      const start = evaluateExpression(expression.args[1], context);
+      const length = evaluateExpression(expression.args[2], context);
+
+      if (typeof value !== 'string' || typeof start !== 'number' || typeof length !== 'number') {
+        return value;
       }
 
-      return null;
+      const safeStart = Math.max(0, Math.trunc(start));
+      const safeLength = Math.max(0, Math.trunc(length));
+      return value.slice(safeStart, safeStart + safeLength);
+    }
+    case 'replace': {
+      const value = evaluateExpression(expression.args[0], context);
+      const from = evaluateExpression(expression.args[1], context);
+      const to = evaluateExpression(expression.args[2], context);
+
+      if (typeof value !== 'string' || typeof from !== 'string' || typeof to !== 'string') {
+        return value;
+      }
+
+      if (from === '') {
+        return value;
+      }
+
+      return value.split(from).join(to);
+    }
+    case 'split': {
+      const value = evaluateExpression(expression.args[0], context);
+      const delimiter = evaluateExpression(expression.args[1], context);
+
+      if (value === null) {
+        return [];
+      }
+
+      if (typeof value !== 'string' || typeof delimiter !== 'string') {
+        return [];
+      }
+
+      return value.split(delimiter);
+    }
+    case 'first': {
+      const value = evaluateExpression(expression.args[0], context);
+
+      if (Array.isArray(value)) {
+        return value[0] ?? null;
+      }
+
+      if (typeof value === 'string') {
+        return value.length > 0 ? value[0] : null;
+      }
+
+      return value;
+    }
+    case 'last': {
+      const value = evaluateExpression(expression.args[0], context);
+
+      if (Array.isArray(value)) {
+        return value.length > 0 ? value[value.length - 1] : null;
+      }
+
+      if (typeof value === 'string') {
+        return value.length > 0 ? value[value.length - 1] : null;
+      }
+
+      return value;
+    }
+    case 'coalesce': {
+      const first = evaluateExpression(expression.args[0], context);
+
+      if (Array.isArray(first) || !shouldTreatAsEmptyForCoalesce(first, context.treatWhitespaceAsEmpty)) {
+        return first;
+      }
+
+      return evaluateExpression(expression.args[1], context);
+    }
+    case 'concat':
+      return expression.args
+        .map((argument) => evaluateExpression(argument, context))
+        .map((value) => (Array.isArray(value) || value === null ? '' : String(value)))
+        .join('');
     default:
       return null;
   }
@@ -1169,33 +1492,24 @@ function shouldTreatAsEmpty(value: CellValue, treatWhitespaceAsEmpty: boolean) {
   return treatWhitespaceAsEmpty && typeof value === 'string' && value.trim() === '';
 }
 
+function shouldTreatAsEmptyForCoalesce(value: CellValue, treatWhitespaceAsEmpty: boolean) {
+  return shouldTreatAsEmpty(value, treatWhitespaceAsEmpty);
+}
+
+function toCellValue(value: ExpressionRuntimeValue): CellValue {
+  return Array.isArray(value) ? null : value;
+}
+
 function isStringLikeType(logicalType: LogicalType) {
   return logicalType === 'string' || logicalType === 'unknown';
 }
 
-function isOrderingType(logicalType: LogicalType) {
-  return logicalType === 'number' || logicalType === 'date' || logicalType === 'datetime' || logicalType === 'unknown';
+function isNumberLikeType(logicalType: LogicalType) {
+  return logicalType === 'number' || logicalType === 'unknown';
 }
 
-function isFillValueCompatible(value: CellValue, logicalType: LogicalType) {
-  switch (logicalType) {
-    case 'unknown':
-      return value !== null;
-    case 'string':
-      return typeof value === 'string';
-    case 'date':
-      return typeof value === 'string' && isIsoDate(value);
-    case 'datetime':
-      return typeof value === 'string' && isIsoDateTime(value);
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'boolean':
-      return typeof value === 'boolean';
-    case 'mixed':
-      return false;
-    default:
-      return false;
-  }
+function isOrderingType(logicalType: LogicalType) {
+  return logicalType === 'number' || logicalType === 'date' || logicalType === 'datetime' || logicalType === 'unknown';
 }
 
 function inferLiteralLogicalType(value: CellValue): LogicalType {
@@ -1295,12 +1609,23 @@ function compareSortValues(left: CellValue, right: CellValue, logicalType: Logic
     case 'date':
     case 'datetime':
     case 'string':
-      return String(left) === String(right) ? 0 : String(left) < String(right) ? -1 : 1;
     case 'unknown':
       return String(left) === String(right) ? 0 : String(left) < String(right) ? -1 : 1;
     default:
       return 0;
   }
+}
+
+function expressionUsesCoalesce(expression: WorkflowExpression): boolean {
+  if (expression.kind === 'call' && expression.name === 'coalesce') {
+    return true;
+  }
+
+  if (expression.kind !== 'call') {
+    return false;
+  }
+
+  return expression.args.some((argument) => expressionUsesCoalesce(argument));
 }
 
 function makeIssue(

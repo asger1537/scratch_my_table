@@ -1,234 +1,281 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { importCsvWorkbook } from '../domain/csv';
 import { getActiveTable, type Table } from '../domain/model';
-import { type Workflow } from '../workflow';
+import { executeWorkflow, type Workflow, type WorkflowExpression } from '../workflow';
 
+import { type AuthoringWorkflow, authoringWorkflowToWorkflow, workflowToAuthoringWorkflow } from './authoring';
+import { formatColumnSelectionSummary, getSelectableColumnTypeGroups, getSelectableColumns, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
 import { BLOCK_TYPES } from './blocks';
 import { runWorkspaceWorkflow, validateWorkspaceWorkflow } from './integration';
 import {
   collectWorkflowColumnIds,
-  createDefaultWorkflow,
   createHeadlessWorkflowWorkspace,
+  getWorkspaceMetadata,
   parseWorkflowJson,
   setEditorSchemaColumns,
   workflowToJson,
   workflowToWorkspace,
+  workspaceToAuthoringWorkflow,
   workspaceToWorkflow,
 } from './index';
 
-describe('Milestone 3 block editor mapping and integration', () => {
-  it('serializes block-authored workflows to canonical IR across all V1 step types', async () => {
+describe('block-based workflow authoring', () => {
+  it('loads a simple scoped transform as one compact step block with nested function blocks', async () => {
     const table = await readFixtureTable('messy-customers.csv');
-    const workflow = buildAllStepsWorkflow();
-    const workspace = buildWorkspace(table, workflow);
-
-    const result = workspaceToWorkflow(workspace);
-
-    expect(result.issues).toEqual([]);
-    expect(result.workflow).toEqual(workflow);
-  });
-
-  it('reconstructs a representative canonical workflow back into blocks and roundtrips without semantic loss', async () => {
-    const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_orders_cleanup',
-      name: 'Orders cleanup',
-      description: 'Keep paid orders, build ship location, and sort newest first.',
+      version: 2,
+      workflowId: 'wf_normalize_email',
+      name: 'Normalize email',
+      description: 'Lowercase trimmed email values.',
       steps: [
         {
-          id: 'step_keep_paid_orders',
-          type: 'filterRows',
-          mode: 'keep',
-          condition: {
-            kind: 'equals',
-            columnId: 'col_order_status',
-            value: 'paid',
-          },
-        },
-        {
-          id: 'step_ship_location',
-          type: 'combineColumns',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_ship_city', 'col_ship_state'],
-          },
-          separator: ', ',
-          newColumn: {
-            columnId: 'col_ship_location',
-            displayName: 'ship_location',
-          },
-        },
-        {
-          id: 'step_sort_orders',
-          type: 'sortRows',
-          sorts: [
-            {
-              columnId: 'col_ordered_at',
-              direction: 'desc',
-            },
-            {
-              columnId: 'col_order_total',
-              direction: 'desc',
-            },
-          ],
+          id: 'step_normalize_email',
+          type: 'scopedTransform',
+          columnIds: ['col_email'],
+          expression: call('lower', call('trim', value())),
+          treatWhitespaceAsEmpty: false,
         },
       ],
     };
-    const workspace = buildWorkspace(table, workflow);
+    const workspace = buildWorkspaceFromTable(table, workflow);
+    const authored = workspaceToAuthoringWorkflow(workspace);
+    const [topBlock] = workspace.getTopBlocks(false);
+    const authoredStep = authored.workflow?.steps[0];
 
-    const roundtrip = workspaceToWorkflow(workspace);
+    if (!authoredStep || authoredStep.kind !== 'scopedTransform') {
+      throw new Error('Expected a scoped transform authoring step.');
+    }
+
+    expect(workspace.getTopBlocks(false)).toHaveLength(1);
+    expect(workspace.getAllBlocks(false).map((block) => block.type).sort()).toEqual([
+      BLOCK_TYPES.currentValueExpression,
+      BLOCK_TYPES.lowerFunction,
+      BLOCK_TYPES.scopedTransformStep,
+      BLOCK_TYPES.trimFunction,
+    ]);
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedTransformStep);
+    expect(getWorkspaceMetadata(workspace)).toEqual({
+      workflowId: workflow.workflowId,
+      name: workflow.name,
+      description: workflow.description,
+    });
+    expect(authored.issues).toEqual([]);
+    expect(authoredStep.columnIds).toEqual(['col_email']);
+    expect(authoredStep.expression).toEqual(call('lower', call('trim', value())));
+  });
+
+  it('compiles multi-select scoped transforms with row conditions directly to canonical v2 IR', () => {
+    const authoringWorkflow: AuthoringWorkflow = {
+      metadata: {
+        workflowId: 'wf_scoped_transform',
+        name: 'Scoped transform',
+      },
+      steps: [
+        {
+          kind: 'scopedTransform',
+          columnIds: ['col_first_name', 'col_last_name'],
+          rowCondition: {
+            kind: 'and',
+            conditions: [
+              {
+                kind: 'startsWith',
+                columnId: 'col_first_name',
+                value: 'A',
+              },
+              {
+                kind: 'startsWith',
+                columnId: 'col_last_name',
+                value: 'A',
+              },
+            ],
+          },
+          expression: call('substring', value(), literal(0), literal(3)),
+          treatWhitespaceAsEmpty: false,
+        },
+      ],
+    };
+
+    const compiled = authoringWorkflowToWorkflow(authoringWorkflow);
+
+    expect(compiled.issues).toEqual([]);
+    expect(compiled.workflow).toEqual({
+      version: 2,
+      workflowId: 'wf_scoped_transform',
+      name: 'Scoped transform',
+      description: undefined,
+      steps: [
+        {
+          id: 'step_scoped_transform_1',
+          type: 'scopedTransform',
+          columnIds: ['col_first_name', 'col_last_name'],
+          rowCondition: {
+            kind: 'and',
+            conditions: [
+              {
+                kind: 'startsWith',
+                columnId: 'col_first_name',
+                value: 'A',
+              },
+              {
+                kind: 'startsWith',
+                columnId: 'col_last_name',
+                value: 'A',
+              },
+            ],
+          },
+          expression: call('substring', value(), literal(0), literal(3)),
+          treatWhitespaceAsEmpty: false,
+        },
+      ],
+    });
+  });
+
+  it('roundtrips canonical workflows through the authoring model without semantic loss', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_roundtrip',
+      name: 'Roundtrip',
+      steps: [
+        {
+          id: 'step_fill_status',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          expression: coalesce(value(), literal('unknown')),
+          treatWhitespaceAsEmpty: true,
+        },
+        {
+          id: 'step_derive_display_name',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_display_name',
+            displayName: 'display_name',
+          },
+          expression: concat(column('col_first_name'), literal(' '), column('col_last_name')),
+        },
+      ],
+    };
+
+    const authored = workflowToAuthoringWorkflow(workflow);
+    const roundtrip = authoringWorkflowToWorkflow(authored);
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
   });
 
-  it('roundtrips canonical example workflows through JSON import and export helpers', () => {
-    const workflow = buildAllStepsWorkflow();
-    const json = workflowToJson(workflow);
-    const parsed = parseWorkflowJson(json);
-
-    expect(parsed.issues).toEqual([]);
-    expect(parsed.workflow).toEqual(workflow);
-  });
-
-  it('surfaces incomplete block workspaces clearly instead of silently producing mutated IR', () => {
-    const table = loadCsvTable('email,status\r\nalice@example.com,\r\n');
-    const workspace = buildWorkspace(table, createDefaultWorkflow(table));
-    const root = workspace.getTopBlocks(false).find((block) => block.type === BLOCK_TYPES.workflowRoot);
-
-    if (!root) {
-      throw new Error('Expected workflow root block.');
-    }
-
-    const fillStep = workspace.newBlock(BLOCK_TYPES.fillEmptyStep);
-    fillStep.setFieldValue('step_fill_status', 'STEP_ID');
-    const rootConnection = root.getInput('STEPS')?.connection;
-
-    if (!fillStep.previousConnection || !rootConnection) {
-      throw new Error('Expected workflow root statement connection.');
-    }
-
-    fillStep.previousConnection.connect(rootConnection);
-
-    const result = workspaceToWorkflow(workspace);
-
-    expect(result.workflow).toBeNull();
-    expect(result.issues.some((issue) => issue.code === 'missingInput')).toBe(true);
-  });
-
-  it('keeps authored column selections as explicit columnId references in serialized workflows', async () => {
-    const table = await readFixtureTable('messy-customers.csv');
+  it('roundtrips scoped transforms that mix value() and same-row column() references', () => {
     const workflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_column_resolution',
-      name: 'Column resolution',
+      version: 2,
+      workflowId: 'wf_fill_email_from_customer_id',
+      name: 'Fill email from customer id',
       steps: [
         {
-          id: 'step_target_columns',
-          type: 'combineColumns',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_city', 'col_state'],
-          },
-          separator: ', ',
-          newColumn: {
-            columnId: 'col_location',
-            displayName: 'location',
-          },
+          id: 'step_fill_email',
+          type: 'scopedTransform',
+          columnIds: ['col_email'],
+          expression: coalesce(value(), column('col_customer_id')),
+          treatWhitespaceAsEmpty: true,
         },
       ],
     };
-    const workspace = buildWorkspace(table, workflow);
 
-    const result = workspaceToWorkflow(workspace);
+    const workspace = buildWorkspaceFromColumnIds(['col_email', 'col_customer_id'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
 
-    expect(result.workflow?.steps[0]).toEqual(workflow.steps[0]);
-    expect(JSON.stringify(result.workflow)).not.toContain('Seattle');
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.columnExpression);
   });
 
-  it('serializes derive expressions and filter condition trees from the block workspace', async () => {
-    const table = await readFixtureTable('orders-sample.csv');
+  it('reconstructs split, first, and last function trees in derive-column blocks', () => {
     const workflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_expression_condition',
-      name: 'Expression and condition',
+      version: 2,
+      workflowId: 'wf_derive_initials',
+      name: 'Derive initials',
       steps: [
         {
-          id: 'step_derive_label',
+          id: 'step_derive_initials',
           type: 'deriveColumn',
           newColumn: {
-            columnId: 'col_order_label',
-            displayName: 'order_label',
+            columnId: 'col_initials',
+            displayName: 'initials',
           },
-          expression: {
-            kind: 'concat',
-            parts: [
-              { kind: 'literal', value: 'Order ' },
-              { kind: 'column', columnId: 'col_order_id' },
-              { kind: 'literal', value: ' - ' },
-              {
-                kind: 'coalesce',
-                inputs: [
-                  { kind: 'column', columnId: 'col_customer_email' },
-                  { kind: 'literal', value: 'missing email' },
-                ],
-              },
-            ],
-          },
-        },
-        {
-          id: 'step_filter_orders',
-          type: 'filterRows',
-          mode: 'keep',
-          condition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'greaterThan',
-                columnId: 'col_order_total',
-                value: 100,
-              },
-              {
-                kind: 'not',
-                condition: {
-                  kind: 'isEmpty',
-                  columnId: 'col_customer_email',
-                  treatWhitespaceAsEmpty: false,
-                },
-              },
-            ],
-          },
+          expression: concat(
+            call('first', column('col_first_name')),
+            call('first', call('last', call('split', column('col_last_name'), literal(' ')))),
+          ),
         },
       ],
     };
-    const workspace = buildWorkspace(table, workflow);
 
-    const result = workspaceToWorkflow(workspace);
+    const workspace = buildWorkspaceFromColumnIds(['col_first_name', 'col_last_name', 'col_initials'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
 
-    expect(result.issues).toEqual([]);
-    expect(result.workflow).toEqual(workflow);
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.splitFunction);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.firstFunction);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.lastFunction);
   });
 
-  it('runs a block-authored workflow through the existing validator and executor', async () => {
+  it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_drop_columns',
+      name: 'Drop columns',
+      steps: [
+        {
+          id: 'step_drop_columns',
+          type: 'dropColumns',
+          columnIds: ['col_notes', 'col_internal_flag'],
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_notes', 'col_internal_flag'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getTopBlocks(false)[0]?.type).toBe(BLOCK_TYPES.dropColumnsStep);
+  });
+
+  it('roundtrips example workflows through the block workspace without semantic loss', async () => {
+    const exampleDir = path.resolve(process.cwd(), 'examples', 'workflows');
+    const exampleFiles = (await readdir(exampleDir))
+      .filter((fileName) => fileName.endsWith('.workflow.json'))
+      .sort();
+
+    for (const fileName of exampleFiles) {
+      const parsed = parseWorkflowJson(await readFile(path.join(exampleDir, fileName), 'utf8'));
+
+      expect(parsed.issues, fileName).toEqual([]);
+      expect(parsed.workflow, fileName).not.toBeNull();
+
+      const workflow = parsed.workflow!;
+      const workspace = buildWorkspaceFromColumnIds(collectWorkflowColumnIds(workflow), workflow);
+      const roundtrip = workspaceToWorkflow(workspace);
+
+      expect(roundtrip.issues, fileName).toEqual([]);
+      expect(roundtrip.workflow, fileName).toEqual(workflow);
+    }
+  });
+
+  it('keeps validation and execution wired to canonical IR after block serialization', async () => {
     const table = await readFixtureTable('messy-customers.csv');
     const workflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_run_from_blocks',
-      name: 'Run from blocks',
+      version: 2,
+      workflowId: 'wf_run_from_editor',
+      name: 'Run from editor',
       steps: [
         {
           id: 'step_fill_status',
-          type: 'fillEmpty',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_status'],
-          },
-          value: 'unknown',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          expression: coalesce(value(), literal('unknown')),
           treatWhitespaceAsEmpty: true,
         },
         {
@@ -243,48 +290,162 @@ describe('Milestone 3 block editor mapping and integration', () => {
         },
       ],
     };
-    const workspace = buildWorkspace(table, workflow);
-    const run = runWorkspaceWorkflow(workspace, table);
-
-    expect(run.editorIssues).toEqual([]);
-    expect(run.validationIssues).toEqual([]);
-    expect(run.executionResult?.transformedTable).not.toBeNull();
-    expect(run.executionResult?.removedRowCount).toBe(1);
-    expect(run.executionResult?.changedCellCount).toBeGreaterThan(0);
-  });
-
-  it('flags editor-authored workflows that are structurally complete but semantically invalid for the active table', async () => {
-    const table = await readFixtureTable('messy-customers.csv');
-    const workflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_bad_semantics',
-      name: 'Bad semantics',
-      steps: [
-        {
-          id: 'step_normalize_signup_date',
-          type: 'normalizeText',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_signup_date'],
-          },
-          trim: true,
-          collapseWhitespace: false,
-          case: 'preserve',
-        },
-      ],
-    };
-    const workspace = buildWorkspace(table, workflow);
+    const workspace = buildWorkspaceFromTable(table, workflow);
     const validation = validateWorkspaceWorkflow(workspace, table);
+    const run = runWorkspaceWorkflow(workspace, table);
+    const expected = executeWorkflow(workflow, table);
 
     expect(validation.editorIssues).toEqual([]);
-    expect(validation.validationIssues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
+    expect(validation.validationIssues).toEqual([]);
+    expect(run.editorIssues).toEqual([]);
+    expect(run.validationIssues).toEqual([]);
+    expect(run.executionResult).toEqual(expected);
+  });
+
+  it('upgrades legacy workflow JSON on import and reconstructs equivalent block trees', () => {
+    const legacyJson = JSON.stringify({
+      version: 1,
+      workflowId: 'wf_legacy_fill',
+      name: 'Legacy fill',
+      steps: [
+        {
+          id: 'step_fill_status',
+          type: 'fillEmpty',
+          target: {
+            kind: 'columns',
+            columnIds: ['col_status'],
+          },
+          value: 'unknown',
+          treatWhitespaceAsEmpty: true,
+        },
+      ],
+    });
+
+    const parsed = parseWorkflowJson(legacyJson);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.workflow).toEqual({
+      version: 2,
+      workflowId: 'wf_legacy_fill',
+      name: 'Legacy fill',
+      description: undefined,
+      steps: [
+        {
+          id: 'step_fill_status',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          expression: coalesce(value(), literal('unknown')),
+          treatWhitespaceAsEmpty: true,
+        },
+      ],
+    });
+
+    const workspace = buildWorkspaceFromColumnIds(['col_status'], parsed.workflow!);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(parsed.workflow);
+  });
+
+  it('surfaces invalid editor blocks clearly when required inputs are missing', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const block = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
+
+    block.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingInput',
+        message: `Block '${BLOCK_TYPES.scopedTransformStep}' is missing required input 'EXPRESSION'.`,
+        blockId: block.id,
+        blockType: BLOCK_TYPES.scopedTransformStep,
+      },
+    ]);
+  });
+
+  it('still roundtrips canonical workflow JSON without editor-only data leaking into persistence', () => {
+    const workflow = buildAllStepsWorkflow();
+    const json = workflowToJson(workflow);
+    const parsed = parseWorkflowJson(json);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.workflow).toEqual(workflow);
+    expect(json).toContain('"version": 2');
+    expect(json).toContain('"type": "scopedTransform"');
+    expect(json).toContain('"name": "lower"');
+    expect(json).not.toContain('sourceBlockId');
+  });
+
+  it('defaults whitespace-empty handling to true in new editor blocks', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
+    const isEmptyBlock = workspace.newBlock(BLOCK_TYPES.isEmptyCondition);
+
+    expect(transformBlock.getFieldValue('TREAT_WHITESPACE_AS_EMPTY')).toBe('TRUE');
+    expect(isEmptyBlock.getFieldValue('TREAT_WHITESPACE_AS_EMPTY')).toBe('TRUE');
+  });
+
+  it('exposes schema-aware explicit column IDs for multi-select fields', async () => {
+    const table = await readFixtureTable('messy-customers.csv');
+
+    setEditorSchemaColumns(table.schema.columns);
+
+    expect(getSelectableColumns().map((entry) => entry.columnId)).toEqual(table.schema.columns.map((column) => column.columnId));
+  });
+
+  it('exposes bulk type selections for schema-aware multi-select fields', () => {
+    setEditorSchemaColumns([
+      createColumn('col_email', 'email', 'string'),
+      createColumn('col_city', 'city', 'string'),
+      createColumn('col_order_total', 'order_total', 'number'),
+      createColumn('col_is_active', 'is_active', 'boolean'),
+      createColumn('col_ordered_at', 'ordered_at', 'datetime'),
+    ]);
+
+    expect(getSelectableColumnTypeGroups()).toEqual([
+      {
+        logicalType: 'string',
+        label: 'All string columns',
+        columnIds: ['col_email', 'col_city'],
+      },
+      {
+        logicalType: 'number',
+        label: 'All numeric columns',
+        columnIds: ['col_order_total'],
+      },
+      {
+        logicalType: 'boolean',
+        label: 'All boolean columns',
+        columnIds: ['col_is_active'],
+      },
+      {
+        logicalType: 'datetime',
+        label: 'All datetime columns',
+        columnIds: ['col_ordered_at'],
+      },
+    ]);
+    expect(formatColumnSelectionSummary(['col_email', 'col_city'])).toBe('All string columns (2)');
   });
 });
 
-function buildWorkspace(table: Table, workflow: Workflow) {
+function buildWorkspaceFromTable(table: Table, workflow: Workflow) {
+  return buildWorkspaceFromColumnIds(
+    [
+      ...table.schema.columns.map((column) => column.columnId),
+      ...collectWorkflowColumnIds(workflow),
+    ],
+    workflow,
+    table.schema.columns,
+  );
+}
+
+function buildWorkspaceFromColumnIds(columnIds: string[], workflow: Workflow, columns: Table['schema']['columns'] = []) {
   const workspace = createHeadlessWorkflowWorkspace();
 
-  setEditorSchemaColumns(table.schema.columns, collectWorkflowColumnIds(workflow));
+  setEditorSchemaColumns(columns, columnIds);
   workflowToWorkspace(workspace, workflow);
 
   return workspace;
@@ -292,31 +453,29 @@ function buildWorkspace(table: Table, workflow: Workflow) {
 
 function buildAllStepsWorkflow(): Workflow {
   return {
-    version: 1,
+    version: 2,
     workflowId: 'wf_all_steps',
     name: 'All steps',
-    description: 'Covers every V1 step type.',
+    description: 'Covers every current step type.',
     steps: [
       {
         id: 'step_fill_status',
-        type: 'fillEmpty',
-        target: {
-          kind: 'columns',
-          columnIds: ['col_status'],
-        },
-        value: 'unknown',
+        type: 'scopedTransform',
+        columnIds: ['col_status'],
+        expression: coalesce(value(), literal('unknown')),
         treatWhitespaceAsEmpty: true,
       },
       {
         id: 'step_normalize_text',
-        type: 'normalizeText',
-        target: {
-          kind: 'columns',
-          columnIds: ['col_email', 'col_city'],
-        },
-        trim: true,
-        collapseWhitespace: true,
-        case: 'lower',
+        type: 'scopedTransform',
+        columnIds: ['col_email', 'col_city'],
+        expression: call('lower', call('collapseWhitespace', call('trim', value()))),
+        treatWhitespaceAsEmpty: false,
+      },
+      {
+        id: 'step_drop_columns',
+        type: 'dropColumns',
+        columnIds: ['col_internal_notes'],
       },
       {
         id: 'step_rename_customer_id',
@@ -331,20 +490,11 @@ function buildAllStepsWorkflow(): Workflow {
           columnId: 'col_display_location',
           displayName: 'display_location',
         },
-        expression: {
-          kind: 'concat',
-          parts: [
-            { kind: 'column', columnId: 'col_city' },
-            { kind: 'literal', value: ', ' },
-            {
-              kind: 'coalesce',
-              inputs: [
-                { kind: 'column', columnId: 'col_state' },
-                { kind: 'literal', value: 'unknown' },
-              ],
-            },
-          ],
-        },
+        expression: concat(
+          column('col_city'),
+          literal(', '),
+          coalesce(column('col_state'), literal('unknown')),
+        ),
       },
       {
         id: 'step_filter_rows',
@@ -388,10 +538,7 @@ function buildAllStepsWorkflow(): Workflow {
       {
         id: 'step_combine_columns',
         type: 'combineColumns',
-        target: {
-          kind: 'columns',
-          columnIds: ['col_city', 'col_state'],
-        },
+        columnIds: ['col_city', 'col_state'],
         separator: ', ',
         newColumn: {
           columnId: 'col_location',
@@ -401,10 +548,7 @@ function buildAllStepsWorkflow(): Workflow {
       {
         id: 'step_dedupe_rows',
         type: 'deduplicateRows',
-        target: {
-          kind: 'columns',
-          columnIds: ['col_email'],
-        },
+        columnIds: ['col_email'],
       },
       {
         id: 'step_sort_rows',
@@ -436,13 +580,50 @@ async function readFixtureTable(fileName: string): Promise<Table> {
   return table;
 }
 
-function loadCsvTable(text: string): Table {
-  const workbook = importCsvWorkbook('inline.csv', text);
-  const table = getActiveTable(workbook);
+function value(): WorkflowExpression {
+  return { kind: 'value' };
+}
 
-  if (!table) {
-    throw new Error('Expected active table for inline CSV.');
-  }
+function literal(cellValue: string | number | boolean | null): WorkflowExpression {
+  return {
+    kind: 'literal',
+    value: cellValue,
+  };
+}
 
-  return table;
+function column(columnId: string): WorkflowExpression {
+  return {
+    kind: 'column',
+    columnId,
+  };
+}
+
+function call(
+  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'substring' | 'replace' | 'split' | 'first' | 'last' | 'coalesce' | 'concat',
+  ...args: WorkflowExpression[]
+): WorkflowExpression {
+  return {
+    kind: 'call',
+    name,
+    args,
+  };
+}
+
+function coalesce(first: WorkflowExpression, second: WorkflowExpression): WorkflowExpression {
+  return call('coalesce', first, second);
+}
+
+function concat(...args: WorkflowExpression[]): WorkflowExpression {
+  return call('concat', ...args);
+}
+
+function createColumn(columnId: string, displayName: string, logicalType: Table['schema']['columns'][number]['logicalType']): Table['schema']['columns'][number] {
+  return {
+    columnId,
+    displayName,
+    logicalType,
+    nullable: true,
+    sourceIndex: 0,
+    missingCount: 0,
+  };
 }

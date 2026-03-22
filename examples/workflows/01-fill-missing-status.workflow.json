@@ -1,17 +1,28 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_fill_status",
   "name": "Fill missing status",
   "steps": [
     {
       "id": "step_fill_status",
-      "type": "fillEmpty",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_status"]
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_status"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "value"
+          },
+          {
+            "kind": "literal",
+            "value": "unknown"
+          }
+        ]
       },
-      "value": "unknown",
-      "treatWhitespaceAsEmpty": false
+      "treatWhitespaceAsEmpty": true
     }
   ]
 }

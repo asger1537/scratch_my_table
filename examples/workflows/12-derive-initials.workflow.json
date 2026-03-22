@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "workflowId": "wf_derive_initials",
+  "name": "Derive initials",
+  "description": "Create initials from the first letter of first_name and the first letter of the final last_name segment.",
+  "steps": [
+    {
+      "id": "step_derive_initials",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_initials",
+        "displayName": "initials"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "concat",
+        "args": [
+          {
+            "kind": "call",
+            "name": "upper",
+            "args": [
+              {
+                "kind": "call",
+                "name": "first",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_first_name"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "upper",
+            "args": [
+              {
+                "kind": "call",
+                "name": "first",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "last",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "split",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_last_name"
+                          },
+                          {
+                            "kind": "literal",
+                            "value": " "
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_keep_rows_with_email",
   "name": "Keep rows with email",
   "steps": [
@@ -12,7 +12,7 @@
         "condition": {
           "kind": "isEmpty",
           "columnId": "col_email",
-          "treatWhitespaceAsEmpty": false
+          "treatWhitespaceAsEmpty": true
         }
       }
     }

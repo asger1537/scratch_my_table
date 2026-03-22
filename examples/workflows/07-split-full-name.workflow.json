@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_split_full_name",
   "name": "Split full name",
   "steps": [

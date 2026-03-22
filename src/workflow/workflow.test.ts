@@ -5,14 +5,35 @@ import { describe, expect, it } from 'vitest';
 
 import { importCsvWorkbook } from '../domain/csv';
 import { getActiveTable, type Table } from '../domain/model';
-import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow } from './index';
+import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from './index';
 
-describe('Milestone 2 workflow validation and execution', () => {
-  it('structurally validates workflow JSON and rejects duplicate step IDs', () => {
-    const validWorkflow = {
-      version: 1,
+describe('workflow validation and execution', () => {
+  it('structurally validates canonical v2 workflows and upgrades legacy v1 workflows', () => {
+    const validWorkflow: Workflow = {
+      version: 2,
       workflowId: 'wf_valid',
       name: 'Valid workflow',
+      steps: [
+        {
+          id: 'step_fill_status',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          expression: coalesce(value(), literal('unknown')),
+          treatWhitespaceAsEmpty: true,
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(validWorkflow)).toEqual({
+      valid: true,
+      workflow: validWorkflow,
+      issues: [],
+    });
+
+    const legacyWorkflow = {
+      version: 1,
+      workflowId: 'wf_legacy',
+      name: 'Legacy workflow',
       steps: [
         {
           id: 'step_fill_status',
@@ -27,21 +48,79 @@ describe('Milestone 2 workflow validation and execution', () => {
       ],
     };
 
-    expect(validateWorkflowStructure(validWorkflow).valid).toBe(true);
+    const upgraded = validateWorkflowStructure(legacyWorkflow);
 
-    const duplicateStepIdWorkflow = {
+    expect(upgraded.valid).toBe(true);
+    expect(upgraded.workflow).toEqual({
+      version: 2,
+      workflowId: 'wf_legacy',
+      name: 'Legacy workflow',
+      steps: validWorkflow.steps,
+    });
+  });
+
+  it('defaults legacy whitespace-empty flags to true when they are omitted', () => {
+    const legacyWorkflow = {
       version: 1,
-      workflowId: 'wf_duplicate_steps',
-      name: 'Duplicate steps',
+      workflowId: 'wf_legacy_defaults',
+      name: 'Legacy defaults',
       steps: [
         {
-          id: 'step_repeat',
+          id: 'step_fill_status',
           type: 'fillEmpty',
           target: {
             kind: 'columns',
             columnIds: ['col_status'],
           },
           value: 'unknown',
+        },
+        {
+          id: 'step_keep_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'isEmpty',
+            columnId: 'col_email',
+          },
+        },
+      ],
+    };
+
+    const upgraded = validateWorkflowStructure(legacyWorkflow);
+
+    expect(upgraded.valid).toBe(true);
+    expect(upgraded.workflow?.steps).toEqual([
+      {
+        id: 'step_fill_status',
+        type: 'scopedTransform',
+        columnIds: ['col_status'],
+        expression: coalesce(value(), literal('unknown')),
+        treatWhitespaceAsEmpty: true,
+      },
+      {
+        id: 'step_keep_email',
+        type: 'filterRows',
+        mode: 'keep',
+        condition: {
+          kind: 'isEmpty',
+          columnId: 'col_email',
+          treatWhitespaceAsEmpty: true,
+        },
+      },
+    ]);
+  });
+
+  it('rejects duplicate step IDs and schema-invalid expression shapes', () => {
+    const duplicateStepIdWorkflow = {
+      version: 2,
+      workflowId: 'wf_duplicate_steps',
+      name: 'Duplicate steps',
+      steps: [
+        {
+          id: 'step_repeat',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          expression: coalesce(value(), literal('unknown')),
           treatWhitespaceAsEmpty: false,
         },
         {
@@ -53,29 +132,40 @@ describe('Milestone 2 workflow validation and execution', () => {
       ],
     };
 
-    const validation = validateWorkflowStructure(duplicateStepIdWorkflow);
+    const duplicateValidation = validateWorkflowStructure(duplicateStepIdWorkflow);
 
-    expect(validation.valid).toBe(false);
-    expect(validation.issues.some((issue) => issue.code === 'duplicateStepId')).toBe(true);
-  });
+    expect(duplicateValidation.valid).toBe(false);
+    expect(duplicateValidation.issues.some((issue) => issue.code === 'duplicateStepId')).toBe(true);
 
-  it('reports structural schema violations separately from semantic validation', () => {
     const invalidWorkflow = {
-      version: 1,
-      workflowId: 'wf_missing_name',
-      steps: [],
+      version: 2,
+      workflowId: 'wf_bad_call',
+      name: 'Bad call',
+      steps: [
+        {
+          id: 'step_bad_call',
+          type: 'scopedTransform',
+          columnIds: ['col_email'],
+          expression: {
+            kind: 'call',
+            name: 'lower',
+            args: [value(), literal('extra')],
+          },
+          treatWhitespaceAsEmpty: false,
+        },
+      ],
     };
 
-    const validation = validateWorkflowStructure(invalidWorkflow);
+    const invalidValidation = validateWorkflowStructure(invalidWorkflow);
 
-    expect(validation.valid).toBe(false);
-    expect(validation.issues.some((issue) => issue.code === 'schema.required' && issue.path === 'name')).toBe(true);
+    expect(invalidValidation.valid).toBe(false);
+    expect(invalidValidation.issues.some((issue) => issue.code === 'schema.maxItems')).toBe(true);
   });
 
   it('lets later valid steps see schema changes from earlier valid steps', () => {
     const table = loadCsvTable('first_name,last_name\r\nAlice,Ng\r\n');
     const workflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_schema_evolution',
       name: 'Schema evolution',
       steps: [
@@ -86,14 +176,7 @@ describe('Milestone 2 workflow validation and execution', () => {
             columnId: 'col_full_name',
             displayName: 'full_name',
           },
-          expression: {
-            kind: 'concat',
-            parts: [
-              { kind: 'column', columnId: 'col_first_name' },
-              { kind: 'literal', value: ' ' },
-              { kind: 'column', columnId: 'col_last_name' },
-            ],
-          },
+          expression: concat(column('col_first_name'), literal(' '), column('col_last_name')),
         },
         {
           id: 'step_rename_full_name',
@@ -107,13 +190,13 @@ describe('Milestone 2 workflow validation and execution', () => {
     const validation = validateWorkflowSemantics(workflow, table);
 
     expect(validation.valid).toBe(true);
-    expect(validation.finalSchema.columns.find((column) => column.columnId === 'col_full_name')?.displayName).toBe('display_name');
+    expect(validation.finalSchema.columns.find((entry) => entry.columnId === 'col_full_name')?.displayName).toBe('display_name');
   });
 
   it('does not let invalid steps contribute schema changes to later validation', () => {
     const table = loadCsvTable('first_name,last_name\r\nAlice,Ng\r\n');
     const workflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_invalid_schema_change',
       name: 'Invalid schema change',
       steps: [
@@ -124,10 +207,7 @@ describe('Milestone 2 workflow validation and execution', () => {
             columnId: 'col_full_name',
             displayName: 'first_name',
           },
-          expression: {
-            kind: 'literal',
-            value: 'Alice Ng',
-          },
+          expression: literal('Alice Ng'),
         },
         {
           id: 'step_rename_missing',
@@ -145,122 +225,163 @@ describe('Milestone 2 workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'missingColumn' && issue.stepId === 'step_rename_missing')).toBe(true);
   });
 
-  it('fills empty cells deterministically and validates type compatibility', async () => {
-    const table = await readFixtureTable('messy-customers.csv');
-    const validWorkflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_fill_status',
-      name: 'Fill status',
-      steps: [
-        {
-          id: 'step_fill_status',
-          type: 'fillEmpty',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_status'],
-          },
-          value: 'unknown',
-          treatWhitespaceAsEmpty: true,
-        },
-      ],
-    };
-
-    const execution = executeWorkflow(validWorkflow, table);
-
-    expect(execution.validationErrors).toEqual([]);
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status).toBe('unknown');
-    expect(execution.transformedTable?.rowsById.row_5.cellsByColumnId.col_status).toBe('unknown');
-    expect(execution.changedCellCount).toBe(2);
-
-    const invalidWorkflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_fill_bad_type',
-      name: 'Fill bad type',
-      steps: [
-        {
-          id: 'step_fill_bad_type',
-          type: 'fillEmpty',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_status'],
-          },
-          value: 1,
-          treatWhitespaceAsEmpty: false,
-        },
-      ],
-    };
-
-    const validation = validateWorkflowSemantics(invalidWorkflow, table);
-
-    expect(validation.valid).toBe(false);
-    expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
-  });
-
-  it('normalizes text and rejects non-string targets', async () => {
-    const table = await readFixtureTable('messy-customers.csv');
+  it('executes scoped transforms with row conditions, multi-column targets, and coalesce semantics', () => {
+    const table = loadCsvTable('first_name,last_name,status,region\r\nAlice,Ng,,west\r\nAmy,Adams,  ,west\r\nBen,Ortiz,,east\r\n');
     const workflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_normalize_text',
-      name: 'Normalize text',
+      version: 2,
+      workflowId: 'wf_scoped_fill',
+      name: 'Scoped fill',
       steps: [
         {
-          id: 'step_normalize_email',
-          type: 'normalizeText',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_email'],
+          id: 'step_fill_unknown',
+          type: 'scopedTransform',
+          columnIds: ['col_first_name', 'col_last_name', 'col_status'],
+          rowCondition: {
+            kind: 'equals',
+            columnId: 'col_region',
+            value: 'west',
           },
-          trim: true,
-          collapseWhitespace: false,
-          case: 'lower',
-        },
-        {
-          id: 'step_normalize_name',
-          type: 'normalizeText',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_full_name'],
-          },
-          trim: true,
-          collapseWhitespace: true,
-          case: 'preserve',
+          expression: coalesce(value(), literal('unknown')),
+          treatWhitespaceAsEmpty: true,
         },
       ],
     };
 
     const execution = executeWorkflow(workflow, table);
 
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('alice.ng@example.com');
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_full_name).toBe('Alice Ng');
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_first_name).toBe('Alice');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status).toBe('unknown');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status).toBe('unknown');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status).toBe(null);
+    expect(execution.changedCellCount).toBe(2);
+  });
 
-    const invalidWorkflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_normalize_bad_column',
-      name: 'Normalize bad column',
+  it('allows scoped transforms to read another column from the same row', () => {
+    const table = loadCsvTable('customer_id,email\r\nC001,\r\nC002,bob@example.com\r\nC003,   \r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_fill_email_from_customer_id',
+      name: 'Fill email from customer id',
       steps: [
         {
-          id: 'step_normalize_date',
-          type: 'normalizeText',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_signup_date'],
-          },
-          trim: true,
-          collapseWhitespace: false,
-          case: 'preserve',
+          id: 'step_fill_email',
+          type: 'scopedTransform',
+          columnIds: ['col_email'],
+          expression: coalesce(value(), column('col_customer_id')),
+          treatWhitespaceAsEmpty: true,
         },
       ],
     };
 
-    const validation = validateWorkflowSemantics(invalidWorkflow, table);
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
 
-    expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
+    expect(validation.valid).toBe(true);
+    expect(validation.issues).toEqual([]);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('C001');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_email).toBe('bob@example.com');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('C003');
+  });
+
+  it('executes nested built-in scoped-transform functions deterministically', async () => {
+    const table = await readFixtureTable('messy-customers.csv');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_transform_text',
+      name: 'Transform text',
+      steps: [
+        {
+          id: 'step_normalize_email',
+          type: 'scopedTransform',
+          columnIds: ['col_email'],
+          expression: call('lower', call('trim', value())),
+          treatWhitespaceAsEmpty: false,
+        },
+        {
+          id: 'step_clean_full_name',
+          type: 'scopedTransform',
+          columnIds: ['col_full_name'],
+          expression: call('replace', call('collapseWhitespace', call('trim', value())), literal('Ng'), literal('NG')),
+          treatWhitespaceAsEmpty: false,
+        },
+        {
+          id: 'step_abbreviate_status',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          rowCondition: {
+            kind: 'not',
+            condition: {
+              kind: 'isEmpty',
+              columnId: 'col_status',
+              treatWhitespaceAsEmpty: true,
+            },
+          },
+          expression: call('substring', call('upper', call('trim', value())), literal(0), literal(3)),
+          treatWhitespaceAsEmpty: true,
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('alice.ng@example.com');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_full_name).toBe('Alice NG');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status).toBe('ACT');
+    expect(execution.transformedTable?.rowsById.row_5.cellsByColumnId.col_status).toBe('   ');
+  });
+
+  it('rejects incompatible scoped-transform expressions and invalid value references', async () => {
+    const table = await readFixtureTable('messy-customers.csv');
+    const incompatibleWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_bad_lower',
+      name: 'Bad lower',
+      steps: [
+        {
+          id: 'step_bad_lower',
+          type: 'scopedTransform',
+          columnIds: ['col_signup_date'],
+          expression: call('lower', value()),
+          treatWhitespaceAsEmpty: false,
+        },
+      ],
+    };
+
+    const incompatibleValidation = validateWorkflowSemantics(incompatibleWorkflow, table);
+
+    expect(incompatibleValidation.valid).toBe(false);
+    expect(incompatibleValidation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
+
+    const invalidValueReferenceWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_bad_value_reference',
+      name: 'Bad value reference',
+      steps: [
+        {
+          id: 'step_bad_value_reference',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad',
+            displayName: 'bad',
+          },
+          expression: value(),
+        },
+      ],
+    };
+
+    const invalidValueValidation = validateWorkflowSemantics(invalidValueReferenceWorkflow, table);
+
+    expect(invalidValueValidation.valid).toBe(false);
+    expect(invalidValueValidation.issues.some((issue) => issue.code === 'invalidExpression')).toBe(true);
   });
 
   it('renames a column display name without changing its stable column ID', () => {
     const table = loadCsvTable('customer_id,email\r\nC001,alice@example.com\r\n');
     const workflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_rename',
       name: 'Rename',
       steps: [
@@ -280,10 +401,51 @@ describe('Milestone 2 workflow validation and execution', () => {
     expect(renamedColumn?.displayName).toBe('external_customer_id');
   });
 
-  it('derives columns from concat and coalesce expressions and rejects incompatible coalesce inputs', () => {
+  it('drops columns deterministically and rejects dropping every visible column', () => {
+    const table = loadCsvTable('customer_id,email,notes\r\nC001,alice@example.com,internal\r\nC002,bob@example.com,\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_drop_columns',
+      name: 'Drop columns',
+      steps: [
+        {
+          id: 'step_drop_columns',
+          type: 'dropColumns',
+          columnIds: ['col_notes'],
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.schema.columns.map((column) => column.columnId)).toEqual(['col_customer_id', 'col_email']);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_notes).toBeUndefined();
+    expect(execution.rowOrderChanged).toBe(false);
+
+    const invalidWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_drop_all_columns',
+      name: 'Drop all columns',
+      steps: [
+        {
+          id: 'step_drop_all_columns',
+          type: 'dropColumns',
+          columnIds: ['col_customer_id', 'col_email', 'col_notes'],
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(invalidWorkflow, table);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues.some((issue) => issue.code === 'emptySchema')).toBe(true);
+  });
+
+  it('derives columns from concat and coalesce expressions', () => {
     const table = loadCsvTable('first_name,last_name,nickname,total\r\nAlice,Ng,,1\r\nBob,,Bobby,2\r\n');
     const validWorkflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_derive_display_name',
       name: 'Derive display name',
       steps: [
@@ -294,20 +456,10 @@ describe('Milestone 2 workflow validation and execution', () => {
             columnId: 'col_display_name',
             displayName: 'display_name',
           },
-          expression: {
-            kind: 'coalesce',
-            inputs: [
-              { kind: 'column', columnId: 'col_nickname' },
-              {
-                kind: 'concat',
-                parts: [
-                  { kind: 'column', columnId: 'col_first_name' },
-                  { kind: 'literal', value: ' ' },
-                  { kind: 'column', columnId: 'col_last_name' },
-                ],
-              },
-            ],
-          },
+          expression: coalesce(
+            column('col_nickname'),
+            concat(column('col_first_name'), literal(' '), column('col_last_name')),
+          ),
         },
       ],
     };
@@ -316,39 +468,42 @@ describe('Milestone 2 workflow validation and execution', () => {
 
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_display_name).toBe('Alice Ng');
     expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_display_name).toBe('Bobby');
+  });
 
-    const invalidWorkflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_derive_bad_coalesce',
-      name: 'Derive bad coalesce',
+  it('derives initials with first and last over strings and split lists', () => {
+    const table = loadCsvTable('first_name,last_name\r\nAlice,Ng\r\nCara,Patel Singh\r\nDiego,Ramirez Lopez\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_derive_initials',
+      name: 'Derive initials',
       steps: [
         {
-          id: 'step_bad_coalesce',
+          id: 'step_derive_initials',
           type: 'deriveColumn',
           newColumn: {
-            columnId: 'col_bad',
-            displayName: 'bad',
+            columnId: 'col_initials',
+            displayName: 'initials',
           },
-          expression: {
-            kind: 'coalesce',
-            inputs: [
-              { kind: 'column', columnId: 'col_total' },
-              { kind: 'literal', value: 'fallback' },
-            ],
-          },
+          expression: concat(
+            call('upper', call('first', column('col_first_name'))),
+            call('upper', call('first', call('last', call('split', column('col_last_name'), literal(' '))))),
+          ),
         },
       ],
     };
 
-    const validation = validateWorkflowSemantics(invalidWorkflow, table);
+    const execution = executeWorkflow(workflow, table);
 
-    expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_initials).toBe('AN');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_initials).toBe('CS');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_initials).toBe('DL');
   });
 
   it('filters rows with recursive conditions and rejects incompatible comparators', async () => {
     const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_filter_paid_orders',
       name: 'Filter paid orders',
       steps: [
@@ -381,7 +536,7 @@ describe('Milestone 2 workflow validation and execution', () => {
     expect(execution.removedRowCount).toBe(3);
 
     const invalidWorkflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_filter_bad_compare',
       name: 'Filter bad compare',
       steps: [
@@ -403,10 +558,10 @@ describe('Milestone 2 workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
   });
 
-  it('splits columns into explicit outputs and validates output name conflicts', () => {
-    const table = loadCsvTable('full_name\r\nAlice Ng\r\nBob\r\nCara Patel Singh\r\n\r\n');
-    const workflow: Workflow = {
-      version: 1,
+  it('splits and combines columns deterministically and validates duplicate source references', () => {
+    const splitTable = loadCsvTable('full_name\r\nAlice Ng\r\nBob\r\nCara Patel Singh\r\n\r\n');
+    const splitWorkflow: Workflow = {
+      version: 2,
       workflowId: 'wf_split_name',
       name: 'Split name',
       steps: [
@@ -429,58 +584,24 @@ describe('Milestone 2 workflow validation and execution', () => {
       ],
     };
 
-    const execution = executeWorkflow(workflow, table);
+    const splitExecution = executeWorkflow(splitWorkflow, splitTable);
 
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_first_name).toBe('Alice');
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_last_name).toBe('Ng');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_first_name).toBe('Bob');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_last_name).toBe(null);
-    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_last_name).toBe('Patel Singh');
-    expect(execution.transformedTable?.rowsById.row_4.cellsByColumnId.col_first_name).toBe(null);
+    expect(splitExecution.transformedTable?.rowsById.row_1.cellsByColumnId.col_first_name).toBe('Alice');
+    expect(splitExecution.transformedTable?.rowsById.row_1.cellsByColumnId.col_last_name).toBe('Ng');
+    expect(splitExecution.transformedTable?.rowsById.row_2.cellsByColumnId.col_first_name).toBe('Bob');
+    expect(splitExecution.transformedTable?.rowsById.row_2.cellsByColumnId.col_last_name).toBe(null);
+    expect(splitExecution.transformedTable?.rowsById.row_3.cellsByColumnId.col_last_name).toBe('Patel Singh');
 
-    const invalidWorkflow: Workflow = {
-      version: 1,
-      workflowId: 'wf_split_name_conflict',
-      name: 'Split name conflict',
-      steps: [
-        {
-          id: 'step_split_name_conflict',
-          type: 'splitColumn',
-          columnId: 'col_full_name',
-          delimiter: ' ',
-          outputColumns: [
-            {
-              columnId: 'col_first_name',
-              displayName: 'full_name',
-            },
-            {
-              columnId: 'col_last_name',
-              displayName: 'last_name',
-            },
-          ],
-        },
-      ],
-    };
-
-    const validation = validateWorkflowSemantics(invalidWorkflow, table);
-
-    expect(validation.issues.some((issue) => issue.code === 'nameConflict')).toBe(true);
-  });
-
-  it('combines columns deterministically and rejects duplicate source references', () => {
-    const table = loadCsvTable('city,state\r\nSeattle,WA\r\n,\"\"\r\n\"   \",CA\r\n');
-    const workflow: Workflow = {
-      version: 1,
+    const combineTable = loadCsvTable('city,state\r\nSeattle,WA\r\n,\"\"\r\n\"   \",CA\r\n');
+    const combineWorkflow: Workflow = {
+      version: 2,
       workflowId: 'wf_combine_location',
       name: 'Combine location',
       steps: [
         {
           id: 'step_combine_location',
           type: 'combineColumns',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_city', 'col_state'],
-          },
+          columnIds: ['col_city', 'col_state'],
           separator: ', ',
           newColumn: {
             columnId: 'col_location',
@@ -490,24 +611,21 @@ describe('Milestone 2 workflow validation and execution', () => {
       ],
     };
 
-    const execution = executeWorkflow(workflow, table);
+    const combineExecution = executeWorkflow(combineWorkflow, combineTable);
 
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_location).toBe('Seattle, WA');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_location).toBe('');
-    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_location).toBe('   , CA');
+    expect(combineExecution.transformedTable?.rowsById.row_1.cellsByColumnId.col_location).toBe('Seattle, WA');
+    expect(combineExecution.transformedTable?.rowsById.row_2.cellsByColumnId.col_location).toBe('');
+    expect(combineExecution.transformedTable?.rowsById.row_3.cellsByColumnId.col_location).toBe('   , CA');
 
     const invalidWorkflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_combine_duplicate_refs',
       name: 'Combine duplicate refs',
       steps: [
         {
           id: 'step_combine_duplicate_refs',
           type: 'combineColumns',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_city', 'col_city'],
-          },
+          columnIds: ['col_city', 'col_city'],
           separator: ', ',
           newColumn: {
             columnId: 'col_location',
@@ -517,15 +635,15 @@ describe('Milestone 2 workflow validation and execution', () => {
       ],
     };
 
-    const validation = validateWorkflowSemantics(invalidWorkflow, table);
+    const validation = validateWorkflowSemantics(invalidWorkflow, combineTable);
 
     expect(validation.issues.some((issue) => issue.code === 'duplicateColumnReference')).toBe(true);
   });
 
-  it('deduplicates rows with keep-first semantics based on the current row order', () => {
-    const table = loadCsvTable('email,name\r\nalice@example.com,Alice A\r\nalice@example.com,Alice Z\r\nbob@example.com,Bob\r\n');
-    const workflow: Workflow = {
-      version: 1,
+  it('deduplicates rows with keep-first semantics after sorting and keeps nulls last', () => {
+    const dedupeTable = loadCsvTable('email,name\r\nalice@example.com,Alice A\r\nalice@example.com,Alice Z\r\nbob@example.com,Bob\r\n');
+    const dedupeWorkflow: Workflow = {
+      version: 2,
       workflowId: 'wf_sort_then_dedupe',
       name: 'Sort then dedupe',
       steps: [
@@ -542,25 +660,20 @@ describe('Milestone 2 workflow validation and execution', () => {
         {
           id: 'step_dedupe_email',
           type: 'deduplicateRows',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_email'],
-          },
+          columnIds: ['col_email'],
         },
       ],
     };
 
-    const execution = executeWorkflow(workflow, table);
+    const dedupeExecution = executeWorkflow(dedupeWorkflow, dedupeTable);
 
-    expect(execution.transformedTable?.rowOrder).toEqual(['row_3', 'row_2']);
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_name).toBe('Alice Z');
-    expect(execution.removedRowCount).toBe(1);
-  });
+    expect(dedupeExecution.transformedTable?.rowOrder).toEqual(['row_3', 'row_2']);
+    expect(dedupeExecution.transformedTable?.rowsById.row_2.cellsByColumnId.col_name).toBe('Alice Z');
+    expect(dedupeExecution.removedRowCount).toBe(1);
 
-  it('sorts stably and keeps nulls last regardless of direction', () => {
-    const table = loadCsvTable('name,score\r\nA,2\r\nB,\r\nC,2\r\nD,1\r\n');
-    const workflow: Workflow = {
-      version: 1,
+    const sortTable = loadCsvTable('name,score\r\nA,2\r\nB,\r\nC,2\r\nD,1\r\n');
+    const sortWorkflow: Workflow = {
+      version: 2,
       workflowId: 'wf_sort_scores',
       name: 'Sort scores',
       steps: [
@@ -577,13 +690,13 @@ describe('Milestone 2 workflow validation and execution', () => {
       ],
     };
 
-    const execution = executeWorkflow(workflow, table);
+    const sortExecution = executeWorkflow(sortWorkflow, sortTable);
 
-    expect(execution.transformedTable?.rowOrder).toEqual(['row_1', 'row_3', 'row_4', 'row_2']);
-    expect(execution.rowOrderChanged).toBe(true);
+    expect(sortExecution.transformedTable?.rowOrder).toEqual(['row_1', 'row_3', 'row_4', 'row_2']);
+    expect(sortExecution.rowOrderChanged).toBe(true);
 
     const invalidSortWorkflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_sort_mixed',
       name: 'Sort mixed',
       steps: [
@@ -609,27 +722,21 @@ describe('Milestone 2 workflow validation and execution', () => {
   it('returns execution metadata suitable for later preview and diff work', async () => {
     const table = await readFixtureTable('messy-customers.csv');
     const workflow: Workflow = {
-      version: 1,
+      version: 2,
       workflowId: 'wf_metadata',
       name: 'Metadata',
       steps: [
         {
           id: 'step_fill_status',
-          type: 'fillEmpty',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_status'],
-          },
-          value: 'unknown',
+          type: 'scopedTransform',
+          columnIds: ['col_status'],
+          expression: coalesce(value(), literal('unknown')),
           treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_make_location',
           type: 'combineColumns',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_city', 'col_state'],
-          },
+          columnIds: ['col_city', 'col_state'],
           separator: ', ',
           newColumn: {
             columnId: 'col_location',
@@ -693,4 +800,41 @@ function loadCsvTable(text: string): Table {
   }
 
   return table;
+}
+
+function value(): WorkflowExpression {
+  return { kind: 'value' };
+}
+
+function literal(cellValue: string | number | boolean | null): WorkflowExpression {
+  return {
+    kind: 'literal',
+    value: cellValue,
+  };
+}
+
+function column(columnId: string): WorkflowExpression {
+  return {
+    kind: 'column',
+    columnId,
+  };
+}
+
+function call(
+  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'substring' | 'replace' | 'split' | 'first' | 'last' | 'coalesce' | 'concat',
+  ...args: WorkflowExpression[]
+): WorkflowExpression {
+  return {
+    kind: 'call',
+    name,
+    args,
+  };
+}
+
+function coalesce(first: WorkflowExpression, second: WorkflowExpression): WorkflowExpression {
+  return call('coalesce', first, second);
+}
+
+function concat(...args: WorkflowExpression[]): WorkflowExpression {
+  return call('concat', ...args);
 }

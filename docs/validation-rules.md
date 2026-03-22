@@ -2,9 +2,9 @@
 
 ## Validation Model
 
-V1 validation has two layers:
+Workflow IR v2 validation has two layers:
 
-1. Structural validation against `schemas/workflow-ir-v1.schema.json`.
+1. Structural validation against `schemas/workflow-ir-v2.schema.json`.
 2. Semantic validation against the active table schema as it exists at each workflow step.
 
 Rules:
@@ -12,17 +12,22 @@ Rules:
 - Validation runs in step order.
 - A valid step may change the schema seen by later steps.
 - An invalid step does not contribute schema changes to later validation.
-- The validator should continue after an error to collect more concrete issues.
+- The validator continues after an error to collect more concrete issues.
 - Missing columns are always validation errors, never silent no-ops.
 
 ## Global Rules
 
 ### Workflow-Level Rules
 
-- `version` must equal `1`.
+- `version` must equal `2`.
 - `workflowId` must be present.
 - `name` must be present.
 - Step `id` values must be unique within the workflow.
+
+Supported migration behavior:
+
+- supported legacy `version: 1` workflows are upgraded to canonical v2 before structural validation completes
+- after upgrade, all later validation runs against the v2 shape only
 
 ### Column Reference Rules
 
@@ -70,57 +75,78 @@ Rules:
 
 - `unknown` is treated as compatible when the active table provides no contradictory non-null values.
 - `mixed` is incompatible with operations that require a single ordering or comparison model.
-- String operations do not silently coerce number or boolean columns in place.
+- String functions do not silently coerce number or boolean columns in place.
 
 Error code:
 
 - `incompatibleType`
 
-## Step Rules
+## Expression Rules
 
-### `fillEmpty`
+Workflow IR v2 uses the shared expression AST:
 
-Valid when:
-
-- every targeted column exists
-- the target is not empty
-- the fill value is compatible with every targeted column
-
-Compatibility rules:
-
-- `string`, `date`, and `datetime` columns require a string fill value
-- `number` columns require a numeric fill value
-- `boolean` columns require a boolean fill value
-- `unknown` columns accept any non-null scalar fill value
-- `mixed` columns are invalid targets
-
-Additional rule:
-
-- `treatWhitespaceAsEmpty: true` is only valid when every targeted column is `string` or `unknown`
-
-Errors:
-
-- `missingColumn`
-- `incompatibleType`
-- `emptyTarget`
-
-### `normalizeText`
-
-Valid when:
-
-- every targeted column exists
-- every targeted column is `string` or `unknown`
+- `value`
+- `literal`
+- `column`
+- `call`
 
 Rules:
 
-- `trim`, `collapseWhitespace`, and `case` are explicit; omitted behavior is not inferred
-- Number, boolean, date, datetime, and mixed columns are invalid targets
+- `value` is valid only inside `scopedTransform`.
+- `column` is valid inside both `deriveColumn` and `scopedTransform`.
+- `literal` is always structurally valid.
+- `call` must use one supported built-in function name and the correct arity.
+
+Function rules:
+
+- `trim`, `lower`, `upper`, `collapseWhitespace` require exactly 1 string-like argument
+- `substring` requires 3 arguments: string input, numeric start, numeric length
+- `replace` requires 3 arguments: string input, string `from`, string `to`
+- `split` requires 2 scalar arguments: string input and string delimiter, and returns an intermediate list value
+- `first` and `last` require exactly 1 argument and accept either a string or a list value
+- `coalesce` requires exactly 2 arguments with compatible logical types
+- `concat` requires at least 2 arguments and returns a string
+- Final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values; list values are only valid as intermediate results
+
+Errors:
+
+- `invalidExpression`
+- `incompatibleType`
+- `missingColumn`
+
+## Step Rules
+
+### `scopedTransform`
+
+Valid when:
+
+- every targeted column exists
+- at least one target column is provided
+- target column references are unique
+- `rowCondition`, if present, is valid
+- the expression is valid for every targeted column type
+
+Rules:
+
+- `value` is evaluated as the current selected cell
+- `column` may read any existing column from the current row
+- `rowCondition` is evaluated against the current row before applying the expression
+- `treatWhitespaceAsEmpty` affects `coalesce(...)` empty matching only
+- authoring defaults `treatWhitespaceAsEmpty` to `true`; workflows may still explicitly set it to `false`
+- `treatWhitespaceAsEmpty: true` is only valid when a `coalesce` call may inspect string or unknown cells
+
+Common capability mappings:
+
+- fill empty cells: `coalesce(value, <literal>)`
+- normalize text: nested string functions such as `lower(trim(value))`
 
 Errors:
 
 - `missingColumn`
-- `incompatibleType`
+- `duplicateColumnReference`
 - `emptyTarget`
+- `invalidExpression`
+- `incompatibleType`
 
 ### `renameColumn`
 
@@ -132,14 +158,35 @@ Valid when:
 
 Rules:
 
-- Renaming does not change `columnId`
-- Renaming a column to its current display name is valid
+- Renaming does not change `columnId`.
+- Renaming a column to its current display name is valid.
 
 Errors:
 
 - `missingColumn`
 - `nameConflict`
 - `invalidDisplayName`
+
+### `dropColumns`
+
+Valid when:
+
+- every referenced `columnId` exists
+- at least one column is provided
+- column references are unique
+- at least one column remains after the drop
+
+Rules:
+
+- dropped columns are removed from the visible schema for later steps
+- later steps validate against the reduced schema after the drop step has applied
+
+Errors:
+
+- `missingColumn`
+- `duplicateColumnReference`
+- `emptyTarget`
+- `emptySchema`
 
 ### `deriveColumn`
 
@@ -148,14 +195,13 @@ Valid when:
 - `newColumn.columnId` is unique
 - `newColumn.displayName` is unique after normalization
 - every referenced column in the expression exists at that step
+- the expression does not use `value`
 
-Expression rules:
+Rules:
 
-- `literal` is always valid
-- `column` requires an existing `columnId`
-- `concat` must contain at least one part and returns a string
-- `coalesce` must contain at least two inputs
-- `coalesce` inputs must resolve to compatible logical types or `unknown`
+- `column` references are valid here
+- `concat` may combine mixed literal and column inputs because it stringifies values
+- `coalesce` inputs must still resolve to compatible logical types or `unknown`
 
 Errors:
 
@@ -217,16 +263,16 @@ Errors:
 
 Valid when:
 
-- every targeted source column exists
+- every source column exists
 - at least two source columns are provided
+- source column references are unique
 - the new column ID and display name are unique
 
 Rules:
 
-- source column order is the order listed in the target
+- source column order is the order listed in `columnIds`
 - the result column logical type is `string`
 - source columns remain in the schema
-- repeated source column references are invalid
 
 Errors:
 
@@ -240,7 +286,7 @@ Errors:
 
 Valid when:
 
-- every targeted key column exists
+- every key column exists
 - at least one key column is provided
 - key column references are unique
 
@@ -283,7 +329,7 @@ Errors:
 
 ## Missing-Column Behavior
 
-Missing-column behavior is fixed for V1:
+Missing-column behavior is fixed:
 
 - A referenced missing `columnId` is a validation error.
 - Preview and run are blocked until the error is resolved.
@@ -296,7 +342,7 @@ Incompatible-type behavior is also fixed:
 
 - Semantic incompatibility is a validation error, not a warning.
 - V1 does not silently cast target columns for in-place operations.
-- The only intentional stringification operations are `concat` inside `deriveColumn` and `combineColumns`.
+- The intentional stringification operations are `concat` and `combineColumns`.
 
 ## Error Reporting
 
@@ -306,4 +352,4 @@ Every semantic error should include:
 - human-readable message
 - step ID
 - JSON path
-- enough detail to explain the failing `columnId`, comparator, or proposed display name
+- enough detail to explain the failing `columnId`, comparator, function, or proposed display name

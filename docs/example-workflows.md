@@ -10,25 +10,34 @@ Description:
 
 Intended effect:
 
-- Rows with `null` or `""` in `status` become `unknown`.
+- Rows with `null`, `""`, or whitespace-only status become `unknown`.
 
 IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_fill_status",
   "name": "Fill missing status",
   "steps": [
     {
       "id": "step_fill_status",
-      "type": "fillEmpty",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_status"]
+      "type": "scopedTransform",
+      "columnIds": ["col_status"],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "value"
+          },
+          {
+            "kind": "literal",
+            "value": "unknown"
+          }
+        ]
       },
-      "value": "unknown",
-      "treatWhitespaceAsEmpty": false
+      "treatWhitespaceAsEmpty": true
     }
   ]
 }
@@ -48,20 +57,30 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_normalize_email",
   "name": "Normalize email addresses",
   "steps": [
     {
       "id": "step_normalize_email",
-      "type": "normalizeText",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
+      "type": "scopedTransform",
+      "columnIds": ["col_email"],
+      "expression": {
+        "kind": "call",
+        "name": "lower",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          }
+        ]
       },
-      "trim": true,
-      "collapseWhitespace": false,
-      "case": "lower"
+      "treatWhitespaceAsEmpty": false
     }
   ]
 }
@@ -81,7 +100,7 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_rename_customer_id",
   "name": "Rename customer ID",
   "steps": [
@@ -109,7 +128,7 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_derive_full_name",
   "name": "Create full name",
   "steps": [
@@ -121,8 +140,9 @@ IR example:
         "displayName": "full_name"
       },
       "expression": {
-        "kind": "concat",
-        "parts": [
+        "kind": "call",
+        "name": "concat",
+        "args": [
           {
             "kind": "column",
             "columnId": "col_first_name"
@@ -150,13 +170,13 @@ Description:
 
 Intended effect:
 
-- Any row whose `email` cell is empty is dropped from the output table.
+- Any row whose `email` cell is empty or whitespace-only is dropped from the output table.
 
 IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_keep_rows_with_email",
   "name": "Keep rows with email",
   "steps": [
@@ -169,7 +189,7 @@ IR example:
         "condition": {
           "kind": "isEmpty",
           "columnId": "col_email",
-          "treatWhitespaceAsEmpty": false
+          "treatWhitespaceAsEmpty": true
         }
       }
     }
@@ -191,7 +211,7 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_paid_orders_over_100",
   "name": "Paid orders over 100",
   "steps": [
@@ -233,7 +253,7 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_split_full_name",
   "name": "Split full name",
   "steps": [
@@ -271,17 +291,14 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_combine_location",
   "name": "Create location column",
   "steps": [
     {
       "id": "step_combine_location",
       "type": "combineColumns",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_city", "col_state"]
-      },
+      "columnIds": ["col_city", "col_state"],
       "separator": ", ",
       "newColumn": {
         "columnId": "col_location",
@@ -306,17 +323,14 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_deduplicate_email",
   "name": "Deduplicate by email",
   "steps": [
     {
       "id": "step_deduplicate_email",
       "type": "deduplicateRows",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
-      }
+      "columnIds": ["col_email"]
     }
   ]
 }
@@ -336,7 +350,7 @@ IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_sort_orders",
   "name": "Sort orders",
   "steps": [
@@ -366,56 +380,82 @@ Description:
 
 Intended effect:
 
-- Normalize text, fill missing status values, derive a location column, remove rows without email, deduplicate by email, and sort the final export.
+- Normalize text, fill missing status values, derive a location column, remove rows without usable email, deduplicate by email, and sort the final export.
 
 IR example:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workflowId": "wf_messy_customer_cleanup",
   "name": "Messy customer cleanup",
   "description": "Normalize text, fill defaults, remove incomplete rows, and sort for export.",
   "steps": [
     {
       "id": "step_normalize_email",
-      "type": "normalizeText",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
+      "type": "scopedTransform",
+      "columnIds": ["col_email"],
+      "expression": {
+        "kind": "call",
+        "name": "lower",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          }
+        ]
       },
-      "trim": true,
-      "collapseWhitespace": false,
-      "case": "lower"
+      "treatWhitespaceAsEmpty": false
     },
     {
       "id": "step_normalize_name",
-      "type": "normalizeText",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_full_name", "col_city"]
+      "type": "scopedTransform",
+      "columnIds": ["col_full_name", "col_city"],
+      "expression": {
+        "kind": "call",
+        "name": "collapseWhitespace",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          }
+        ]
       },
-      "trim": true,
-      "collapseWhitespace": true,
-      "case": "preserve"
+      "treatWhitespaceAsEmpty": false
     },
     {
       "id": "step_fill_status",
-      "type": "fillEmpty",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_status"]
+      "type": "scopedTransform",
+      "columnIds": ["col_status"],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "value"
+          },
+          {
+            "kind": "literal",
+            "value": "unknown"
+          }
+        ]
       },
-      "value": "unknown",
       "treatWhitespaceAsEmpty": true
     },
     {
       "id": "step_location",
       "type": "combineColumns",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_city", "col_state"]
-      },
+      "columnIds": ["col_city", "col_state"],
       "separator": ", ",
       "newColumn": {
         "columnId": "col_location",
@@ -429,16 +469,13 @@ IR example:
       "condition": {
         "kind": "isEmpty",
         "columnId": "col_email",
-        "treatWhitespaceAsEmpty": false
+        "treatWhitespaceAsEmpty": true
       }
     },
     {
       "id": "step_dedupe_email",
       "type": "deduplicateRows",
-      "target": {
-        "kind": "columns",
-        "columnIds": ["col_email"]
-      }
+      "columnIds": ["col_email"]
     },
     {
       "id": "step_sort_signup",
@@ -453,6 +490,161 @@ IR example:
           "direction": "asc"
         }
       ]
+    }
+  ]
+}
+```
+
+## 12. Derive Initials From First Name and Final Surname Segment
+
+Description:
+
+- Create an `initials` column using the first character of `first_name` and the first character of the final space-delimited part of `last_name`.
+
+Intended effect:
+
+- `Alice Ng` becomes `AN`.
+- `Cara Patel Singh` becomes `CS`.
+- `Diego Ramirez Lopez` becomes `DL`.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_derive_initials",
+  "name": "Derive initials",
+  "steps": [
+    {
+      "id": "step_derive_initials",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_initials",
+        "displayName": "initials"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "concat",
+        "args": [
+          {
+            "kind": "call",
+            "name": "upper",
+            "args": [
+              {
+                "kind": "call",
+                "name": "first",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_first_name"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "upper",
+            "args": [
+              {
+                "kind": "call",
+                "name": "first",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "last",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "split",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_last_name"
+                          },
+                          {
+                            "kind": "literal",
+                            "value": " "
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## 13. Drop Internal Export Columns
+
+Description:
+
+- Remove columns that should not appear in the final export.
+
+Intended effect:
+
+- The output table no longer includes `notes` or `internal_flag`.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_drop_internal_columns",
+  "name": "Drop internal columns",
+  "steps": [
+    {
+      "id": "step_drop_internal_columns",
+      "type": "dropColumns",
+      "columnIds": ["col_notes", "col_internal_flag"]
+    }
+  ]
+}
+```
+
+## 14. Fill Missing Email From Customer ID
+
+Description:
+
+- Fill missing `email` cells from `customer_id` in the same row before dropping rows that still have no usable email.
+
+Intended effect:
+
+- Existing email values are preserved.
+- Empty or whitespace-only email values fall back to `customer_id`.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_fill_email_from_customer_id",
+  "name": "Fill missing email from customer ID",
+  "steps": [
+    {
+      "id": "step_fill_email",
+      "type": "scopedTransform",
+      "columnIds": ["col_email"],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "value"
+          },
+          {
+            "kind": "column",
+            "columnId": "col_customer_id"
+          }
+        ]
+      },
+      "treatWhitespaceAsEmpty": true
     }
   ]
 }
