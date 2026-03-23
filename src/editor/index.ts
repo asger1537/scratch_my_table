@@ -14,6 +14,7 @@ export {
   createHeadlessWorkflowWorkspace,
   getWorkspaceMetadata,
   parseWorkflowJson,
+  projectWorkspaceStepSchemas,
   setWorkspaceMetadata,
   workflowToJson,
   workspaceToAuthoringWorkflow,

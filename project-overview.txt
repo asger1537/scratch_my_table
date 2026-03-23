@@ -1,5 +1,5 @@
 Project overview
-Generated: 2026-03-22 10:06:49 +01:00
+Generated: 2026-03-23 08:14:51 +01:00
 
 Included files
 --------------
@@ -119,6 +119,7 @@ Current repo reality:
 - workflows now persist as canonical Workflow IR v2
 - scoped cell transforms use `scopedTransform` plus an expression AST
 - built-in function blocks are the normal authoring path for scoped transforms
+- the authoring UI presents `deriveColumn` as `create new column`, including blank and copy-column initialization modes
 - supported legacy Workflow IR v1 JSON is upgraded to v2 on load
 
 Treat the current runtime and canonical IR as stable unless a concrete bug or doc mismatch requires a change.
@@ -2340,6 +2341,9 @@ Rules:
 
 - `column` references are valid here
 - `value` is not valid here
+- the authoring UI may present this as `create new column`
+- authoring may initialize the new column as blank by compiling to `{"kind":"literal","value":null}`
+- authoring may initialize the new column by copying another column by compiling to `{"kind":"column","columnId":"..."}` 
 
 Example:
 
@@ -5802,8 +5806,26 @@ const SUPPORT_COLOR = '#6b6a5c';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
 const CONDITION_COLOR = '#355070';
+const CREATE_COLUMN_INPUT_NAMES = {
+  mode: 'CREATE_MODE',
+  copySource: 'COPY_COLUMN_ID',
+  copySourceRow: 'COPY_COLUMN_ROW',
+  expression: 'EXPRESSION',
+} as const;
 
 let blocksRegistered = false;
+export const CREATE_COLUMN_MODES = {
+  blank: 'blank',
+  copy: 'copy',
+  expression: 'expression',
+} as const;
+export type CreateColumnMode = typeof CREATE_COLUMN_MODES[keyof typeof CREATE_COLUMN_MODES];
+
+function createSchemaColumnDropdown() {
+  return new Blockly.FieldDropdown(function (this: Blockly.FieldDropdown) {
+    return getSchemaColumnOptions(this.getSourceBlock()?.id);
+  });
+}
 
 export const BLOCK_TYPES = {
   scopedTransformStep: 'scoped_transform_step',
@@ -5868,7 +5890,7 @@ export function registerWorkflowBlocks() {
   createStepBlock(BLOCK_TYPES.renameColumnStep, TABLE_OPERATION_COLOR, (block) => {
     block.appendDummyInput()
       .appendField('rename column')
-      .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+      .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
     block.appendDummyInput()
       .appendField('to display name')
       .appendField(new Blockly.FieldTextInput('new_name'), 'NEW_DISPLAY_NAME');
@@ -5881,9 +5903,23 @@ export function registerWorkflowBlocks() {
   });
 
   createStepBlock(BLOCK_TYPES.deriveColumnStep, TABLE_OPERATION_COLOR, (block) => {
-    block.appendDummyInput().appendField('derive new column');
+    block.appendDummyInput().appendField('create new column');
     appendNewColumnFields(block);
-    block.appendValueInput('EXPRESSION').setCheck('EXPRESSION').appendField('from expression');
+    block.appendDummyInput()
+      .appendField('initialize with')
+      .appendField(new Blockly.FieldDropdown([
+        ['blank', CREATE_COLUMN_MODES.blank],
+        ['copy column', CREATE_COLUMN_MODES.copy],
+        ['expression', CREATE_COLUMN_MODES.expression],
+      ], (newValue) => {
+        updateCreateColumnBlockMode(block, normalizeCreateColumnMode(newValue));
+        return newValue;
+      }), CREATE_COLUMN_INPUT_NAMES.mode);
+    block.appendDummyInput(CREATE_COLUMN_INPUT_NAMES.copySourceRow)
+      .appendField('copy from column')
+      .appendField(createSchemaColumnDropdown(), CREATE_COLUMN_INPUT_NAMES.copySource);
+    block.appendValueInput(CREATE_COLUMN_INPUT_NAMES.expression).setCheck('EXPRESSION').appendField('expression');
+    updateCreateColumnBlockMode(block, CREATE_COLUMN_MODES.blank);
   });
 
   createStepBlock(BLOCK_TYPES.filterRowsStep, TABLE_OPERATION_COLOR, (block) => {
@@ -5899,7 +5935,7 @@ export function registerWorkflowBlocks() {
   createStepBlock(BLOCK_TYPES.splitColumnStep, TABLE_OPERATION_COLOR, (block) => {
     block.appendDummyInput()
       .appendField('split column')
-      .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+      .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
     block.appendDummyInput()
       .appendField('delimiter')
       .appendField(new Blockly.FieldTextInput(','), 'DELIMITER');
@@ -5945,7 +5981,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendDummyInput()
         .appendField('column')
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID')
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('direction')
         .appendField(new Blockly.FieldDropdown([
           ['asc', 'asc'],
@@ -6019,7 +6055,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendDummyInput()
         .appendField('column value')
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -6083,7 +6119,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendDummyInput()
         .appendField('is empty')
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID')
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('treat whitespace as empty')
         .appendField(new Blockly.FieldCheckbox('TRUE'), 'TREAT_WHITESPACE_AS_EMPTY');
       this.setOutput(true, 'CONDITION');
@@ -6222,7 +6258,7 @@ function createLiteralConditionBlock(type: string, label: string) {
     init() {
       this.appendDummyInput()
         .appendField(label)
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
       this.appendValueInput('VALUE').setCheck('NON_NULL_LITERAL').appendField('value');
       this.setOutput(true, 'CONDITION');
       this.setColour(CONDITION_COLOR);
@@ -6235,7 +6271,7 @@ function createStringConditionBlock(type: string, label: string) {
     init() {
       this.appendDummyInput()
         .appendField(label)
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID')
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('text')
         .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
       this.setOutput(true, 'CONDITION');
@@ -6264,12 +6300,44 @@ function appendNewColumnFields(block: Blockly.Block) {
     .appendField(new Blockly.FieldTextInput('new_column'), 'NEW_DISPLAY_NAME');
 }
 
+function updateCreateColumnBlockMode(block: Blockly.Block, mode: CreateColumnMode) {
+  block.getInput(CREATE_COLUMN_INPUT_NAMES.copySourceRow)?.setVisible(mode === CREATE_COLUMN_MODES.copy);
+  block.getInput(CREATE_COLUMN_INPUT_NAMES.expression)?.setVisible(mode === CREATE_COLUMN_MODES.expression);
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
+}
+
+function normalizeCreateColumnMode(value: unknown): CreateColumnMode {
+  switch (value) {
+    case CREATE_COLUMN_MODES.copy:
+    case CREATE_COLUMN_MODES.expression:
+      return value;
+    case CREATE_COLUMN_MODES.blank:
+    default:
+      return CREATE_COLUMN_MODES.blank;
+  }
+}
+
 ===== src\editor\FieldColumnMultiSelect.ts =====
 import * as Blockly from 'blockly';
 
-import { getSchemaColumnOptions } from './schemaOptions';
+import type { LogicalType } from '../domain/model';
+
+import { getEditorSchemaColumns, getSchemaColumnOptions } from './schemaOptions';
 
 const EMPTY_SELECTION = '[]';
+const TYPE_GROUP_ORDER: LogicalType[] = ['string', 'number', 'boolean', 'date', 'datetime', 'unknown', 'mixed'];
+const TYPE_GROUP_LABELS: Record<LogicalType, string> = {
+  string: 'All string columns',
+  number: 'All numeric columns',
+  boolean: 'All boolean columns',
+  date: 'All date columns',
+  datetime: 'All datetime columns',
+  unknown: 'All unknown columns',
+  mixed: 'All mixed columns',
+};
 
 export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | undefined> {
   override EDITABLE = true;
@@ -6306,7 +6374,12 @@ export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | un
   }
 
   protected override getText_() {
-    return formatColumnSelectionSummary(this.getSelectedColumnIds(), getSelectableColumns());
+    const sourceBlockId = this.getSourceBlock()?.id;
+    return formatColumnSelectionSummary(
+      this.getSelectedColumnIds(),
+      getSelectableColumns(sourceBlockId),
+      getSelectableColumnTypeGroups(sourceBlockId),
+    );
   }
 
   protected override showEditor_() {
@@ -6347,21 +6420,43 @@ export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | un
     actionRow.append(selectAllButton, clearButton);
     wrapper.append(actionRow);
 
+    const sourceBlockId = this.getSourceBlock()?.id;
+    const typeGroupActions = getSelectableColumnTypeGroups(sourceBlockId);
+
+    if (typeGroupActions.length > 0) {
+      const groupRow = document.createElement('div');
+      groupRow.className = 'blockly-column-multiselect__actions blockly-column-multiselect__actions--wrap';
+
+      typeGroupActions.forEach((group) => {
+        const groupButton = document.createElement('button');
+        groupButton.className = 'blockly-column-multiselect__button';
+        groupButton.textContent = `${group.label} (${group.columnIds.length})`;
+        groupButton.type = 'button';
+        groupButton.addEventListener('click', () => {
+          syncValue(group.columnIds);
+        });
+        groupRow.append(groupButton);
+      });
+
+      wrapper.append(groupRow);
+    }
+
     const list = document.createElement('div');
     list.className = 'blockly-column-multiselect__list';
     wrapper.append(list);
     contentDiv.append(wrapper);
 
-    const options = getSelectableColumns();
+    const options = getSelectableColumns(sourceBlockId);
     let selectedColumnIds = this.getSelectedColumnIds();
 
     const syncValue = (nextSelectedColumnIds: string[]) => {
       selectedColumnIds = normalizeColumnIdList(nextSelectedColumnIds);
       this.setValue(serializeColumnSelectionValue(selectedColumnIds));
-      renderList(searchInput.value);
+      renderList(searchInput.value, { preserveScroll: true });
     };
 
-    const renderList = (query: string) => {
+    const renderList = (query: string, renderOptions?: { preserveScroll?: boolean }) => {
+      const nextScrollTop = renderOptions?.preserveScroll ? list.scrollTop : 0;
       list.replaceChildren();
 
       const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -6396,6 +6491,10 @@ export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | un
         label.append(checkbox, text);
         list.append(label);
       });
+
+      if (renderOptions?.preserveScroll) {
+        list.scrollTop = nextScrollTop;
+      }
     };
 
     searchInput.addEventListener('input', () => {
@@ -6442,7 +6541,11 @@ export function parseColumnSelectionValue(value: string | string[] | undefined) 
   }
 }
 
-export function formatColumnSelectionSummary(columnIds: string[], columns = getSelectableColumns()) {
+export function formatColumnSelectionSummary(
+  columnIds: string[],
+  columns = getSelectableColumns(),
+  typeGroups = getSelectableColumnTypeGroups(),
+) {
   if (columnIds.length === 0) {
     return 'Select columns';
   }
@@ -6454,6 +6557,12 @@ export function formatColumnSelectionSummary(columnIds: string[], columns = getS
     return `All columns (${columnIds.length})`;
   }
 
+  const matchingGroup = typeGroups.find((group) => haveSameColumnIds(columnIds, group.columnIds));
+
+  if (matchingGroup) {
+    return `${matchingGroup.label} (${columnIds.length})`;
+  }
+
   if (labels.length <= 2) {
     return labels.join(', ');
   }
@@ -6461,15 +6570,33 @@ export function formatColumnSelectionSummary(columnIds: string[], columns = getS
   return `${labels[0]}, ${labels[1]} +${labels.length - 2}`;
 }
 
-export function getSelectableColumns() {
-  return getSchemaColumnOptions()
+export function getSelectableColumns(blockId?: string) {
+  return getSchemaColumnOptions(blockId)
     .filter(([, columnId]) => columnId !== '')
-    .map(([label, columnId]) => ({
+    .map(([label, columnId]): { columnId: string; label: string; shortLabel: string; searchText: string } => ({
       columnId,
       label,
       shortLabel: label.replace(/\s*\[[^\]]+\]$/, ''),
       searchText: `${label} ${columnId}`.toLocaleLowerCase(),
     }));
+}
+
+export function getSelectableColumnTypeGroups(blockId?: string) {
+  const columns = getEditorSchemaColumns(blockId);
+
+  return TYPE_GROUP_ORDER.flatMap((logicalType) => {
+    const matchingColumns = columns.filter((column) => column.logicalType === logicalType);
+
+    if (matchingColumns.length === 0) {
+      return [];
+    }
+
+    return [{
+      logicalType,
+      label: TYPE_GROUP_LABELS[logicalType],
+      columnIds: matchingColumns.map((column) => column.columnId),
+    }];
+  });
 }
 
 function normalizeColumnSelectionValue(value?: string | string[]) {
@@ -6491,6 +6618,15 @@ function normalizeColumnIdList(value: string | string[] | undefined) {
   return [...deduped];
 }
 
+function haveSameColumnIds(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const leftSet = new Set(left);
+  return right.every((columnId) => leftSet.has(columnId));
+}
+
 ===== src\editor\index.ts =====
 export { WorkflowEditor } from './WorkflowEditor';
 export { registerWorkflowBlocks } from './blocks';
@@ -6508,6 +6644,7 @@ export {
   createHeadlessWorkflowWorkspace,
   getWorkspaceMetadata,
   parseWorkflowJson,
+  projectWorkspaceStepSchemas,
   setWorkspaceMetadata,
   workflowToJson,
   workspaceToAuthoringWorkflow,
@@ -6515,6 +6652,7 @@ export {
   workspaceToWorkflow,
 } from './mapping';
 export { collectWorkflowColumnIds, getSchemaColumnOptions, setEditorSchemaColumns } from './schemaOptions';
+export { formatColumnSelectionSummary, getSelectableColumnTypeGroups } from './FieldColumnMultiSelect';
 export type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
 ===== src\editor\integration.ts =====
@@ -6592,14 +6730,16 @@ import { getActiveTable, type Table } from '../domain/model';
 import { executeWorkflow, type Workflow, type WorkflowExpression } from '../workflow';
 
 import { type AuthoringWorkflow, authoringWorkflowToWorkflow, workflowToAuthoringWorkflow } from './authoring';
-import { getSelectableColumns, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
+import { formatColumnSelectionSummary, getSelectableColumnTypeGroups, getSelectableColumns, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
 import { BLOCK_TYPES } from './blocks';
 import { runWorkspaceWorkflow, validateWorkspaceWorkflow } from './integration';
 import {
   collectWorkflowColumnIds,
   createHeadlessWorkflowWorkspace,
+  getSchemaColumnOptions,
   getWorkspaceMetadata,
   parseWorkflowJson,
+  projectWorkspaceStepSchemas,
   setEditorSchemaColumns,
   workflowToJson,
   workflowToWorkspace,
@@ -6750,6 +6890,46 @@ describe('block-based workflow authoring', () => {
     expect(roundtrip.workflow).toEqual(workflow);
   });
 
+  it('compiles create-column blank and copy modes to canonical deriveColumn expressions', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+
+    setEditorSchemaColumns([createColumn('col_first_name', 'first_name', 'string')], ['col_first_name']);
+
+    const blankBlock = workspace.newBlock(BLOCK_TYPES.deriveColumnStep);
+    blankBlock.setFieldValue('col_notes', 'NEW_COLUMN_ID');
+    blankBlock.setFieldValue('notes', 'NEW_DISPLAY_NAME');
+
+    const copyBlock = workspace.newBlock(BLOCK_TYPES.deriveColumnStep);
+    copyBlock.setFieldValue('col_first_name_copy', 'NEW_COLUMN_ID');
+    copyBlock.setFieldValue('first_name_copy', 'NEW_DISPLAY_NAME');
+    copyBlock.setFieldValue('copy', 'CREATE_MODE');
+    copyBlock.setFieldValue('col_first_name', 'COPY_COLUMN_ID');
+
+    blankBlock.nextConnection?.connect(copyBlock.previousConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+    expect(result.workflow?.steps).toEqual([
+      expect.objectContaining({
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_notes',
+          displayName: 'notes',
+        },
+        expression: literal(null),
+      }),
+      expect.objectContaining({
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_first_name_copy',
+          displayName: 'first_name_copy',
+        },
+        expression: column('col_first_name'),
+      }),
+    ]);
+  });
+
   it('roundtrips scoped transforms that mix value() and same-row column() references', () => {
     const workflow: Workflow = {
       version: 2,
@@ -6803,6 +6983,47 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.splitFunction);
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.firstFunction);
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.lastFunction);
+  });
+
+  it('reconstructs deriveColumn workflows as create-column blank and copy modes when possible', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_create_column_modes',
+      name: 'Create column modes',
+      steps: [
+        {
+          id: 'step_create_blank_notes',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_notes',
+            displayName: 'notes',
+          },
+          expression: literal(null),
+        },
+        {
+          id: 'step_copy_first_name',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_first_name_copy',
+            displayName: 'first_name_copy',
+          },
+          expression: column('col_first_name'),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_first_name', 'col_notes', 'col_first_name_copy'], workflow);
+    const [firstBlock] = workspace.getTopBlocks(false);
+    const secondBlock = firstBlock?.getNextBlock();
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(firstBlock?.type).toBe(BLOCK_TYPES.deriveColumnStep);
+    expect(firstBlock?.getFieldValue('CREATE_MODE')).toBe('blank');
+    expect(secondBlock?.type).toBe(BLOCK_TYPES.deriveColumnStep);
+    expect(secondBlock?.getFieldValue('CREATE_MODE')).toBe('copy');
+    expect(secondBlock?.getFieldValue('COPY_COLUMN_ID')).toBe('col_first_name');
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
   });
 
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
@@ -6978,6 +7199,87 @@ describe('block-based workflow authoring', () => {
     setEditorSchemaColumns(table.schema.columns);
 
     expect(getSelectableColumns().map((entry) => entry.columnId)).toEqual(table.schema.columns.map((column) => column.columnId));
+  });
+
+  it('projects created columns into later step selectors based on authored step order', () => {
+    const baseColumns = [createColumn('col_email', 'Email', 'string')];
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_modify_copied_column',
+      name: 'Modify copied column',
+      steps: [
+        {
+          id: 'step_copy_email',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'email_safe',
+            displayName: 'Email (safe)',
+          },
+          expression: column('col_email'),
+        },
+        {
+          id: 'step_fill_email_safe',
+          type: 'scopedTransform',
+          columnIds: ['email_safe'],
+          expression: coalesce(value(), literal('NA')),
+          treatWhitespaceAsEmpty: true,
+        },
+      ],
+    };
+    const workspace = buildWorkspaceFromColumnIds(['col_email', 'email_safe'], workflow, baseColumns);
+    const deriveBlock = workspace.getTopBlocks(false)[0];
+    const transformBlock = deriveBlock?.getNextBlock();
+    const schemaByBlockId = projectWorkspaceStepSchemas(workspace, {
+      tableId: 'table_test',
+      sourceName: 'test.csv',
+      schema: {
+        columns: baseColumns,
+      },
+      rowsById: {},
+      rowOrder: [],
+      importWarnings: [],
+    });
+
+    setEditorSchemaColumns(baseColumns, ['col_email', 'email_safe'], schemaByBlockId);
+
+    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedTransformStep);
+    expect(getSchemaColumnOptions(transformBlock?.id)).toContainEqual(['Email (safe) [email_safe]', 'email_safe']);
+    expect(getSelectableColumns(transformBlock?.id).map((entry) => entry.columnId)).toContain('email_safe');
+    expect(transformBlock?.getField('COLUMN_IDS')?.getText()).toContain('Email (safe)');
+  });
+
+  it('exposes bulk type selections for schema-aware multi-select fields', () => {
+    setEditorSchemaColumns([
+      createColumn('col_email', 'email', 'string'),
+      createColumn('col_city', 'city', 'string'),
+      createColumn('col_order_total', 'order_total', 'number'),
+      createColumn('col_is_active', 'is_active', 'boolean'),
+      createColumn('col_ordered_at', 'ordered_at', 'datetime'),
+    ]);
+
+    expect(getSelectableColumnTypeGroups()).toEqual([
+      {
+        logicalType: 'string',
+        label: 'All string columns',
+        columnIds: ['col_email', 'col_city'],
+      },
+      {
+        logicalType: 'number',
+        label: 'All numeric columns',
+        columnIds: ['col_order_total'],
+      },
+      {
+        logicalType: 'boolean',
+        label: 'All boolean columns',
+        columnIds: ['col_is_active'],
+      },
+      {
+        logicalType: 'datetime',
+        label: 'All datetime columns',
+        columnIds: ['col_ordered_at'],
+      },
+    ]);
+    expect(formatColumnSelectionSummary(['col_email', 'col_city'])).toBe('All string columns (2)');
   });
 });
 
@@ -7167,12 +7469,23 @@ function concat(...args: WorkflowExpression[]): WorkflowExpression {
   return call('concat', ...args);
 }
 
+function createColumn(columnId: string, displayName: string, logicalType: Table['schema']['columns'][number]['logicalType']): Table['schema']['columns'][number] {
+  return {
+    columnId,
+    displayName,
+    logicalType,
+    nullable: true,
+    sourceIndex: 0,
+    missingCount: 0,
+  };
+}
+
 ===== src\editor\mapping.ts =====
 import * as Blockly from 'blockly';
 
 import { type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
-import { validateWorkflowStructure, type Workflow, type WorkflowCondition, type WorkflowExpression } from '../workflow';
+import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowCondition, type WorkflowExpression } from '../workflow';
 
 import {
   authoringWorkflowToWorkflow,
@@ -7192,7 +7505,7 @@ import {
   workflowToAuthoringWorkflow,
 } from './authoring';
 import { parseColumnSelectionValue, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
-import { BLOCK_TYPES, registerWorkflowBlocks } from './blocks';
+import { BLOCK_TYPES, CREATE_COLUMN_MODES, type CreateColumnMode, registerWorkflowBlocks } from './blocks';
 import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
 const workspaceMetadata = new WeakMap<Blockly.Workspace, AuthoringWorkflowMetadata>();
@@ -7333,6 +7646,46 @@ export function workflowToWorkspace(workspace: Blockly.Workspace, workflow: Work
   return [];
 }
 
+export function projectWorkspaceStepSchemas(workspace: Blockly.Workspace, table: Table) {
+  registerWorkflowBlocks();
+
+  const schemaByBlockId = new Map<string, Table['schema']['columns']>();
+  let workingTable = cloneTable(table);
+
+  getOrderedStepBlocks(workspace).forEach((block) => {
+    const projectedColumns = workingTable.schema.columns.map((column) => ({ ...column }));
+
+    collectStepScopedBlocks(block).forEach((scopedBlock) => {
+      schemaByBlockId.set(scopedBlock.id, projectedColumns.map((column) => ({ ...column })));
+    });
+
+    const stepResult = readStepBlock(block);
+
+    if (stepResult.issue) {
+      return;
+    }
+
+    const compiled = authoringWorkflowToWorkflow({
+      metadata: getWorkspaceMetadata(workspace),
+      steps: [stepResult.step],
+    });
+
+    if (!compiled.workflow) {
+      return;
+    }
+
+    const validation = validateWorkflowSemantics(compiled.workflow, workingTable);
+
+    if (!validation.valid) {
+      return;
+    }
+
+    workingTable = executeValidatedWorkflow(compiled.workflow, workingTable).transformedTable;
+  });
+
+  return schemaByBlockId;
+}
+
 export function parseWorkflowJson(text: string): WorkspaceWorkflowResult {
   let parsed: unknown;
 
@@ -7390,6 +7743,51 @@ function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep
   }
 
   return { steps, issues };
+}
+
+function getOrderedStepBlocks(workspace: Blockly.Workspace) {
+  const orderedBlocks: Blockly.Block[] = [];
+
+  sortBlocksByPosition(workspace.getTopBlocks(false)).forEach((topBlock) => {
+    if (!isStepBlockType(topBlock.type)) {
+      return;
+    }
+
+    let block: Blockly.Block | null = topBlock;
+
+    while (block) {
+      orderedBlocks.push(block);
+      block = block.getNextBlock();
+    }
+  });
+
+  return orderedBlocks;
+}
+
+function collectStepScopedBlocks(stepBlock: Blockly.Block) {
+  const scopedBlocks: Blockly.Block[] = [];
+  const visited = new Set<string>();
+
+  const visit = (block: Blockly.Block | null, includeNext: boolean) => {
+    if (!block || visited.has(block.id)) {
+      return;
+    }
+
+    visited.add(block.id);
+    scopedBlocks.push(block);
+
+    block.inputList.forEach((input) => {
+      const child = input.connection?.targetBlock() ?? null;
+      visit(child, true);
+    });
+
+    if (includeNext) {
+      visit(block.getNextBlock(), true);
+    }
+  };
+
+  visit(stepBlock, false);
+  return scopedBlocks;
 }
 
 function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: EditorIssue } {
@@ -7455,7 +7853,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
       };
     }
     case BLOCK_TYPES.deriveColumnStep: {
-      const expression = readRequiredExpression(block, 'EXPRESSION');
+      const expression = readCreateColumnExpression(block);
 
       if ('issue' in expression) {
         return { step: undefined as never, issue: expression.issue };
@@ -7982,10 +8380,20 @@ function createDropColumnsBlock(workspace: Blockly.Workspace, step: AuthoringDro
 
 function createDeriveColumnBlock(workspace: Blockly.Workspace, step: AuthoringDeriveColumnStep, isTopBlock: boolean) {
   const block = createBlock(workspace, BLOCK_TYPES.deriveColumnStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
+  const mode = inferCreateColumnMode(step.expression);
 
   setBlockMetadata(block, step.stepId);
   setNewColumnFields(block, step.newColumn.columnId, step.newColumn.displayName);
-  connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
+  block.setFieldValue(mode, 'CREATE_MODE');
+
+  if (mode === CREATE_COLUMN_MODES.copy && step.expression.kind === 'column') {
+    block.setFieldValue(step.expression.columnId, 'COPY_COLUMN_ID');
+  }
+
+  if (mode === CREATE_COLUMN_MODES.expression) {
+    connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
+  }
+
   return block;
 }
 
@@ -8323,6 +8731,38 @@ function getFieldBoolean(block: Blockly.Block, fieldName: string) {
   return getFieldString(block, fieldName) === 'TRUE';
 }
 
+function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const mode = getCreateColumnMode(block);
+
+  switch (mode) {
+    case CREATE_COLUMN_MODES.blank:
+      return {
+        expression: {
+          kind: 'literal',
+          value: null,
+        },
+      };
+    case CREATE_COLUMN_MODES.copy:
+      return {
+        expression: {
+          kind: 'column',
+          columnId: getFieldString(block, 'COPY_COLUMN_ID'),
+        },
+      };
+    case CREATE_COLUMN_MODES.expression:
+      return readRequiredExpression(block, 'EXPRESSION');
+    default:
+      return {
+        issue: {
+          code: 'invalidCreateColumnMode',
+          message: `Block '${block.type}' has an unsupported create-column mode '${String(mode)}'.`,
+          blockId: block.id,
+          blockType: block.type,
+        },
+      };
+  }
+}
+
 function readNewColumnFields(block: Blockly.Block) {
   return {
     columnId: getFieldString(block, 'NEW_COLUMN_ID'),
@@ -8333,6 +8773,32 @@ function readNewColumnFields(block: Blockly.Block) {
 function setNewColumnFields(block: Blockly.Block, columnId: string, displayName: string) {
   block.setFieldValue(columnId, 'NEW_COLUMN_ID');
   block.setFieldValue(displayName, 'NEW_DISPLAY_NAME');
+}
+
+function getCreateColumnMode(block: Blockly.Block): CreateColumnMode {
+  const value = getFieldString(block, 'CREATE_MODE');
+
+  switch (value) {
+    case CREATE_COLUMN_MODES.copy:
+      return CREATE_COLUMN_MODES.copy;
+    case CREATE_COLUMN_MODES.expression:
+      return CREATE_COLUMN_MODES.expression;
+    case CREATE_COLUMN_MODES.blank:
+    default:
+      return CREATE_COLUMN_MODES.blank;
+  }
+}
+
+function inferCreateColumnMode(expression: WorkflowExpression): CreateColumnMode {
+  if (expression.kind === 'literal' && expression.value === null) {
+    return CREATE_COLUMN_MODES.blank;
+  }
+
+  if (expression.kind === 'column') {
+    return CREATE_COLUMN_MODES.copy;
+  }
+
+  return CREATE_COLUMN_MODES.expression;
 }
 
 function missingInputIssue(block: Blockly.Block, inputName: string): EditorIssue {
@@ -8399,23 +8865,36 @@ import type { Workflow, WorkflowCondition, WorkflowExpression, WorkflowStep } fr
 
 let currentColumns: Column[] = [];
 let extraColumnIds = new Set<string>();
+let blockColumnsById = new Map<string, Column[]>();
 
-export function setEditorSchemaColumns(columns: Column[], extraIds: string[] = []) {
+export function setEditorSchemaColumns(columns: Column[], extraIds: string[] = [], schemaByBlockId?: Map<string, Column[]>) {
   currentColumns = columns.map((column) => ({ ...column }));
   extraColumnIds = new Set(extraIds.filter((columnId) => columnId !== ''));
+  blockColumnsById = new Map(
+    [...(schemaByBlockId ?? new Map<string, Column[]>()).entries()].map(([blockId, blockColumns]) => [
+      blockId,
+      blockColumns.map((column) => ({ ...column })),
+    ]),
+  );
 }
 
-export function getSchemaColumnOptions(): [string, string][] {
-  const options = currentColumns.map((column) => [`${column.displayName} [${column.columnId}]`, column.columnId] as [string, string]);
+export function getSchemaColumnOptions(blockId?: string): [string, string][] {
+  const columns = getEditorSchemaColumns(blockId);
+  const options = columns.map((column) => [`${column.displayName} [${column.columnId}]`, column.columnId] as [string, string]);
 
   [...extraColumnIds]
-    .filter((columnId) => !currentColumns.some((column) => column.columnId === columnId))
+    .filter((columnId) => !columns.some((column) => column.columnId === columnId))
     .sort()
     .forEach((columnId) => {
       options.push([`Missing column [${columnId}]`, columnId]);
     });
 
   return options.length > 0 ? options : [['No columns loaded', '']];
+}
+
+export function getEditorSchemaColumns(blockId?: string): Column[] {
+  const columns = blockId ? (blockColumnsById.get(blockId) ?? currentColumns) : currentColumns;
+  return columns.map((column) => ({ ...column }));
 }
 
 export function collectWorkflowColumnIds(workflow: Workflow): string[] {
@@ -8524,6 +9003,7 @@ import { BLOCK_TYPES, getWorkflowToolboxDefinition, registerWorkflowBlocks } fro
 import {
   createDefaultWorkflow,
   getWorkspaceMetadata,
+  projectWorkspaceStepSchemas,
   setWorkspaceMetadata,
   workflowToWorkspace,
   workspaceToWorkflow,
@@ -8587,6 +9067,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         return;
       }
 
+      syncEditorSchema(workspace, table, extraColumnIds);
       onWorkspaceChange(workspaceToWorkflow(workspace));
     };
 
@@ -8599,6 +9080,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     window.addEventListener('resize', handleResize);
 
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
     resizeWorkspace(workspace, true);
 
@@ -8610,9 +9092,8 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
   }, []);
 
   useEffect(() => {
-    setEditorSchemaColumns(table.schema.columns, extraColumnIds);
-
     if (workspaceRef.current) {
+      syncEditorSchema(workspaceRef.current, table, extraColumnIds);
       resizeWorkspace(workspaceRef.current);
     }
   }, [extraColumnIds, table.schema.columns]);
@@ -8625,6 +9106,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     }
 
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
     resizeWorkspace(workspace, true);
   }, [loadVersion]);
@@ -8730,6 +9212,10 @@ function loadWorkspace(
   workflowToWorkspace(workspace, workflow);
   suppressChangesRef.current = false;
   onWorkspaceChange(workspaceToWorkflow(workspace));
+}
+
+function syncEditorSchema(workspace: Blockly.Workspace, table: Table, extraColumnIds: string[]) {
+  setEditorSchemaColumns(table.schema.columns, extraColumnIds, projectWorkspaceStepSchemas(workspace, table));
 }
 
 function focusPrimaryStep(workspace: Blockly.Workspace) {
@@ -9291,6 +9777,10 @@ code {
 .blockly-column-multiselect__actions {
   display: flex;
   gap: 0.5rem;
+}
+
+.blockly-column-multiselect__actions--wrap {
+  flex-wrap: wrap;
 }
 
 .blockly-column-multiselect__button {

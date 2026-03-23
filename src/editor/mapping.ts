@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 
 import { type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
-import { validateWorkflowStructure, type Workflow, type WorkflowCondition, type WorkflowExpression } from '../workflow';
+import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowCondition, type WorkflowExpression } from '../workflow';
 
 import {
   authoringWorkflowToWorkflow,
@@ -22,7 +22,7 @@ import {
   workflowToAuthoringWorkflow,
 } from './authoring';
 import { parseColumnSelectionValue, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
-import { BLOCK_TYPES, registerWorkflowBlocks } from './blocks';
+import { BLOCK_TYPES, CREATE_COLUMN_MODES, type CreateColumnMode, registerWorkflowBlocks } from './blocks';
 import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
 const workspaceMetadata = new WeakMap<Blockly.Workspace, AuthoringWorkflowMetadata>();
@@ -163,6 +163,46 @@ export function workflowToWorkspace(workspace: Blockly.Workspace, workflow: Work
   return [];
 }
 
+export function projectWorkspaceStepSchemas(workspace: Blockly.Workspace, table: Table) {
+  registerWorkflowBlocks();
+
+  const schemaByBlockId = new Map<string, Table['schema']['columns']>();
+  let workingTable = cloneTable(table);
+
+  getOrderedStepBlocks(workspace).forEach((block) => {
+    const projectedColumns = workingTable.schema.columns.map((column) => ({ ...column }));
+
+    collectStepScopedBlocks(block).forEach((scopedBlock) => {
+      schemaByBlockId.set(scopedBlock.id, projectedColumns.map((column) => ({ ...column })));
+    });
+
+    const stepResult = readStepBlock(block);
+
+    if (stepResult.issue) {
+      return;
+    }
+
+    const compiled = authoringWorkflowToWorkflow({
+      metadata: getWorkspaceMetadata(workspace),
+      steps: [stepResult.step],
+    });
+
+    if (!compiled.workflow) {
+      return;
+    }
+
+    const validation = validateWorkflowSemantics(compiled.workflow, workingTable);
+
+    if (!validation.valid) {
+      return;
+    }
+
+    workingTable = executeValidatedWorkflow(compiled.workflow, workingTable).transformedTable;
+  });
+
+  return schemaByBlockId;
+}
+
 export function parseWorkflowJson(text: string): WorkspaceWorkflowResult {
   let parsed: unknown;
 
@@ -220,6 +260,51 @@ function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep
   }
 
   return { steps, issues };
+}
+
+function getOrderedStepBlocks(workspace: Blockly.Workspace) {
+  const orderedBlocks: Blockly.Block[] = [];
+
+  sortBlocksByPosition(workspace.getTopBlocks(false)).forEach((topBlock) => {
+    if (!isStepBlockType(topBlock.type)) {
+      return;
+    }
+
+    let block: Blockly.Block | null = topBlock;
+
+    while (block) {
+      orderedBlocks.push(block);
+      block = block.getNextBlock();
+    }
+  });
+
+  return orderedBlocks;
+}
+
+function collectStepScopedBlocks(stepBlock: Blockly.Block) {
+  const scopedBlocks: Blockly.Block[] = [];
+  const visited = new Set<string>();
+
+  const visit = (block: Blockly.Block | null, includeNext: boolean) => {
+    if (!block || visited.has(block.id)) {
+      return;
+    }
+
+    visited.add(block.id);
+    scopedBlocks.push(block);
+
+    block.inputList.forEach((input) => {
+      const child = input.connection?.targetBlock() ?? null;
+      visit(child, true);
+    });
+
+    if (includeNext) {
+      visit(block.getNextBlock(), true);
+    }
+  };
+
+  visit(stepBlock, false);
+  return scopedBlocks;
 }
 
 function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: EditorIssue } {
@@ -285,7 +370,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
       };
     }
     case BLOCK_TYPES.deriveColumnStep: {
-      const expression = readRequiredExpression(block, 'EXPRESSION');
+      const expression = readCreateColumnExpression(block);
 
       if ('issue' in expression) {
         return { step: undefined as never, issue: expression.issue };
@@ -812,10 +897,20 @@ function createDropColumnsBlock(workspace: Blockly.Workspace, step: AuthoringDro
 
 function createDeriveColumnBlock(workspace: Blockly.Workspace, step: AuthoringDeriveColumnStep, isTopBlock: boolean) {
   const block = createBlock(workspace, BLOCK_TYPES.deriveColumnStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
+  const mode = inferCreateColumnMode(step.expression);
 
   setBlockMetadata(block, step.stepId);
   setNewColumnFields(block, step.newColumn.columnId, step.newColumn.displayName);
-  connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
+  block.setFieldValue(mode, 'CREATE_MODE');
+
+  if (mode === CREATE_COLUMN_MODES.copy && step.expression.kind === 'column') {
+    block.setFieldValue(step.expression.columnId, 'COPY_COLUMN_ID');
+  }
+
+  if (mode === CREATE_COLUMN_MODES.expression) {
+    connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
+  }
+
   return block;
 }
 
@@ -1153,6 +1248,38 @@ function getFieldBoolean(block: Blockly.Block, fieldName: string) {
   return getFieldString(block, fieldName) === 'TRUE';
 }
 
+function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const mode = getCreateColumnMode(block);
+
+  switch (mode) {
+    case CREATE_COLUMN_MODES.blank:
+      return {
+        expression: {
+          kind: 'literal',
+          value: null,
+        },
+      };
+    case CREATE_COLUMN_MODES.copy:
+      return {
+        expression: {
+          kind: 'column',
+          columnId: getFieldString(block, 'COPY_COLUMN_ID'),
+        },
+      };
+    case CREATE_COLUMN_MODES.expression:
+      return readRequiredExpression(block, 'EXPRESSION');
+    default:
+      return {
+        issue: {
+          code: 'invalidCreateColumnMode',
+          message: `Block '${block.type}' has an unsupported create-column mode '${String(mode)}'.`,
+          blockId: block.id,
+          blockType: block.type,
+        },
+      };
+  }
+}
+
 function readNewColumnFields(block: Blockly.Block) {
   return {
     columnId: getFieldString(block, 'NEW_COLUMN_ID'),
@@ -1163,6 +1290,32 @@ function readNewColumnFields(block: Blockly.Block) {
 function setNewColumnFields(block: Blockly.Block, columnId: string, displayName: string) {
   block.setFieldValue(columnId, 'NEW_COLUMN_ID');
   block.setFieldValue(displayName, 'NEW_DISPLAY_NAME');
+}
+
+function getCreateColumnMode(block: Blockly.Block): CreateColumnMode {
+  const value = getFieldString(block, 'CREATE_MODE');
+
+  switch (value) {
+    case CREATE_COLUMN_MODES.copy:
+      return CREATE_COLUMN_MODES.copy;
+    case CREATE_COLUMN_MODES.expression:
+      return CREATE_COLUMN_MODES.expression;
+    case CREATE_COLUMN_MODES.blank:
+    default:
+      return CREATE_COLUMN_MODES.blank;
+  }
+}
+
+function inferCreateColumnMode(expression: WorkflowExpression): CreateColumnMode {
+  if (expression.kind === 'literal' && expression.value === null) {
+    return CREATE_COLUMN_MODES.blank;
+  }
+
+  if (expression.kind === 'column') {
+    return CREATE_COLUMN_MODES.copy;
+  }
+
+  return CREATE_COLUMN_MODES.expression;
 }
 
 function missingInputIssue(block: Blockly.Block, inputName: string): EditorIssue {

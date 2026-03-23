@@ -10,6 +10,7 @@ import { BLOCK_TYPES, getWorkflowToolboxDefinition, registerWorkflowBlocks } fro
 import {
   createDefaultWorkflow,
   getWorkspaceMetadata,
+  projectWorkspaceStepSchemas,
   setWorkspaceMetadata,
   workflowToWorkspace,
   workspaceToWorkflow,
@@ -73,6 +74,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         return;
       }
 
+      syncEditorSchema(workspace, table, extraColumnIds);
       onWorkspaceChange(workspaceToWorkflow(workspace));
     };
 
@@ -85,6 +87,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     window.addEventListener('resize', handleResize);
 
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
     resizeWorkspace(workspace, true);
 
@@ -96,9 +99,8 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
   }, []);
 
   useEffect(() => {
-    setEditorSchemaColumns(table.schema.columns, extraColumnIds);
-
     if (workspaceRef.current) {
+      syncEditorSchema(workspaceRef.current, table, extraColumnIds);
       resizeWorkspace(workspaceRef.current);
     }
   }, [extraColumnIds, table.schema.columns]);
@@ -111,6 +113,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     }
 
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
     resizeWorkspace(workspace, true);
   }, [loadVersion]);
@@ -216,6 +219,10 @@ function loadWorkspace(
   workflowToWorkspace(workspace, workflow);
   suppressChangesRef.current = false;
   onWorkspaceChange(workspaceToWorkflow(workspace));
+}
+
+function syncEditorSchema(workspace: Blockly.Workspace, table: Table, extraColumnIds: string[]) {
+  setEditorSchemaColumns(table.schema.columns, extraColumnIds, projectWorkspaceStepSchemas(workspace, table));
 }
 
 function focusPrimaryStep(workspace: Blockly.Workspace) {

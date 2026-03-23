@@ -3,17 +3,25 @@ import type { Workflow, WorkflowCondition, WorkflowExpression, WorkflowStep } fr
 
 let currentColumns: Column[] = [];
 let extraColumnIds = new Set<string>();
+let blockColumnsById = new Map<string, Column[]>();
 
-export function setEditorSchemaColumns(columns: Column[], extraIds: string[] = []) {
+export function setEditorSchemaColumns(columns: Column[], extraIds: string[] = [], schemaByBlockId?: Map<string, Column[]>) {
   currentColumns = columns.map((column) => ({ ...column }));
   extraColumnIds = new Set(extraIds.filter((columnId) => columnId !== ''));
+  blockColumnsById = new Map(
+    [...(schemaByBlockId ?? new Map<string, Column[]>()).entries()].map(([blockId, blockColumns]) => [
+      blockId,
+      blockColumns.map((column) => ({ ...column })),
+    ]),
+  );
 }
 
-export function getSchemaColumnOptions(): [string, string][] {
-  const options = currentColumns.map((column) => [`${column.displayName} [${column.columnId}]`, column.columnId] as [string, string]);
+export function getSchemaColumnOptions(blockId?: string): [string, string][] {
+  const columns = getEditorSchemaColumns(blockId);
+  const options = columns.map((column) => [`${column.displayName} [${column.columnId}]`, column.columnId] as [string, string]);
 
   [...extraColumnIds]
-    .filter((columnId) => !currentColumns.some((column) => column.columnId === columnId))
+    .filter((columnId) => !columns.some((column) => column.columnId === columnId))
     .sort()
     .forEach((columnId) => {
       options.push([`Missing column [${columnId}]`, columnId]);
@@ -22,8 +30,9 @@ export function getSchemaColumnOptions(): [string, string][] {
   return options.length > 0 ? options : [['No columns loaded', '']];
 }
 
-export function getEditorSchemaColumns() {
-  return currentColumns.map((column) => ({ ...column }));
+export function getEditorSchemaColumns(blockId?: string): Column[] {
+  const columns = blockId ? (blockColumnsById.get(blockId) ?? currentColumns) : currentColumns;
+  return columns.map((column) => ({ ...column }));
 }
 
 export function collectWorkflowColumnIds(workflow: Workflow): string[] {

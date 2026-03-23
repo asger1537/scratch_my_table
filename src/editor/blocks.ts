@@ -9,8 +9,26 @@ const SUPPORT_COLOR = '#6b6a5c';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
 const CONDITION_COLOR = '#355070';
+const CREATE_COLUMN_INPUT_NAMES = {
+  mode: 'CREATE_MODE',
+  copySource: 'COPY_COLUMN_ID',
+  copySourceRow: 'COPY_COLUMN_ROW',
+  expression: 'EXPRESSION',
+} as const;
 
 let blocksRegistered = false;
+export const CREATE_COLUMN_MODES = {
+  blank: 'blank',
+  copy: 'copy',
+  expression: 'expression',
+} as const;
+export type CreateColumnMode = typeof CREATE_COLUMN_MODES[keyof typeof CREATE_COLUMN_MODES];
+
+function createSchemaColumnDropdown() {
+  return new Blockly.FieldDropdown(function (this: Blockly.FieldDropdown) {
+    return getSchemaColumnOptions(this.getSourceBlock()?.id);
+  });
+}
 
 export const BLOCK_TYPES = {
   scopedTransformStep: 'scoped_transform_step',
@@ -75,7 +93,7 @@ export function registerWorkflowBlocks() {
   createStepBlock(BLOCK_TYPES.renameColumnStep, TABLE_OPERATION_COLOR, (block) => {
     block.appendDummyInput()
       .appendField('rename column')
-      .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+      .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
     block.appendDummyInput()
       .appendField('to display name')
       .appendField(new Blockly.FieldTextInput('new_name'), 'NEW_DISPLAY_NAME');
@@ -88,9 +106,23 @@ export function registerWorkflowBlocks() {
   });
 
   createStepBlock(BLOCK_TYPES.deriveColumnStep, TABLE_OPERATION_COLOR, (block) => {
-    block.appendDummyInput().appendField('derive new column');
+    block.appendDummyInput().appendField('create new column');
     appendNewColumnFields(block);
-    block.appendValueInput('EXPRESSION').setCheck('EXPRESSION').appendField('from expression');
+    block.appendDummyInput()
+      .appendField('initialize with')
+      .appendField(new Blockly.FieldDropdown([
+        ['blank', CREATE_COLUMN_MODES.blank],
+        ['copy column', CREATE_COLUMN_MODES.copy],
+        ['expression', CREATE_COLUMN_MODES.expression],
+      ], (newValue) => {
+        updateCreateColumnBlockMode(block, normalizeCreateColumnMode(newValue));
+        return newValue;
+      }), CREATE_COLUMN_INPUT_NAMES.mode);
+    block.appendDummyInput(CREATE_COLUMN_INPUT_NAMES.copySourceRow)
+      .appendField('copy from column')
+      .appendField(createSchemaColumnDropdown(), CREATE_COLUMN_INPUT_NAMES.copySource);
+    block.appendValueInput(CREATE_COLUMN_INPUT_NAMES.expression).setCheck('EXPRESSION').appendField('expression');
+    updateCreateColumnBlockMode(block, CREATE_COLUMN_MODES.blank);
   });
 
   createStepBlock(BLOCK_TYPES.filterRowsStep, TABLE_OPERATION_COLOR, (block) => {
@@ -106,7 +138,7 @@ export function registerWorkflowBlocks() {
   createStepBlock(BLOCK_TYPES.splitColumnStep, TABLE_OPERATION_COLOR, (block) => {
     block.appendDummyInput()
       .appendField('split column')
-      .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+      .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
     block.appendDummyInput()
       .appendField('delimiter')
       .appendField(new Blockly.FieldTextInput(','), 'DELIMITER');
@@ -152,7 +184,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendDummyInput()
         .appendField('column')
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID')
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('direction')
         .appendField(new Blockly.FieldDropdown([
           ['asc', 'asc'],
@@ -226,7 +258,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendDummyInput()
         .appendField('column value')
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -290,7 +322,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendDummyInput()
         .appendField('is empty')
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID')
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('treat whitespace as empty')
         .appendField(new Blockly.FieldCheckbox('TRUE'), 'TREAT_WHITESPACE_AS_EMPTY');
       this.setOutput(true, 'CONDITION');
@@ -429,7 +461,7 @@ function createLiteralConditionBlock(type: string, label: string) {
     init() {
       this.appendDummyInput()
         .appendField(label)
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID');
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
       this.appendValueInput('VALUE').setCheck('NON_NULL_LITERAL').appendField('value');
       this.setOutput(true, 'CONDITION');
       this.setColour(CONDITION_COLOR);
@@ -442,7 +474,7 @@ function createStringConditionBlock(type: string, label: string) {
     init() {
       this.appendDummyInput()
         .appendField(label)
-        .appendField(new Blockly.FieldDropdown(getSchemaColumnOptions), 'COLUMN_ID')
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('text')
         .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
       this.setOutput(true, 'CONDITION');
@@ -469,4 +501,24 @@ function appendNewColumnFields(block: Blockly.Block) {
   block.appendDummyInput()
     .appendField('display name')
     .appendField(new Blockly.FieldTextInput('new_column'), 'NEW_DISPLAY_NAME');
+}
+
+function updateCreateColumnBlockMode(block: Blockly.Block, mode: CreateColumnMode) {
+  block.getInput(CREATE_COLUMN_INPUT_NAMES.copySourceRow)?.setVisible(mode === CREATE_COLUMN_MODES.copy);
+  block.getInput(CREATE_COLUMN_INPUT_NAMES.expression)?.setVisible(mode === CREATE_COLUMN_MODES.expression);
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
+}
+
+function normalizeCreateColumnMode(value: unknown): CreateColumnMode {
+  switch (value) {
+    case CREATE_COLUMN_MODES.copy:
+    case CREATE_COLUMN_MODES.expression:
+      return value;
+    case CREATE_COLUMN_MODES.blank:
+    default:
+      return CREATE_COLUMN_MODES.blank;
+  }
 }

@@ -62,6 +62,7 @@ Current repo reality:
 - workflows now persist as canonical Workflow IR v2
 - scoped cell transforms use `scopedTransform` plus an expression AST
 - built-in function blocks are the normal authoring path for scoped transforms
+- the authoring UI presents `deriveColumn` as `create new column`, including blank and copy-column initialization modes
 - supported legacy Workflow IR v1 JSON is upgraded to v2 on load
 
 Treat the current runtime and canonical IR as stable unless a concrete bug or doc mismatch requires a change.

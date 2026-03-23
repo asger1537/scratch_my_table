@@ -14,8 +14,10 @@ import { runWorkspaceWorkflow, validateWorkspaceWorkflow } from './integration';
 import {
   collectWorkflowColumnIds,
   createHeadlessWorkflowWorkspace,
+  getSchemaColumnOptions,
   getWorkspaceMetadata,
   parseWorkflowJson,
+  projectWorkspaceStepSchemas,
   setEditorSchemaColumns,
   workflowToJson,
   workflowToWorkspace,
@@ -166,6 +168,46 @@ describe('block-based workflow authoring', () => {
     expect(roundtrip.workflow).toEqual(workflow);
   });
 
+  it('compiles create-column blank and copy modes to canonical deriveColumn expressions', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+
+    setEditorSchemaColumns([createColumn('col_first_name', 'first_name', 'string')], ['col_first_name']);
+
+    const blankBlock = workspace.newBlock(BLOCK_TYPES.deriveColumnStep);
+    blankBlock.setFieldValue('col_notes', 'NEW_COLUMN_ID');
+    blankBlock.setFieldValue('notes', 'NEW_DISPLAY_NAME');
+
+    const copyBlock = workspace.newBlock(BLOCK_TYPES.deriveColumnStep);
+    copyBlock.setFieldValue('col_first_name_copy', 'NEW_COLUMN_ID');
+    copyBlock.setFieldValue('first_name_copy', 'NEW_DISPLAY_NAME');
+    copyBlock.setFieldValue('copy', 'CREATE_MODE');
+    copyBlock.setFieldValue('col_first_name', 'COPY_COLUMN_ID');
+
+    blankBlock.nextConnection?.connect(copyBlock.previousConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+    expect(result.workflow?.steps).toEqual([
+      expect.objectContaining({
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_notes',
+          displayName: 'notes',
+        },
+        expression: literal(null),
+      }),
+      expect.objectContaining({
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_first_name_copy',
+          displayName: 'first_name_copy',
+        },
+        expression: column('col_first_name'),
+      }),
+    ]);
+  });
+
   it('roundtrips scoped transforms that mix value() and same-row column() references', () => {
     const workflow: Workflow = {
       version: 2,
@@ -219,6 +261,47 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.splitFunction);
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.firstFunction);
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.lastFunction);
+  });
+
+  it('reconstructs deriveColumn workflows as create-column blank and copy modes when possible', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_create_column_modes',
+      name: 'Create column modes',
+      steps: [
+        {
+          id: 'step_create_blank_notes',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_notes',
+            displayName: 'notes',
+          },
+          expression: literal(null),
+        },
+        {
+          id: 'step_copy_first_name',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_first_name_copy',
+            displayName: 'first_name_copy',
+          },
+          expression: column('col_first_name'),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_first_name', 'col_notes', 'col_first_name_copy'], workflow);
+    const [firstBlock] = workspace.getTopBlocks(false);
+    const secondBlock = firstBlock?.getNextBlock();
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(firstBlock?.type).toBe(BLOCK_TYPES.deriveColumnStep);
+    expect(firstBlock?.getFieldValue('CREATE_MODE')).toBe('blank');
+    expect(secondBlock?.type).toBe(BLOCK_TYPES.deriveColumnStep);
+    expect(secondBlock?.getFieldValue('CREATE_MODE')).toBe('copy');
+    expect(secondBlock?.getFieldValue('COPY_COLUMN_ID')).toBe('col_first_name');
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
   });
 
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
@@ -394,6 +477,53 @@ describe('block-based workflow authoring', () => {
     setEditorSchemaColumns(table.schema.columns);
 
     expect(getSelectableColumns().map((entry) => entry.columnId)).toEqual(table.schema.columns.map((column) => column.columnId));
+  });
+
+  it('projects created columns into later step selectors based on authored step order', () => {
+    const baseColumns = [createColumn('col_email', 'Email', 'string')];
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_modify_copied_column',
+      name: 'Modify copied column',
+      steps: [
+        {
+          id: 'step_copy_email',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'email_safe',
+            displayName: 'Email (safe)',
+          },
+          expression: column('col_email'),
+        },
+        {
+          id: 'step_fill_email_safe',
+          type: 'scopedTransform',
+          columnIds: ['email_safe'],
+          expression: coalesce(value(), literal('NA')),
+          treatWhitespaceAsEmpty: true,
+        },
+      ],
+    };
+    const workspace = buildWorkspaceFromColumnIds(['col_email', 'email_safe'], workflow, baseColumns);
+    const deriveBlock = workspace.getTopBlocks(false)[0];
+    const transformBlock = deriveBlock?.getNextBlock();
+    const schemaByBlockId = projectWorkspaceStepSchemas(workspace, {
+      tableId: 'table_test',
+      sourceName: 'test.csv',
+      schema: {
+        columns: baseColumns,
+      },
+      rowsById: {},
+      rowOrder: [],
+      importWarnings: [],
+    });
+
+    setEditorSchemaColumns(baseColumns, ['col_email', 'email_safe'], schemaByBlockId);
+
+    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedTransformStep);
+    expect(getSchemaColumnOptions(transformBlock?.id)).toContainEqual(['Email (safe) [email_safe]', 'email_safe']);
+    expect(getSelectableColumns(transformBlock?.id).map((entry) => entry.columnId)).toContain('email_safe');
+    expect(transformBlock?.getField('COLUMN_IDS')?.getText()).toContain('Email (safe)');
   });
 
   it('exposes bulk type selections for schema-aware multi-select fields', () => {

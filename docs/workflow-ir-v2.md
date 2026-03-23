@@ -316,6 +316,9 @@ Rules:
 
 - `column` references are valid here
 - `value` is not valid here
+- the authoring UI may present this as `create new column`
+- authoring may initialize the new column as blank by compiling to `{"kind":"literal","value":null}`
+- authoring may initialize the new column by copying another column by compiling to `{"kind":"column","columnId":"..."}` 
 
 Example:
 

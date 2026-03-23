@@ -51,7 +51,12 @@ export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | un
   }
 
   protected override getText_() {
-    return formatColumnSelectionSummary(this.getSelectedColumnIds(), getSelectableColumns(), getSelectableColumnTypeGroups());
+    const sourceBlockId = this.getSourceBlock()?.id;
+    return formatColumnSelectionSummary(
+      this.getSelectedColumnIds(),
+      getSelectableColumns(sourceBlockId),
+      getSelectableColumnTypeGroups(sourceBlockId),
+    );
   }
 
   protected override showEditor_() {
@@ -92,7 +97,8 @@ export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | un
     actionRow.append(selectAllButton, clearButton);
     wrapper.append(actionRow);
 
-    const typeGroupActions = getSelectableColumnTypeGroups();
+    const sourceBlockId = this.getSourceBlock()?.id;
+    const typeGroupActions = getSelectableColumnTypeGroups(sourceBlockId);
 
     if (typeGroupActions.length > 0) {
       const groupRow = document.createElement('div');
@@ -117,7 +123,7 @@ export class FieldColumnMultiSelect extends Blockly.Field<string | string[] | un
     wrapper.append(list);
     contentDiv.append(wrapper);
 
-    const options = getSelectableColumns();
+    const options = getSelectableColumns(sourceBlockId);
     let selectedColumnIds = this.getSelectedColumnIds();
 
     const syncValue = (nextSelectedColumnIds: string[]) => {
@@ -241,10 +247,10 @@ export function formatColumnSelectionSummary(
   return `${labels[0]}, ${labels[1]} +${labels.length - 2}`;
 }
 
-export function getSelectableColumns() {
-  return getSchemaColumnOptions()
+export function getSelectableColumns(blockId?: string) {
+  return getSchemaColumnOptions(blockId)
     .filter(([, columnId]) => columnId !== '')
-    .map(([label, columnId]) => ({
+    .map(([label, columnId]): { columnId: string; label: string; shortLabel: string; searchText: string } => ({
       columnId,
       label,
       shortLabel: label.replace(/\s*\[[^\]]+\]$/, ''),
@@ -252,8 +258,8 @@ export function getSelectableColumns() {
     }));
 }
 
-export function getSelectableColumnTypeGroups() {
-  const columns = getEditorSchemaColumns();
+export function getSelectableColumnTypeGroups(blockId?: string) {
+  const columns = getEditorSchemaColumns(blockId);
 
   return TYPE_GROUP_ORDER.flatMap((logicalType) => {
     const matchingColumns = columns.filter((column) => column.logicalType === logicalType);
