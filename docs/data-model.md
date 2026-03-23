@@ -181,7 +181,11 @@ CSV import rules:
 XLSX import rules:
 
 - One XLSX file becomes one workbook with one table per sheet.
-- Each sheet uses its first row as the header row.
+- Each sheet has one selected header row.
+- If the caller does not provide a header-row override for a sheet, import auto-detects the header row.
+- Rows above the selected header row are ignored as data.
+- Data rows begin immediately after the selected header row.
+- For multiline header cells, the first non-empty visual line is used to derive `displayName` and `columnId`.
 - The user selects exactly one sheet as the active table.
 - V1 ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
 
@@ -216,6 +220,8 @@ Required warning scenarios for V1:
 
 - duplicate header names were normalized
 - blank header names were generated
+- an XLSX sheet auto-detected a non-first header row
+- a multiline XLSX header cell used only its first non-empty visual line for display-name generation
 - formulas were imported as values
 - a formula cell had no cached value and was imported as `null`
 - a column inferred as `mixed`

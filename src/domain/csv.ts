@@ -16,6 +16,7 @@ export function importCsvWorkbook(sourceFileName: string, text: string): Workboo
       {
         sourceName: sourceFileName,
         rows,
+        headerRowIndex: 0,
       },
     ],
   });

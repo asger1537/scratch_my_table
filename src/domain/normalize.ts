@@ -2,6 +2,7 @@ import { CellValue, Column, ImportWarning, LogicalType, SourceFormat, Table, Tab
 
 export interface ImportedCellInput {
   headerText: string;
+  displayHeaderText?: string;
   value: CellValue;
   hadFormula?: boolean;
   missingFormulaValue?: boolean;
@@ -10,6 +11,7 @@ export interface ImportedCellInput {
 export interface ImportedTableInput {
   sourceName: string;
   rows: ImportedCellInput[][];
+  headerRowIndex: number;
 }
 
 export interface NormalizeWorkbookInput {
@@ -34,8 +36,10 @@ export function normalizeImportedWorkbook(input: NormalizeWorkbookInput): Workbo
 }
 
 function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<string, number>): Table {
+  validateHeaderRowIndex(input);
+
   const width = input.rows.reduce((max, row) => Math.max(max, row.length), 0);
-  const headerRow = input.rows[0] ?? [];
+  const headerRow = input.rows[input.headerRowIndex] ?? [];
   const columnNameCounts = new Map<string, number>();
   const duplicateBaseNames = new Map<string, string>();
   const columnIdCounts = new Map<string, number>();
@@ -45,8 +49,10 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
   const columns: Column[] = [];
 
   for (let sourceIndex = 0; sourceIndex < width; sourceIndex += 1) {
-    const rawHeaderText = headerRow[sourceIndex]?.headerText ?? '';
-    const normalizedHeader = normalizeHeaderText(rawHeaderText);
+    const headerCell = headerRow[sourceIndex];
+    const rawHeaderText = headerCell?.headerText ?? '';
+    const displayHeaderText = headerCell?.displayHeaderText ?? rawHeaderText;
+    const normalizedHeader = normalizeHeaderText(displayHeaderText);
     const duplicateKey = normalizedHeader.toLocaleLowerCase();
     const duplicateCount = (columnNameCounts.get(duplicateKey) ?? 0) + 1;
 
@@ -60,7 +66,17 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
     const displayName = duplicateCount === 1 ? baseDisplayName : `${baseDisplayName} (${duplicateCount})`;
     const columnId = makeUniqueId(`col_${slugify(baseDisplayName)}`, columnIdCounts);
 
-    if (normalizeWhitespace(rawHeaderText) === '') {
+    if (headerCell?.displayHeaderText !== undefined && splitHeaderLines(rawHeaderText).length > 1) {
+      importWarnings.push({
+        code: 'multilineHeaderFirstLineUsed',
+        message: `Column ${sourceIndex + 1} used only the first non-empty header line for display name generation.`,
+        scope: 'column',
+        tableId,
+        columnId,
+      });
+    }
+
+    if (normalizeWhitespace(displayHeaderText) === '') {
       importWarnings.push({
         code: 'blankHeaderGenerated',
         message: `Column ${sourceIndex + 1} had a blank header. Generated display name '${displayName}'.`,
@@ -93,8 +109,8 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
   const rowsById: Record<string, TableRow> = {};
   const rowOrder: string[] = [];
 
-  for (let rowIndex = 1; rowIndex < input.rows.length; rowIndex += 1) {
-    const rowId = `row_${rowIndex}`;
+  for (let rowIndex = input.headerRowIndex + 1; rowIndex < input.rows.length; rowIndex += 1) {
+    const rowId = `row_${rowIndex - input.headerRowIndex}`;
     const sourceRow = input.rows[rowIndex] ?? [];
     const cellsByColumnId: Record<string, CellValue> = {};
 
@@ -131,7 +147,7 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
   let formulaImportedCount = 0;
   let formulaMissingValueCount = 0;
 
-  for (let rowIndex = 1; rowIndex < input.rows.length; rowIndex += 1) {
+  for (let rowIndex = input.headerRowIndex + 1; rowIndex < input.rows.length; rowIndex += 1) {
     const row = input.rows[rowIndex] ?? [];
 
     for (const cell of row) {
@@ -208,6 +224,14 @@ export function normalizeHeaderText(value: string): string {
   return normalized === '' ? 'Column' : normalized;
 }
 
+export function splitHeaderLines(text: string): string[] {
+  return text.split(/\r\n|\n/).map((line) => line.trim());
+}
+
+export function extractDisplayHeaderLine(text: string): string {
+  return splitHeaderLines(text).find((line) => line !== '') ?? '';
+}
+
 export function normalizeWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
 }
@@ -250,6 +274,26 @@ export function isIsoDateTime(value: string): boolean {
 
 function stripFileExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
+}
+
+function validateHeaderRowIndex(input: ImportedTableInput): void {
+  if (!Number.isInteger(input.headerRowIndex) || input.headerRowIndex < 0) {
+    throw new Error(`Invalid header row index '${input.headerRowIndex}' for '${input.sourceName}'.`);
+  }
+
+  if (input.rows.length === 0) {
+    if (input.headerRowIndex !== 0) {
+      throw new Error(`Invalid header row index '${input.headerRowIndex}' for empty table '${input.sourceName}'.`);
+    }
+
+    return;
+  }
+
+  if (input.headerRowIndex >= input.rows.length) {
+    throw new Error(
+      `Header row index '${input.headerRowIndex}' is out of range for '${input.sourceName}' with ${input.rows.length} row${input.rows.length === 1 ? '' : 's'}.`,
+    );
+  }
 }
 
 function makeUniqueId(baseId: string, counts: Map<string, number>): string {

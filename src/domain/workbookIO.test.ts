@@ -29,6 +29,16 @@ describe('Milestone 1 normalization and export', () => {
     expect(table?.schema.columns.find((column) => column.columnId === 'col_email')?.missingCount).toBe(0);
   });
 
+  it('keeps CSV header handling unchanged', () => {
+    const workbook = importCsvWorkbook('multiline-header.csv', '"Status\nLabel",value\r\nOpen,1\r\n');
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['Status Label', 'value']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_status_label', 'col_value']);
+    expect(table?.rowOrder).toEqual(['row_1']);
+    expect(table?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('Open');
+  });
+
   it('normalizes duplicate headers deterministically', () => {
     const workbook = importCsvWorkbook('duplicates.csv', 'Email, email ,EMAIL\r\none,two,three\r\n');
     const table = getActiveTable(workbook);
@@ -90,6 +100,32 @@ describe('Milestone 1 normalization and export', () => {
     expect(getActiveTable(updatedWorkbook)?.sourceName).toBe('Orders');
   });
 
+  it('auto-detects a non-first XLSX header row and uses first-line header display names', () => {
+    const workbook = importXlsxWorkbook('header-selection.xlsx', buildHeaderSelectionWorkbook());
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['Element ID', 'Status']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_element_id', 'col_status']);
+    expect(table?.rowOrder).toEqual(['row_1', 'row_2']);
+    expect(table?.rowsById.row_1.cellsByColumnId.col_element_id).toBe('E-001');
+    expect(table?.rowsById.row_1.cellsByColumnId.col_status).toBe('Active');
+    expect(table?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(true);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(2);
+  });
+
+  it('prefers an explicit XLSX header row override over auto-detection', () => {
+    const workbook = importXlsxWorkbook('header-selection.xlsx', buildHeaderSelectionWorkbook(), {
+      headerRowBySheetName: { Elements: 0 },
+    });
+    const table = getActiveTable(workbook);
+    const firstColumnId = table?.schema.columns[0]?.columnId;
+
+    expect(table?.schema.columns[0]?.displayName).toContain('UniqueId');
+    expect(firstColumnId).toBeTruthy();
+    expect(table?.rowsById.row_1.cellsByColumnId[firstColumnId ?? '']).toBe('Element ID\nstring\nscope');
+    expect(table?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(false);
+  });
+
   it('treats formulas with cached results as imported values', () => {
     const workbook = importXlsxWorkbook('formulas.xlsx', buildFormulaWorkbook());
     const table = getActiveTable(workbook);
@@ -135,6 +171,7 @@ describe('Milestone 1 normalization and export', () => {
     );
     expect(roundtripTable?.rowsById.row_1.cellsByColumnId.col_order_total).toBe(120.5);
     expect(roundtripTable?.rowsById.row_4.cellsByColumnId.col_customer_email).toBe(null);
+    expect(roundtripTable?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(false);
   });
 });
 
@@ -172,6 +209,23 @@ function buildFormulaWorkbook(): ArrayBuffer {
   sheet['!ref'] = 'A1:D2';
 
   XLSX.utils.book_append_sheet(workbook, sheet, 'Formulas');
+
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+}
+
+function buildHeaderSelectionWorkbook(): ArrayBuffer {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    [
+      '{"UniqueId":"element_id","DisplayName":"Element ID"}',
+      '{"UniqueId":"status","DisplayName":"Status"}',
+    ],
+    ['Element ID\nstring\nscope', 'Status\nstring'],
+    ['E-001', 'Active'],
+    ['E-002', 'Inactive'],
+  ]);
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Elements');
 
   return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
 }

@@ -1,9 +1,20 @@
 import * as XLSX from 'xlsx';
 
 import { CellValue, ImportWarning, Table, Workbook, getOrderedRows } from './model';
-import { ImportedCellInput, cellValueToHeaderText, normalizeImportedWorkbook } from './normalize';
+import { ImportedCellInput, cellValueToHeaderText, extractDisplayHeaderLine, normalizeImportedWorkbook } from './normalize';
 
-export function importXlsxWorkbook(sourceFileName: string, data: ArrayBuffer): Workbook {
+export interface ImportXlsxWorkbookOptions {
+  headerRowBySheetName?: Record<string, number>;
+}
+
+const HEADER_CANDIDATE_LIMIT = 10;
+const MACHINE_METADATA_PATTERN = /(?:["'])?(UniqueId|DisplayName|Name)(?:["'])?\s*[:=]/i;
+
+export function importXlsxWorkbook(
+  sourceFileName: string,
+  data: ArrayBuffer,
+  options: ImportXlsxWorkbookOptions = {},
+): Workbook {
   const workbook = XLSX.read(data, {
     type: 'array',
     cellDates: true,
@@ -18,16 +29,55 @@ export function importXlsxWorkbook(sourceFileName: string, data: ArrayBuffer): W
       scope: 'workbook',
     },
   ];
+  const importedTables = workbook.SheetNames.map((sheetName) => {
+    const rows = convertSheetToImportedRows(workbook.Sheets[sheetName]);
+    const override = options.headerRowBySheetName?.[sheetName];
+    const headerRowIndex = override ?? detectHeaderRowIndex(rows);
 
-  return normalizeImportedWorkbook({
+    validateSelectedHeaderRowIndex(sheetName, rows, headerRowIndex);
+
+    return {
+      sourceName: sheetName,
+      rows,
+      headerRowIndex,
+      headerRowWasAutoDetected: override === undefined,
+    };
+  });
+
+  const normalizedWorkbook = normalizeImportedWorkbook({
     sourceFileName,
     sourceFormat: 'xlsx',
     importWarnings,
-    tables: workbook.SheetNames.map((sheetName) => ({
-      sourceName: sheetName,
-      rows: convertSheetToImportedRows(workbook.Sheets[sheetName]),
+    tables: importedTables.map(({ sourceName, rows, headerRowIndex }) => ({
+      sourceName,
+      rows,
+      headerRowIndex,
     })),
   });
+
+  return {
+    ...normalizedWorkbook,
+    tables: normalizedWorkbook.tables.map((table, index) => {
+      const importedTable = importedTables[index];
+
+      if (!importedTable.headerRowWasAutoDetected || importedTable.headerRowIndex === 0 || importedTable.rows.length === 0) {
+        return table;
+      }
+
+      return {
+        ...table,
+        importWarnings: [
+          ...table.importWarnings,
+          {
+            code: 'xlsxHeaderRowAutoDetected',
+            message: `Auto-detected row ${importedTable.headerRowIndex + 1} as the header row for '${table.sourceName}'.`,
+            scope: 'table',
+            tableId: table.tableId,
+          },
+        ],
+      };
+    }),
+  };
 }
 
 export function exportTableToXlsxBytes(table: Table): ArrayBuffer {
@@ -90,13 +140,90 @@ function convertSheetCell(cell: XLSX.CellObject | undefined): ImportedCellInput 
   }
 
   const value = normalizeCellValue(cell);
+  const headerText = cellValueToHeaderText(value);
 
   return {
-    headerText: cellValueToHeaderText(value),
+    headerText,
+    displayHeaderText: extractDisplayHeaderLine(headerText),
     value,
     hadFormula: Boolean(cell.f),
     missingFormulaValue: false,
   };
+}
+
+function detectHeaderRowIndex(rows: ImportedCellInput[][]): number {
+  if (rows.length === 0) {
+    return 0;
+  }
+
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const candidateCount = Math.min(rows.length, HEADER_CANDIDATE_LIMIT);
+  let bestRowIndex = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let rowIndex = 0; rowIndex < candidateCount; rowIndex += 1) {
+    const score = scoreHeaderCandidateRow(rows[rowIndex] ?? [], width);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRowIndex = rowIndex;
+    }
+  }
+
+  return bestRowIndex;
+}
+
+function scoreHeaderCandidateRow(row: ImportedCellInput[], width: number): number {
+  let score = 0;
+  let nonEmptyCellCount = 0;
+
+  for (let columnIndex = 0; columnIndex < width; columnIndex += 1) {
+    const cell = row[columnIndex];
+    const rawHeaderText = cell?.headerText ?? '';
+    const displayHeaderText = cell?.displayHeaderText ?? extractDisplayHeaderLine(rawHeaderText);
+    const trimmedRawHeaderText = rawHeaderText.trim();
+
+    if (displayHeaderText !== '') {
+      nonEmptyCellCount += 1;
+      score += 2;
+
+      if (displayHeaderText.length <= 40) {
+        score += 1;
+      }
+    }
+
+    if (trimmedRawHeaderText.startsWith('{') && trimmedRawHeaderText.endsWith('}')) {
+      score -= 3;
+    }
+
+    if (MACHINE_METADATA_PATTERN.test(rawHeaderText)) {
+      score -= 2;
+    }
+  }
+
+  score -= Math.max(width - nonEmptyCellCount, 0);
+
+  return score;
+}
+
+function validateSelectedHeaderRowIndex(sheetName: string, rows: ImportedCellInput[][], headerRowIndex: number): void {
+  if (!Number.isInteger(headerRowIndex) || headerRowIndex < 0) {
+    throw new Error(`Invalid header row index '${headerRowIndex}' for sheet '${sheetName}'.`);
+  }
+
+  if (rows.length === 0) {
+    if (headerRowIndex !== 0) {
+      throw new Error(`Invalid header row index '${headerRowIndex}' for empty sheet '${sheetName}'.`);
+    }
+
+    return;
+  }
+
+  if (headerRowIndex >= rows.length) {
+    throw new Error(
+      `Header row index '${headerRowIndex}' is out of range for sheet '${sheetName}' with ${rows.length} row${rows.length === 1 ? '' : 's'}.`,
+    );
+  }
 }
 
 function normalizeCellValue(cell: XLSX.CellObject): CellValue {

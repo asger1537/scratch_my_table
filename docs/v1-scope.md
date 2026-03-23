@@ -32,7 +32,7 @@ The canonical V1 user flow is:
 1. Upload a CSV or XLSX file.
 2. Inspect the import result and select the active table.
    - CSV imports as one table.
-   - XLSX imports as a workbook and the user selects one sheet as the active table.
+   - XLSX imports as a workbook, auto-detects one header row per sheet by default, allows a per-sheet header-row override, and lets the user select one sheet as the active table.
 3. Inspect the active table.
    - Show column display names, inferred types, row count, sample rows, and import warnings.
 4. Build a workflow with blocks.
