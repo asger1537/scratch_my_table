@@ -73,6 +73,7 @@ export type WorkflowCondition =
   | WorkflowContainsCondition
   | WorkflowStartsWithCondition
   | WorkflowEndsWithCondition
+  | WorkflowMatchesRegexCondition
   | WorkflowGreaterThanCondition
   | WorkflowLessThanCondition
   | WorkflowAndCondition
@@ -107,6 +108,12 @@ export interface WorkflowEndsWithCondition {
   kind: 'endsWith';
   columnId: string;
   value: string;
+}
+
+export interface WorkflowMatchesRegexCondition {
+  kind: 'matchesRegex';
+  columnId: string;
+  pattern: string;
 }
 
 export interface WorkflowGreaterThanCondition {

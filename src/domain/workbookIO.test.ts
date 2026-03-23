@@ -110,7 +110,7 @@ describe('Milestone 1 normalization and export', () => {
     expect(table?.rowsById.row_1.cellsByColumnId.col_element_id).toBe('E-001');
     expect(table?.rowsById.row_1.cellsByColumnId.col_status).toBe('Active');
     expect(table?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(true);
-    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(2);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(0);
   });
 
   it('prefers an explicit XLSX header row override over auto-detection', () => {

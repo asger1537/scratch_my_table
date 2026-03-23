@@ -696,6 +696,8 @@ function readCondition(block: Blockly.Block): { condition: WorkflowCondition } |
       return { condition: { kind: 'startsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
     case BLOCK_TYPES.endsWithCondition:
       return { condition: { kind: 'endsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
+    case BLOCK_TYPES.matchesRegexCondition:
+      return { condition: { kind: 'matchesRegex', columnId: getFieldString(block, 'COLUMN_ID'), pattern: getFieldString(block, 'PATTERN') } };
     case BLOCK_TYPES.greaterThanCondition: {
       const value = readRequiredLiteral(block, 'VALUE');
 
@@ -1131,6 +1133,13 @@ function createConditionBlock(workspace: Blockly.Workspace, condition: WorkflowC
 
       block.setFieldValue(condition.columnId, 'COLUMN_ID');
       block.setFieldValue(condition.value, 'VALUE');
+      return block;
+    }
+    case 'matchesRegex': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchesRegexCondition);
+
+      block.setFieldValue(condition.columnId, 'COLUMN_ID');
+      block.setFieldValue(condition.pattern, 'PATTERN');
       return block;
     }
     case 'greaterThan': {

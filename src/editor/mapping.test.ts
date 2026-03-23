@@ -304,6 +304,33 @@ describe('block-based workflow authoring', () => {
     expect(roundtrip.workflow).toEqual(workflow);
   });
 
+  it('roundtrips matchesRegex conditions through Blockly blocks without semantic loss', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_regex_roundtrip',
+      name: 'Regex roundtrip',
+      steps: [
+        {
+          id: 'step_filter_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_email'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.matchesRegexCondition);
+  });
+
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
     const workflow: Workflow = {
       version: 2,

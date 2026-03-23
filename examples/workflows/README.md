@@ -31,4 +31,5 @@ Files:
 - `11-messy-customer-cleanup.workflow.json`
 - `12-derive-initials.workflow.json`
 - `13-drop-columns.workflow.json`
-- `14-fill-email-from-customer-id.workflow.json`
+- `14-coalesce_email.workflow.json`
+- `15-filter-signup-date-format.workflow.json`

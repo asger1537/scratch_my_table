@@ -162,6 +162,32 @@ describe('workflow validation and execution', () => {
     expect(invalidValidation.issues.some((issue) => issue.code === 'schema.maxItems')).toBe(true);
   });
 
+  it('structurally validates matchesRegex conditions', () => {
+    const workflow = {
+      version: 2,
+      workflowId: 'wf_regex_structure',
+      name: 'Regex structure',
+      steps: [
+        {
+          id: 'step_filter_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
+          },
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
+  });
+
   it('lets later valid steps see schema changes from earlier valid steps', () => {
     const table = loadCsvTable('first_name,last_name\r\nAlice,Ng\r\n');
     const workflow: Workflow = {
@@ -556,6 +582,92 @@ describe('workflow validation and execution', () => {
     const validation = validateWorkflowSemantics(invalidWorkflow, table);
 
     expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
+  });
+
+  it('filters rows with matchesRegex and rejects invalid or incompatible regex conditions', () => {
+    const table = loadCsvTable('email,order_total\r\nalice@example.com,100\r\nbob,200\r\ncarol@example.com,300\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_filter_regex',
+      name: 'Filter regex',
+      steps: [
+        {
+          id: 'step_filter_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
+          },
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowOrder).toEqual(['row_1', 'row_3']);
+
+    const invalidRegexWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_filter_invalid_regex',
+      name: 'Filter invalid regex',
+      steps: [
+        {
+          id: 'step_filter_invalid_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '[a-z',
+          },
+        },
+      ],
+    };
+
+    const invalidRegexValidation = validateWorkflowSemantics(invalidRegexWorkflow, table);
+
+    expect(invalidRegexValidation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalidRegex',
+          path: 'steps[0].condition.pattern',
+          stepId: 'step_filter_invalid_regex',
+        }),
+      ]),
+    );
+
+    const incompatibleWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_filter_numeric_regex',
+      name: 'Filter numeric regex',
+      steps: [
+        {
+          id: 'step_filter_numeric_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_order_total',
+            pattern: '^\\d+$',
+          },
+        },
+      ],
+    };
+
+    const incompatibleValidation = validateWorkflowSemantics(incompatibleWorkflow, table);
+
+    expect(incompatibleValidation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'incompatibleType',
+          path: 'steps[0].condition.columnId',
+          stepId: 'step_filter_numeric_regex',
+        }),
+      ]),
+    );
   });
 
   it('splits and combines columns deterministically and validates duplicate source references', () => {

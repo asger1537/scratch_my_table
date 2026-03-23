@@ -222,7 +222,8 @@ Comparator rules:
 
 - `isEmpty` is valid for any column type
 - `equals` is valid for any non-mixed column if the literal value matches the column type
-- `contains`, `startsWith`, and `endsWith` require `string` or `unknown`
+- `contains`, `startsWith`, `endsWith`, and `matchesRegex` require `string` or `unknown`
+- `matchesRegex` also requires a syntactically valid regular expression pattern
 - `greaterThan` and `lessThan` require `number`, `date`, `datetime`, or `unknown`
 - `and` and `or` require at least two child conditions
 - `not` requires exactly one child condition
@@ -231,6 +232,7 @@ Errors:
 
 - `missingColumn`
 - `invalidCondition`
+- `invalidRegex`
 - `incompatibleType`
 
 ### `splitColumn`

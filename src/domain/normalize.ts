@@ -66,16 +66,6 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
     const displayName = duplicateCount === 1 ? baseDisplayName : `${baseDisplayName} (${duplicateCount})`;
     const columnId = makeUniqueId(`col_${slugify(baseDisplayName)}`, columnIdCounts);
 
-    if (headerCell?.displayHeaderText !== undefined && splitHeaderLines(rawHeaderText).length > 1) {
-      importWarnings.push({
-        code: 'multilineHeaderFirstLineUsed',
-        message: `Column ${sourceIndex + 1} used only the first non-empty header line for display name generation.`,
-        scope: 'column',
-        tableId,
-        columnId,
-      });
-    }
-
     if (normalizeWhitespace(displayHeaderText) === '') {
       importWarnings.push({
         code: 'blankHeaderGenerated',

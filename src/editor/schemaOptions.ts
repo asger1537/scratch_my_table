@@ -97,6 +97,7 @@ function collectConditionColumnIds(condition: WorkflowCondition, columnIds: Set<
     case 'contains':
     case 'startsWith':
     case 'endsWith':
+    case 'matchesRegex':
     case 'greaterThan':
     case 'lessThan':
       columnIds.add(condition.columnId);

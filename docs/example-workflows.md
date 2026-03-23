@@ -649,3 +649,36 @@ IR example:
   ]
 }
 ```
+
+## 15. Keep Only Rows With a Sign Up Date Like 2026-12-08
+
+Description:
+
+- Keep only rows whose `sign up date` value exactly matches the `YYYY-MM-DD` format.
+
+Intended effect:
+
+- Rows with values such as `2026-12-08` remain.
+- Rows with timestamps, slashed dates, partial dates, or other text are dropped.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_filter_signup_date_format",
+  "name": "Keep rows with sign up date in YYYY-MM-DD format",
+  "steps": [
+    {
+      "id": "step_filter_signup_date_format",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "matchesRegex",
+        "columnId": "col_signup_date",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      }
+    }
+  ]
+}
+```

@@ -283,6 +283,23 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "columnId", "pattern"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "matchesRegex"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "pattern": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "columnId", "value"],
           "properties": {
             "kind": {

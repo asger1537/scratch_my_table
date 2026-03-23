@@ -64,7 +64,7 @@ describe('header row normalization', () => {
       'col_column',
       'col_column_2',
     ]);
-    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(4);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(0);
     expect(table?.importWarnings.filter((warning) => warning.code === 'duplicateHeaderNormalized')).toHaveLength(2);
     expect(table?.importWarnings.filter((warning) => warning.code === 'blankHeaderGenerated')).toHaveLength(2);
   });

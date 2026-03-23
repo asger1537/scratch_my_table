@@ -154,6 +154,7 @@ Leaf conditions:
 - `contains`
 - `startsWith`
 - `endsWith`
+- `matchesRegex`
 - `greaterThan`
 - `lessThan`
 

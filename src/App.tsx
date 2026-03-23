@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, startTransition, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, startTransition, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
   WorkflowEditor,
@@ -19,6 +19,7 @@ import {
 } from './domain/workbookIO';
 
 const PREVIEW_ROW_LIMIT = 50;
+const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
 
 export default function App() {
   const workflowImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -108,20 +109,20 @@ export default function App() {
     setEditorIssues(result.issues);
   }
 
-  function handleExportCsv() {
-    if (!activeTable) {
+  function handleExportTableCsv(table: Table | null) {
+    if (!table) {
       return;
     }
 
-    downloadBlob(exportTableCsvBlob(activeTable), buildCsvExportFileName(activeTable));
+    downloadBlob(exportTableCsvBlob(table), buildCsvExportFileName(table));
   }
 
-  function handleExportXlsx() {
-    if (!activeTable) {
+  function handleExportTableXlsx(table: Table | null) {
+    if (!table) {
       return;
     }
 
-    downloadBlob(exportTableXlsxBlob(activeTable), buildXlsxExportFileName(activeTable));
+    downloadBlob(exportTableXlsxBlob(table), buildXlsxExportFileName(table));
   }
 
   function handleRunWorkflow() {
@@ -258,10 +259,21 @@ export default function App() {
             Import one table, author V1 workflows as compact scope-and-expression steps, validate them against the active schema, and run them through the existing executor.
           </p>
         </div>
-        <label className="upload-card">
-          <span>Upload CSV or XLSX</span>
+      </section>
+
+      <section className="toolbar">
+        <label className="summary-card summary-card--upload">
+          <p className="summary-label">Upload</p>
+          <strong>Upload CSV or XLSX</strong>
           <input accept=".csv,.xlsx" onChange={handleFileChange} type="file" />
         </label>
+        {workbook ? (
+          <div className="summary-card">
+            <p className="summary-label">Source file</p>
+            <strong>{workbook.sourceFileName}</strong>
+            <p>{workbook.sourceFormat.toUpperCase()} import</p>
+          </div>
+        ) : null}
       </section>
 
       {loading ? <section className="status-card">Importing file...</section> : null}
@@ -274,21 +286,16 @@ export default function App() {
         </section>
       ) : (
         <>
-          <section className="toolbar">
-            <div className="summary-card">
-              <p className="summary-label">Source file</p>
-              <strong>{workbook.sourceFileName}</strong>
-              <p>{workbook.sourceFormat.toUpperCase()} import</p>
-            </div>
-            <div className="summary-card">
-              <p className="summary-label">Active table</p>
-              <strong>{activeTable.sourceName}</strong>
-              <p>
-                {activeTable.schema.columns.length} columns, {activeTable.rowOrder.length} rows
-              </p>
-            </div>
-            <div className="summary-card summary-card--actions">
-              <label className="selector">
+          <section className="panel-grid">
+            <SchemaPanel table={activeTable} />
+            <WarningsPanel warnings={visibleWarnings} />
+          </section>
+
+          <PreviewPanel
+            allowFullscreen
+            description={`Showing ${previewRows.length} of ${activeTable.rowOrder.length} rows.`}
+            headerControls={
+              <label className="selector preview-panel-selector">
                 <span>Active table / sheet</span>
                 <select onChange={handleActiveTableChange} value={workbook.activeTableId}>
                   {workbook.tables.map((table) => (
@@ -298,23 +305,11 @@ export default function App() {
                   ))}
                 </select>
               </label>
-              <div className="export-actions">
-                <button onClick={handleExportCsv} type="button">
-                  Export CSV
-                </button>
-                <button onClick={handleExportXlsx} type="button">
-                  Export XLSX
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel-grid">
-            <SchemaPanel table={activeTable} />
-            <WarningsPanel warnings={visibleWarnings} />
-          </section>
-
-          <PreviewPanel description={`Showing ${previewRows.length} of ${activeTable.rowOrder.length} rows.`} previewRows={previewRows} table={activeTable} title="Active table preview" />
+            }
+            previewRows={previewRows}
+            table={activeTable}
+            title="Active table preview"
+          />
 
           <section className="editor-layout">
             <section className="panel panel--editor">
@@ -348,7 +343,15 @@ export default function App() {
             <section className="panel-stack">
               <ValidationPanel issues={allWorkflowIssues} jsonError={workflowJsonError} />
               <WorkflowJsonPanel workflowJson={authoredWorkflowJson} />
-              <RunResultPanel executionResult={executionResult} />
+              <RunResultPanel
+                executionResult={executionResult}
+                onExportCsv={() => {
+                  handleExportTableCsv(resultTable);
+                }}
+                onExportXlsx={() => {
+                  handleExportTableXlsx(resultTable);
+                }}
+              />
             </section>
           </section>
 
@@ -443,7 +446,7 @@ function SchemaPanel({ table }: { table: Table }) {
         <h2>Schema</h2>
         <p>Normalized headers and inferred logical types.</p>
       </div>
-      <div className="table-frame">
+      <div className="table-frame table-frame--panel-scroll" style={{ maxHeight: `${COLLAPSIBLE_PANEL_MAX_HEIGHT_PX}px` }}>
         <table className="data-table data-table--compact">
           <thead>
             <tr>
@@ -481,17 +484,19 @@ function WarningsPanel({ warnings }: { warnings: ImportWarning[] }) {
       {warnings.length === 0 ? (
         <div className="empty-panel">No import warnings.</div>
       ) : (
-        <ul className="warning-list">
-          {warnings.map((warning, index) => (
-            <li className="warning-item" key={`${warning.code}-${warning.tableId ?? 'workbook'}-${warning.columnId ?? 'all'}-${index}`}>
-              <div className="warning-code">{warning.code}</div>
-              <div>
-                <p>{warning.message}</p>
-                <small>{warning.scope}</small>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="panel-scroll-region" style={{ maxHeight: `${COLLAPSIBLE_PANEL_MAX_HEIGHT_PX}px` }}>
+          <ul className="warning-list">
+            {warnings.map((warning, index) => (
+              <li className="warning-item" key={`${warning.code}-${warning.tableId ?? 'workbook'}-${warning.columnId ?? 'all'}-${index}`}>
+                <div className="warning-code">{warning.code}</div>
+                <div>
+                  <p>{warning.message}</p>
+                  <small>{warning.scope}</small>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   );
@@ -539,12 +544,34 @@ function WorkflowJsonPanel({ workflowJson }: { workflowJson: string }) {
   );
 }
 
-function RunResultPanel({ executionResult }: { executionResult: WorkflowExecutionResult | null }) {
+function RunResultPanel({
+  executionResult,
+  onExportCsv,
+  onExportXlsx,
+}: {
+  executionResult: WorkflowExecutionResult | null;
+  onExportCsv: () => void;
+  onExportXlsx: () => void;
+}) {
+  const canExport = Boolean(executionResult && executionResult.validationErrors.length === 0 && executionResult.transformedTable);
+
   return (
     <section className="panel">
       <div className="panel-header">
-        <h2>Run result</h2>
-        <p>Basic execution metadata from the existing deterministic executor.</p>
+        <div>
+          <h2>Run result</h2>
+          <p>Basic execution metadata from the existing deterministic executor.</p>
+        </div>
+        {canExport ? (
+          <div className="export-actions">
+            <button onClick={onExportCsv} type="button">
+              Export CSV
+            </button>
+            <button onClick={onExportXlsx} type="button">
+              Export XLSX
+            </button>
+          </div>
+        ) : null}
       </div>
       {!executionResult ? (
         <div className="empty-panel">Run a valid workflow to see result metadata.</div>
@@ -583,23 +610,72 @@ function RunResultPanel({ executionResult }: { executionResult: WorkflowExecutio
 }
 
 function PreviewPanel({
+  allowFullscreen = false,
+  headerControls,
   table,
   previewRows,
   title,
   description,
 }: {
+  allowFullscreen?: boolean;
+  headerControls?: ReactNode;
   table: Table;
   previewRows: ReturnType<typeof getOrderedRows>;
   title: string;
   description: string;
 }) {
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!isFullscreen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsFullscreen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isFullscreen]);
+
   return (
-    <section className="panel panel--full">
+    <section className={`panel panel--full preview-panel${isFullscreen ? ' preview-panel--fullscreen' : ''}`}>
       <div className="panel-header">
-        <h2>{title}</h2>
-        <p>{description}</p>
+        <div>
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+        {headerControls || allowFullscreen ? (
+          <div className="panel-header-actions">
+            {headerControls}
+            {allowFullscreen ? (
+              <button
+                aria-label={isFullscreen ? `Exit fullscreen ${title.toLowerCase()}` : `Open fullscreen ${title.toLowerCase()}`}
+                className="preview-panel-fullscreen"
+                onClick={() => {
+                  setIsFullscreen((current) => !current);
+                }}
+                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                type="button"
+              >
+                {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <div className="table-frame">
+      <div className="table-frame table-frame--preview">
         <table className="data-table">
           <thead>
             <tr>

@@ -221,7 +221,6 @@ Required warning scenarios for V1:
 - duplicate header names were normalized
 - blank header names were generated
 - an XLSX sheet auto-detected a non-first header row
-- a multiline XLSX header cell used only its first non-empty visual line for display-name generation
 - formulas were imported as values
 - a formula cell had no cached value and was imported as `null`
 - a column inferred as `mixed`

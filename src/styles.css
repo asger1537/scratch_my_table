@@ -45,10 +45,6 @@ code {
 }
 
 .hero {
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.8fr);
-  align-items: stretch;
   margin-bottom: 1.5rem;
 }
 
@@ -112,12 +108,22 @@ code {
 .toolbar {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   margin-bottom: 1rem;
 }
 
 .summary-card {
   padding: 1rem 1.25rem;
+}
+
+.summary-card--upload {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.summary-card--upload input {
+  width: 100%;
 }
 
 .summary-label {
@@ -136,6 +142,19 @@ code {
 .summary-card--actions {
   display: grid;
   gap: 1rem;
+}
+
+.panel-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: flex-end;
+  align-items: end;
+}
+
+.preview-panel-selector {
+  flex: 1 1 280px;
+  min-width: min(22rem, 100%);
 }
 
 .selector {
@@ -207,6 +226,28 @@ code {
   padding-bottom: 1rem;
 }
 
+.preview-panel {
+  position: relative;
+}
+
+.preview-panel--fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 1050;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  background: #f8f3ec;
+}
+
+.preview-panel--fullscreen .table-frame--preview {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
 .panel-header {
   display: flex;
   justify-content: space-between;
@@ -224,6 +265,20 @@ code {
   margin: 0;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.preview-panel-fullscreen {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.65rem 0.95rem;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.preview-panel-fullscreen:hover {
+  background: #fffaf4;
 }
 
 .workflow-actions {
@@ -553,6 +608,18 @@ code {
   background: #fff;
 }
 
+.table-frame--panel-scroll,
+.panel-scroll-region {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
+.table-frame--preview {
+  max-height: min(32rem, 70vh);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -593,6 +660,10 @@ code {
   padding: 0;
   display: grid;
   gap: 0.75rem;
+}
+
+.panel-scroll-region {
+  overflow: auto;
 }
 
 .warning-item {
@@ -742,6 +813,10 @@ code {
     min-height: 30rem;
   }
 
+  .panel-header-actions {
+    align-items: stretch;
+  }
+
   .workflow-editor-metadata {
     grid-template-columns: 1fr;
     padding-right: 0;
@@ -749,6 +824,10 @@ code {
 
   .workflow-import-options {
     grid-template-columns: 1fr;
+  }
+
+  .table-frame--preview {
+    max-height: 24rem;
   }
 
   .result-stats {

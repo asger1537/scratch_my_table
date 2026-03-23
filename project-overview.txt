@@ -1,9 +1,8 @@
 Project overview
-Generated: 2026-03-23 08:14:51 +01:00
+Generated: 2026-03-23 12:21:27 +01:00
 
 Included files
 --------------
-AGENTS.md
 docs\data-model.md
 docs\data-semantics.md
 docs\example-workflows.md
@@ -23,6 +22,7 @@ scripts\build-local-dist.mjs
 src\App.tsx
 src\domain\csv.ts
 src\domain\model.ts
+src\domain\normalize.test.ts
 src\domain\normalize.ts
 src\domain\workbookIO.test.ts
 src\domain\workbookIO.ts
@@ -47,330 +47,11 @@ src\workflow\structural.ts
 src\workflow\types.ts
 src\workflow\workflow.test.ts
 tsconfig.json
-V1_roadmap.md
 vite.config.mjs
 vitest.config.mjs
 
 Concatenated contents
 --------------------
-
-===== AGENTS.md =====
-# AGENTS.md
-
-## Project overview
-
-This repository is for an internal-only, local-first browser tool for tabular CSV/XLSX data.
-
-The product goal is:
-
-- user uploads CSV/XLSX
-- user selects one active table/sheet
-- user inspects the normalized data
-- user builds simple tabular workflows with block-based UI
-- user previews the effect safely before export
-- user exports transformed data
-- user saves/loads workflows as versioned JSON
-
-This is not a general programming environment.
-This is a constrained tabular transformation tool.
-
-## Repository state
-
-Phase 1 is complete and should be treated as frozen unless a clear inconsistency is found.
-
-Phase 1 produced:
-
-- V1 scope and non-goals
-- canonical data model
-- data semantics
-- workflow IR
-- validation rules
-- example workflows
-- fixtures
-- JSON schema for workflow IR
-
-Phase 2 / Milestone 1 is implemented.
-
-Milestone 1 includes:
-
-- core domain model/types
-- CSV import normalization
-- XLSX import normalization
-- active table selection
-- schema panel
-- import warnings panel
-- read-only preview grid
-- CSV/XLSX export
-
-Phase 2 / Milestone 2 is implemented.
-
-Milestone 2 includes:
-
-- workflow structural validation
-- workflow semantic validation
-- deterministic execution for all current step types
-- execution metadata suitable for later preview/diff UI
-
-Phase 2 / Milestone 3 and the next authoring milestones are partially implemented.
-
-Current repo reality:
-
-- Blockly-based authoring exists under `src/editor/`
-- workflows now persist as canonical Workflow IR v2
-- scoped cell transforms use `scopedTransform` plus an expression AST
-- built-in function blocks are the normal authoring path for scoped transforms
-- the authoring UI presents `deriveColumn` as `create new column`, including blank and copy-column initialization modes
-- supported legacy Workflow IR v1 JSON is upgraded to v2 on load
-
-Treat the current runtime and canonical IR as stable unless a concrete bug or doc mismatch requires a change.
-
-## Current implementation target
-
-Current target: block-based authoring over canonical Workflow IR v2.
-
-Preserve these boundaries:
-
-- import/normalization remains separate from workflow logic
-- workflow validation/execution remains separate from React/UI code
-- block editor code stays in editor/UI-specific modules
-- canonical workflow JSON remains the contract between authoring and runtime
-- future preview/trust UI must consume the existing canonical workflow IR and table model
-
-Not built yet:
-
-- before/after preview UI
-- visual diff UI
-- step impact highlighting
-- workflow templates
-- custom/user-defined functions
-- DSL authoring
-- backend services
-- collaboration
-- auth
-
-## Canonical sources of truth
-
-When making implementation decisions, consult these first:
-
-- `docs/v1-scope.md`
-- `docs/data-model.md`
-- `docs/data-semantics.md`
-- `docs/workflow-ir-v2.md`
-- `docs/validation-rules.md`
-- `docs/example-workflows.md`
-- `schemas/workflow-ir-v2.schema.json`
-
-Historical references:
-
-- `docs/workflow-ir-v1.md`
-- `schemas/workflow-ir-v1.schema.json`
-
-If code and docs disagree, do not silently invent a third interpretation.
-Either:
-
-- align code to the docs, or
-- update the docs explicitly if the code has revealed a better decision
-
-## Product constraints
-
-- Internal-only tool
-- Local-first architecture
-- Browser-based
-- TypeScript codebase
-- One active table at a time
-- Workflows must have a typed internal representation
-- Blocks are an authoring view over the canonical workflow model, not the source of truth
-- Preview/safety is more important than expressiveness
-- Prefer deterministic behavior over â€œsmartâ€ behavior
-
-## Current workflow capabilities
-
-These are the current supported tabular capabilities:
-
-- fill empty cells
-- trim / normalize text
-- drop columns
-- rename columns
-- create a derived column
-- filter rows
-- split columns
-- combine columns
-- deduplicate rows
-- sort rows
-
-These map to the current persisted IR step types:
-
-- `scopedTransform`
-- `dropColumns`
-- `renameColumn`
-- `deriveColumn`
-- `filterRows`
-- `splitColumn`
-- `combineColumns`
-- `deduplicateRows`
-- `sortRows`
-
-Capability-to-IR mapping:
-
-- fill empty cells: `scopedTransform` with `coalesce(value, <literal>)`
-- normalize text: `scopedTransform` with built-in string-function composition such as `lower(trim(value))`
-- drop columns: `dropColumns`
-
-## Out of scope
-
-Unless explicitly requested, do not design or implement:
-
-- joins / multi-table workflows
-- group-by / aggregation
-- pivots
-- AI workflow generation
-- collaboration
-- auth / backend services
-- spreadsheet formatting fidelity
-- macro support
-- formula preservation as formulas
-- full spreadsheet editing
-- arbitrary scripting
-- generic user-authored loops / control flow
-- user-defined/custom functions
-
-## Modeling rules
-
-Use the following design principles:
-
-- treat uploaded data as one active table at a time
-- separate display names from stable internal column IDs
-- separate row identity from visible row order
-- make null/empty behavior explicit
-- prefer deterministic operations
-- avoid ambiguous semantics
-- make workflow steps composable and serializable
-- version the workflow schema from day one
-- persist workflows using explicit `columnId` references, not symbolic UI selections
-- keep the canonical IR editor-agnostic
-
-## Canonical data model requirements
-
-The runtime model must preserve:
-
-- `workbookId`
-- `tableId`
-- `activeTableId`
-- schema with stable `columnId`
-- rows with stable `rowId`
-- `rowsById`
-- `rowOrder`
-- import warnings
-- inferred logical types
-
-Current import rules:
-
-- CSV -> one workbook with one table
-- XLSX -> one workbook with one table per sheet
-- first row is used as headers
-- formulas are imported as values only
-- formatting/styling is ignored
-
-## Workflow runtime rules
-
-Preserve these behaviors unless the docs are updated explicitly:
-
-- structural validation is separate from semantic validation
-- semantic validation runs in step order
-- earlier valid steps change the schema seen by later steps
-- invalid steps do not contribute schema changes to later validation
-- missing columns are errors
-- incompatible types are errors
-- workflow-authored display-name conflicts are errors
-- created `columnId` conflicts are errors
-- execution is deterministic and UI-independent
-- sort is stable and keeps nulls last regardless of direction
-- deduplicate keeps the first row in current `rowOrder`
-- `renameColumn` changes display/export name, not `columnId`
-- `scopedTransform` evaluates one expression per selected cell
-- `value` is scoped-transform-only
-- `column` reads an existing column from the current row and is valid in both `scopedTransform` and `deriveColumn`
-- built-in functions are pure and deterministic
-
-## Current code boundaries
-
-The repo currently has these main implementation areas:
-
-- `src/domain/`
-  - canonical table model and helper functions
-  - import normalization
-  - CSV/XLSX import and export
-- `src/workflow/`
-  - workflow IR TypeScript types
-  - structural validation
-  - semantic validation
-  - deterministic executor
-- `src/editor/`
-  - Blockly block definitions
-  - schema-aware editor options
-  - block <-> IR conversion
-  - editor integration helpers
-- `src/App.tsx`
-  - current import/inspection shell plus workflow editor integration
-- `scripts/build-local-dist.mjs`
-  - single-file local-file production build
-
-Keep those boundaries intact unless the user explicitly asks for a restructure.
-
-Avoid:
-
-- mixing workflow logic into import/export code
-- mixing React/UI concerns into domain/runtime code
-- coupling executor logic to Blockly behavior
-- persisting Blockly-specific workspace state as the canonical workflow format
-
-## Current build and test commands
-
-Use the current scripts rather than inventing new entrypoints:
-
-- `npm test`
-- `npm run build`
-  - produces a single-file `dist/index.html` intended to work directly from disk
-- `npm run build:web`
-  - produces a normal Vite web build
-
-## How to work
-
-When doing work in this repo:
-
-1. Read the canonical docs first.
-2. Inspect the existing implementation before restructuring.
-3. Extend the current architecture instead of replacing it.
-4. Keep terminology consistent across docs, schema, code, tests, and examples.
-5. Add focused tests for new behavior.
-6. Prefer fixtures and concrete examples over abstract discussion.
-7. End with a concise summary:
-   - files changed
-   - decisions made
-   - unresolved questions
-
-## What not to do
-
-- Do not re-open Phase 1 scope casually.
-- Do not introduce backend architecture.
-- Do not expand to multi-table workflows.
-- Do not introduce generic programming concepts as the primary user model.
-- Do not persist symbolic selections such as â€œcurrently selected columnsâ€.
-- Do not re-couple execution logic to UI/editor state.
-- Do not over-engineer for hypothetical V2+ features.
-
-## Working definition of done for the current authoring/runtime shape
-
-The current workflow stack is in a good state when:
-
-- workflow JSON validates structurally against Workflow IR v2
-- semantic validation exists for every current step type
-- all current step types execute deterministically
-- block-authored workflows serialize to canonical IR v2
-- canonical IR v2 can be loaded back into blocks
-- supported legacy v1 workflows upgrade cleanly to v2
-- tests cover authoring, validation, execution, and roundtrip behavior
-- no backend or collaboration work has been introduced
 
 ===== docs\data-model.md =====
 # Canonical Data Model
@@ -556,7 +237,11 @@ CSV import rules:
 XLSX import rules:
 
 - One XLSX file becomes one workbook with one table per sheet.
-- Each sheet uses its first row as the header row.
+- Each sheet has one selected header row.
+- If the caller does not provide a header-row override for a sheet, import auto-detects the header row.
+- Rows above the selected header row are ignored as data.
+- Data rows begin immediately after the selected header row.
+- For multiline header cells, the first non-empty visual line is used to derive `displayName` and `columnId`.
 - The user selects exactly one sheet as the active table.
 - V1 ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
 
@@ -591,6 +276,8 @@ Required warning scenarios for V1:
 
 - duplicate header names were normalized
 - blank header names were generated
+- an XLSX sheet auto-detected a non-first header row
+- a multiline XLSX header cell used only its first non-empty visual line for display-name generation
 - formulas were imported as values
 - a formula cell had no cached value and was imported as `null`
 - a column inferred as `mixed`
@@ -1476,6 +1163,39 @@ IR example:
 }
 ```
 
+## 15. Keep Only Rows With a Sign Up Date Like 2026-12-08
+
+Description:
+
+- Keep only rows whose `sign up date` value exactly matches the `YYYY-MM-DD` format.
+
+Intended effect:
+
+- Rows with values such as `2026-12-08` remain.
+- Rows with timestamps, slashed dates, partial dates, or other text are dropped.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_filter_signup_date_format",
+  "name": "Keep rows with sign up date in YYYY-MM-DD format",
+  "steps": [
+    {
+      "id": "step_filter_signup_date_format",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "matchesRegex",
+        "columnId": "col_signup_date",
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      }
+    }
+  ]
+}
+```
+
 ===== docs\out-of-scope.md =====
 # Out of Scope for V1
 
@@ -1601,7 +1321,7 @@ The canonical V1 user flow is:
 1. Upload a CSV or XLSX file.
 2. Inspect the import result and select the active table.
    - CSV imports as one table.
-   - XLSX imports as a workbook and the user selects one sheet as the active table.
+   - XLSX imports as a workbook, auto-detects one header row per sheet by default, allows a per-sheet header-row override, and lets the user select one sheet as the active table.
 3. Inspect the active table.
    - Show column display names, inferred types, row count, sample rows, and import warnings.
 4. Build a workflow with blocks.
@@ -1866,7 +1586,8 @@ Comparator rules:
 
 - `isEmpty` is valid for any column type
 - `equals` is valid for any non-mixed column if the literal value matches the column type
-- `contains`, `startsWith`, and `endsWith` require `string` or `unknown`
+- `contains`, `startsWith`, `endsWith`, and `matchesRegex` require `string` or `unknown`
+- `matchesRegex` also requires a syntactically valid regular expression pattern
 - `greaterThan` and `lessThan` require `number`, `date`, `datetime`, or `unknown`
 - `and` and `or` require at least two child conditions
 - `not` requires exactly one child condition
@@ -1875,6 +1596,7 @@ Errors:
 
 - `missingColumn`
 - `invalidCondition`
+- `invalidRegex`
 - `incompatibleType`
 
 ### `splitColumn`
@@ -2179,6 +1901,7 @@ Leaf conditions:
 - `contains`
 - `startsWith`
 - `endsWith`
+- `matchesRegex`
 - `greaterThan`
 - `lessThan`
 
@@ -3343,6 +3066,23 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "columnId", "pattern"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "matchesRegex"
+            },
+            "columnId": {
+              "$ref": "#/$defs/id"
+            },
+            "pattern": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "columnId", "value"],
           "properties": {
             "kind": {
@@ -4440,6 +4180,7 @@ export function importCsvWorkbook(sourceFileName: string, text: string): Workboo
       {
         sourceName: sourceFileName,
         rows,
+        headerRowIndex: 0,
       },
     ],
   });
@@ -4693,11 +4434,100 @@ export function isMissingValue(value: CellValue): boolean {
   return value === null || value === '';
 }
 
+===== src\domain\normalize.test.ts =====
+import { describe, expect, it } from 'vitest';
+
+import { CellValue, getActiveTable } from './model';
+import { ImportedCellInput, extractDisplayHeaderLine, normalizeImportedWorkbook } from './normalize';
+
+describe('header row normalization', () => {
+  it('respects explicit headerRowIndex and starts data rows after the selected header row', () => {
+    const workbook = normalizeImportedWorkbook({
+      sourceFileName: 'elements.xlsx',
+      sourceFormat: 'xlsx',
+      tables: [
+        {
+          sourceName: 'Elements',
+          headerRowIndex: 1,
+          rows: [
+            [valueCell('{"UniqueId":"sheet_metadata"}'), valueCell('{"DisplayName":"Element Status"}')],
+            [xlsxHeaderCell('Element ID'), xlsxHeaderCell('Status')],
+            [valueCell('E-001'), valueCell('Active')],
+            [valueCell('E-002'), valueCell('Inactive')],
+          ],
+        },
+      ],
+    });
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['Element ID', 'Status']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_element_id', 'col_status']);
+    expect(table?.rowOrder).toEqual(['row_1', 'row_2']);
+    expect(table?.rowsById.row_1.cellsByColumnId.col_element_id).toBe('E-001');
+    expect(table?.rowsById.row_1.cellsByColumnId.col_status).toBe('Active');
+  });
+
+  it('uses XLSX first-line header extraction before duplicate and blank normalization', () => {
+    const workbook = normalizeImportedWorkbook({
+      sourceFileName: 'multiline-headers.xlsx',
+      sourceFormat: 'xlsx',
+      tables: [
+        {
+          sourceName: 'Headers',
+          headerRowIndex: 0,
+          rows: [
+            [
+              xlsxHeaderCell('Status\nstring'),
+              xlsxHeaderCell('\nStatus\nnumber'),
+              xlsxHeaderCell('\n  \r\n'),
+              xlsxHeaderCell('\r\n'),
+            ],
+            [valueCell('Open'), valueCell('Closed'), valueCell('A'), valueCell('B')],
+          ],
+        },
+      ],
+    });
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual([
+      'Status',
+      'Status (2)',
+      'Column',
+      'Column (2)',
+    ]);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual([
+      'col_status',
+      'col_status_2',
+      'col_column',
+      'col_column_2',
+    ]);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(4);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'duplicateHeaderNormalized')).toHaveLength(2);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'blankHeaderGenerated')).toHaveLength(2);
+  });
+});
+
+function xlsxHeaderCell(text: string): ImportedCellInput {
+  return {
+    headerText: text,
+    displayHeaderText: extractDisplayHeaderLine(text),
+    value: text,
+  };
+}
+
+function valueCell(value: CellValue): ImportedCellInput {
+  return {
+    headerText: value === null ? '' : String(value),
+    value,
+  };
+}
+
 ===== src\domain\normalize.ts =====
 import { CellValue, Column, ImportWarning, LogicalType, SourceFormat, Table, TableRow, Workbook, isMissingValue } from './model';
 
 export interface ImportedCellInput {
   headerText: string;
+  displayHeaderText?: string;
   value: CellValue;
   hadFormula?: boolean;
   missingFormulaValue?: boolean;
@@ -4706,6 +4536,7 @@ export interface ImportedCellInput {
 export interface ImportedTableInput {
   sourceName: string;
   rows: ImportedCellInput[][];
+  headerRowIndex: number;
 }
 
 export interface NormalizeWorkbookInput {
@@ -4730,8 +4561,10 @@ export function normalizeImportedWorkbook(input: NormalizeWorkbookInput): Workbo
 }
 
 function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<string, number>): Table {
+  validateHeaderRowIndex(input);
+
   const width = input.rows.reduce((max, row) => Math.max(max, row.length), 0);
-  const headerRow = input.rows[0] ?? [];
+  const headerRow = input.rows[input.headerRowIndex] ?? [];
   const columnNameCounts = new Map<string, number>();
   const duplicateBaseNames = new Map<string, string>();
   const columnIdCounts = new Map<string, number>();
@@ -4741,8 +4574,10 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
   const columns: Column[] = [];
 
   for (let sourceIndex = 0; sourceIndex < width; sourceIndex += 1) {
-    const rawHeaderText = headerRow[sourceIndex]?.headerText ?? '';
-    const normalizedHeader = normalizeHeaderText(rawHeaderText);
+    const headerCell = headerRow[sourceIndex];
+    const rawHeaderText = headerCell?.headerText ?? '';
+    const displayHeaderText = headerCell?.displayHeaderText ?? rawHeaderText;
+    const normalizedHeader = normalizeHeaderText(displayHeaderText);
     const duplicateKey = normalizedHeader.toLocaleLowerCase();
     const duplicateCount = (columnNameCounts.get(duplicateKey) ?? 0) + 1;
 
@@ -4756,7 +4591,17 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
     const displayName = duplicateCount === 1 ? baseDisplayName : `${baseDisplayName} (${duplicateCount})`;
     const columnId = makeUniqueId(`col_${slugify(baseDisplayName)}`, columnIdCounts);
 
-    if (normalizeWhitespace(rawHeaderText) === '') {
+    if (headerCell?.displayHeaderText !== undefined && splitHeaderLines(rawHeaderText).length > 1) {
+      importWarnings.push({
+        code: 'multilineHeaderFirstLineUsed',
+        message: `Column ${sourceIndex + 1} used only the first non-empty header line for display name generation.`,
+        scope: 'column',
+        tableId,
+        columnId,
+      });
+    }
+
+    if (normalizeWhitespace(displayHeaderText) === '') {
       importWarnings.push({
         code: 'blankHeaderGenerated',
         message: `Column ${sourceIndex + 1} had a blank header. Generated display name '${displayName}'.`,
@@ -4789,8 +4634,8 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
   const rowsById: Record<string, TableRow> = {};
   const rowOrder: string[] = [];
 
-  for (let rowIndex = 1; rowIndex < input.rows.length; rowIndex += 1) {
-    const rowId = `row_${rowIndex}`;
+  for (let rowIndex = input.headerRowIndex + 1; rowIndex < input.rows.length; rowIndex += 1) {
+    const rowId = `row_${rowIndex - input.headerRowIndex}`;
     const sourceRow = input.rows[rowIndex] ?? [];
     const cellsByColumnId: Record<string, CellValue> = {};
 
@@ -4827,7 +4672,7 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
   let formulaImportedCount = 0;
   let formulaMissingValueCount = 0;
 
-  for (let rowIndex = 1; rowIndex < input.rows.length; rowIndex += 1) {
+  for (let rowIndex = input.headerRowIndex + 1; rowIndex < input.rows.length; rowIndex += 1) {
     const row = input.rows[rowIndex] ?? [];
 
     for (const cell of row) {
@@ -4904,6 +4749,14 @@ export function normalizeHeaderText(value: string): string {
   return normalized === '' ? 'Column' : normalized;
 }
 
+export function splitHeaderLines(text: string): string[] {
+  return text.split(/\r\n|\n/).map((line) => line.trim());
+}
+
+export function extractDisplayHeaderLine(text: string): string {
+  return splitHeaderLines(text).find((line) => line !== '') ?? '';
+}
+
 export function normalizeWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
 }
@@ -4948,6 +4801,26 @@ function stripFileExtension(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, '');
 }
 
+function validateHeaderRowIndex(input: ImportedTableInput): void {
+  if (!Number.isInteger(input.headerRowIndex) || input.headerRowIndex < 0) {
+    throw new Error(`Invalid header row index '${input.headerRowIndex}' for '${input.sourceName}'.`);
+  }
+
+  if (input.rows.length === 0) {
+    if (input.headerRowIndex !== 0) {
+      throw new Error(`Invalid header row index '${input.headerRowIndex}' for empty table '${input.sourceName}'.`);
+    }
+
+    return;
+  }
+
+  if (input.headerRowIndex >= input.rows.length) {
+    throw new Error(
+      `Header row index '${input.headerRowIndex}' is out of range for '${input.sourceName}' with ${input.rows.length} row${input.rows.length === 1 ? '' : 's'}.`,
+    );
+  }
+}
+
 function makeUniqueId(baseId: string, counts: Map<string, number>): string {
   const nextCount = (counts.get(baseId) ?? 0) + 1;
   counts.set(baseId, nextCount);
@@ -4989,6 +4862,16 @@ describe('Milestone 1 normalization and export', () => {
     expect(table?.rowOrder).toEqual(['row_1', 'row_2', 'row_3', 'row_4', 'row_5']);
     expect(table?.schema.columns.find((column) => column.columnId === 'col_created_at')?.logicalType).toBe('date');
     expect(table?.schema.columns.find((column) => column.columnId === 'col_email')?.missingCount).toBe(0);
+  });
+
+  it('keeps CSV header handling unchanged', () => {
+    const workbook = importCsvWorkbook('multiline-header.csv', '"Status\nLabel",value\r\nOpen,1\r\n');
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['Status Label', 'value']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_status_label', 'col_value']);
+    expect(table?.rowOrder).toEqual(['row_1']);
+    expect(table?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('Open');
   });
 
   it('normalizes duplicate headers deterministically', () => {
@@ -5052,6 +4935,32 @@ describe('Milestone 1 normalization and export', () => {
     expect(getActiveTable(updatedWorkbook)?.sourceName).toBe('Orders');
   });
 
+  it('auto-detects a non-first XLSX header row and uses first-line header display names', () => {
+    const workbook = importXlsxWorkbook('header-selection.xlsx', buildHeaderSelectionWorkbook());
+    const table = getActiveTable(workbook);
+
+    expect(table?.schema.columns.map((column) => column.displayName)).toEqual(['Element ID', 'Status']);
+    expect(table?.schema.columns.map((column) => column.columnId)).toEqual(['col_element_id', 'col_status']);
+    expect(table?.rowOrder).toEqual(['row_1', 'row_2']);
+    expect(table?.rowsById.row_1.cellsByColumnId.col_element_id).toBe('E-001');
+    expect(table?.rowsById.row_1.cellsByColumnId.col_status).toBe('Active');
+    expect(table?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(true);
+    expect(table?.importWarnings.filter((warning) => warning.code === 'multilineHeaderFirstLineUsed')).toHaveLength(2);
+  });
+
+  it('prefers an explicit XLSX header row override over auto-detection', () => {
+    const workbook = importXlsxWorkbook('header-selection.xlsx', buildHeaderSelectionWorkbook(), {
+      headerRowBySheetName: { Elements: 0 },
+    });
+    const table = getActiveTable(workbook);
+    const firstColumnId = table?.schema.columns[0]?.columnId;
+
+    expect(table?.schema.columns[0]?.displayName).toContain('UniqueId');
+    expect(firstColumnId).toBeTruthy();
+    expect(table?.rowsById.row_1.cellsByColumnId[firstColumnId ?? '']).toBe('Element ID\nstring\nscope');
+    expect(table?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(false);
+  });
+
   it('treats formulas with cached results as imported values', () => {
     const workbook = importXlsxWorkbook('formulas.xlsx', buildFormulaWorkbook());
     const table = getActiveTable(workbook);
@@ -5097,6 +5006,7 @@ describe('Milestone 1 normalization and export', () => {
     );
     expect(roundtripTable?.rowsById.row_1.cellsByColumnId.col_order_total).toBe(120.5);
     expect(roundtripTable?.rowsById.row_4.cellsByColumnId.col_customer_email).toBe(null);
+    expect(roundtripTable?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(false);
   });
 });
 
@@ -5134,6 +5044,23 @@ function buildFormulaWorkbook(): ArrayBuffer {
   sheet['!ref'] = 'A1:D2';
 
   XLSX.utils.book_append_sheet(workbook, sheet, 'Formulas');
+
+  return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+}
+
+function buildHeaderSelectionWorkbook(): ArrayBuffer {
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([
+    [
+      '{"UniqueId":"element_id","DisplayName":"Element ID"}',
+      '{"UniqueId":"status","DisplayName":"Status"}',
+    ],
+    ['Element ID\nstring\nscope', 'Status\nstring'],
+    ['E-001', 'Active'],
+    ['E-002', 'Inactive'],
+  ]);
+
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Elements');
 
   return XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
 }
@@ -5201,9 +5128,20 @@ function slugifyFileStem(value: string): string {
 import * as XLSX from 'xlsx';
 
 import { CellValue, ImportWarning, Table, Workbook, getOrderedRows } from './model';
-import { ImportedCellInput, cellValueToHeaderText, normalizeImportedWorkbook } from './normalize';
+import { ImportedCellInput, cellValueToHeaderText, extractDisplayHeaderLine, normalizeImportedWorkbook } from './normalize';
 
-export function importXlsxWorkbook(sourceFileName: string, data: ArrayBuffer): Workbook {
+export interface ImportXlsxWorkbookOptions {
+  headerRowBySheetName?: Record<string, number>;
+}
+
+const HEADER_CANDIDATE_LIMIT = 10;
+const MACHINE_METADATA_PATTERN = /(?:["'])?(UniqueId|DisplayName|Name)(?:["'])?\s*[:=]/i;
+
+export function importXlsxWorkbook(
+  sourceFileName: string,
+  data: ArrayBuffer,
+  options: ImportXlsxWorkbookOptions = {},
+): Workbook {
   const workbook = XLSX.read(data, {
     type: 'array',
     cellDates: true,
@@ -5218,16 +5156,55 @@ export function importXlsxWorkbook(sourceFileName: string, data: ArrayBuffer): W
       scope: 'workbook',
     },
   ];
+  const importedTables = workbook.SheetNames.map((sheetName) => {
+    const rows = convertSheetToImportedRows(workbook.Sheets[sheetName]);
+    const override = options.headerRowBySheetName?.[sheetName];
+    const headerRowIndex = override ?? detectHeaderRowIndex(rows);
 
-  return normalizeImportedWorkbook({
+    validateSelectedHeaderRowIndex(sheetName, rows, headerRowIndex);
+
+    return {
+      sourceName: sheetName,
+      rows,
+      headerRowIndex,
+      headerRowWasAutoDetected: override === undefined,
+    };
+  });
+
+  const normalizedWorkbook = normalizeImportedWorkbook({
     sourceFileName,
     sourceFormat: 'xlsx',
     importWarnings,
-    tables: workbook.SheetNames.map((sheetName) => ({
-      sourceName: sheetName,
-      rows: convertSheetToImportedRows(workbook.Sheets[sheetName]),
+    tables: importedTables.map(({ sourceName, rows, headerRowIndex }) => ({
+      sourceName,
+      rows,
+      headerRowIndex,
     })),
   });
+
+  return {
+    ...normalizedWorkbook,
+    tables: normalizedWorkbook.tables.map((table, index) => {
+      const importedTable = importedTables[index];
+
+      if (!importedTable.headerRowWasAutoDetected || importedTable.headerRowIndex === 0 || importedTable.rows.length === 0) {
+        return table;
+      }
+
+      return {
+        ...table,
+        importWarnings: [
+          ...table.importWarnings,
+          {
+            code: 'xlsxHeaderRowAutoDetected',
+            message: `Auto-detected row ${importedTable.headerRowIndex + 1} as the header row for '${table.sourceName}'.`,
+            scope: 'table',
+            tableId: table.tableId,
+          },
+        ],
+      };
+    }),
+  };
 }
 
 export function exportTableToXlsxBytes(table: Table): ArrayBuffer {
@@ -5290,13 +5267,90 @@ function convertSheetCell(cell: XLSX.CellObject | undefined): ImportedCellInput 
   }
 
   const value = normalizeCellValue(cell);
+  const headerText = cellValueToHeaderText(value);
 
   return {
-    headerText: cellValueToHeaderText(value),
+    headerText,
+    displayHeaderText: extractDisplayHeaderLine(headerText),
     value,
     hadFormula: Boolean(cell.f),
     missingFormulaValue: false,
   };
+}
+
+function detectHeaderRowIndex(rows: ImportedCellInput[][]): number {
+  if (rows.length === 0) {
+    return 0;
+  }
+
+  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const candidateCount = Math.min(rows.length, HEADER_CANDIDATE_LIMIT);
+  let bestRowIndex = 0;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (let rowIndex = 0; rowIndex < candidateCount; rowIndex += 1) {
+    const score = scoreHeaderCandidateRow(rows[rowIndex] ?? [], width);
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRowIndex = rowIndex;
+    }
+  }
+
+  return bestRowIndex;
+}
+
+function scoreHeaderCandidateRow(row: ImportedCellInput[], width: number): number {
+  let score = 0;
+  let nonEmptyCellCount = 0;
+
+  for (let columnIndex = 0; columnIndex < width; columnIndex += 1) {
+    const cell = row[columnIndex];
+    const rawHeaderText = cell?.headerText ?? '';
+    const displayHeaderText = cell?.displayHeaderText ?? extractDisplayHeaderLine(rawHeaderText);
+    const trimmedRawHeaderText = rawHeaderText.trim();
+
+    if (displayHeaderText !== '') {
+      nonEmptyCellCount += 1;
+      score += 2;
+
+      if (displayHeaderText.length <= 40) {
+        score += 1;
+      }
+    }
+
+    if (trimmedRawHeaderText.startsWith('{') && trimmedRawHeaderText.endsWith('}')) {
+      score -= 3;
+    }
+
+    if (MACHINE_METADATA_PATTERN.test(rawHeaderText)) {
+      score -= 2;
+    }
+  }
+
+  score -= Math.max(width - nonEmptyCellCount, 0);
+
+  return score;
+}
+
+function validateSelectedHeaderRowIndex(sheetName: string, rows: ImportedCellInput[][], headerRowIndex: number): void {
+  if (!Number.isInteger(headerRowIndex) || headerRowIndex < 0) {
+    throw new Error(`Invalid header row index '${headerRowIndex}' for sheet '${sheetName}'.`);
+  }
+
+  if (rows.length === 0) {
+    if (headerRowIndex !== 0) {
+      throw new Error(`Invalid header row index '${headerRowIndex}' for empty sheet '${sheetName}'.`);
+    }
+
+    return;
+  }
+
+  if (headerRowIndex >= rows.length) {
+    throw new Error(
+      `Header row index '${headerRowIndex}' is out of range for sheet '${sheetName}' with ${rows.length} row${rows.length === 1 ? '' : 's'}.`,
+    );
+  }
 }
 
 function normalizeCellValue(cell: XLSX.CellObject): CellValue {
@@ -5862,6 +5916,7 @@ export const BLOCK_TYPES = {
   containsCondition: 'contains_condition',
   startsWithCondition: 'starts_with_condition',
   endsWithCondition: 'ends_with_condition',
+  matchesRegexCondition: 'matches_regex_condition',
   greaterThanCondition: 'greater_than_condition',
   lessThanCondition: 'less_than_condition',
   andCondition: 'and_condition',
@@ -6131,6 +6186,7 @@ export function registerWorkflowBlocks() {
   createStringConditionBlock(BLOCK_TYPES.containsCondition, 'contains');
   createStringConditionBlock(BLOCK_TYPES.startsWithCondition, 'starts with');
   createStringConditionBlock(BLOCK_TYPES.endsWithCondition, 'ends with');
+  createRegexConditionBlock(BLOCK_TYPES.matchesRegexCondition, 'matches regex');
   createLiteralConditionBlock(BLOCK_TYPES.greaterThanCondition, 'greater than');
   createLiteralConditionBlock(BLOCK_TYPES.lessThanCondition, 'less than');
 
@@ -6220,6 +6276,7 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
           { kind: 'block', type: BLOCK_TYPES.containsCondition },
           { kind: 'block', type: BLOCK_TYPES.startsWithCondition },
           { kind: 'block', type: BLOCK_TYPES.endsWithCondition },
+          { kind: 'block', type: BLOCK_TYPES.matchesRegexCondition },
           { kind: 'block', type: BLOCK_TYPES.greaterThanCondition },
           { kind: 'block', type: BLOCK_TYPES.lessThanCondition },
           { kind: 'block', type: BLOCK_TYPES.andCondition },
@@ -6274,6 +6331,20 @@ function createStringConditionBlock(type: string, label: string) {
         .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('text')
         .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
+      this.setOutput(true, 'CONDITION');
+      this.setColour(CONDITION_COLOR);
+    },
+  };
+}
+
+function createRegexConditionBlock(type: string, label: string) {
+  Blockly.Blocks[type] = {
+    init() {
+      this.appendDummyInput()
+        .appendField(label)
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
+        .appendField('pattern')
+        .appendField(new Blockly.FieldTextInput('.*'), 'PATTERN');
       this.setOutput(true, 'CONDITION');
       this.setColour(CONDITION_COLOR);
     },
@@ -7024,6 +7095,33 @@ describe('block-based workflow authoring', () => {
     expect(secondBlock?.getFieldValue('COPY_COLUMN_ID')).toBe('col_first_name');
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('roundtrips matchesRegex conditions through Blockly blocks without semantic loss', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_regex_roundtrip',
+      name: 'Regex roundtrip',
+      steps: [
+        {
+          id: 'step_filter_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_email'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.matchesRegexCondition);
   });
 
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
@@ -8179,6 +8277,8 @@ function readCondition(block: Blockly.Block): { condition: WorkflowCondition } |
       return { condition: { kind: 'startsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
     case BLOCK_TYPES.endsWithCondition:
       return { condition: { kind: 'endsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
+    case BLOCK_TYPES.matchesRegexCondition:
+      return { condition: { kind: 'matchesRegex', columnId: getFieldString(block, 'COLUMN_ID'), pattern: getFieldString(block, 'PATTERN') } };
     case BLOCK_TYPES.greaterThanCondition: {
       const value = readRequiredLiteral(block, 'VALUE');
 
@@ -8616,6 +8716,13 @@ function createConditionBlock(workspace: Blockly.Workspace, condition: WorkflowC
       block.setFieldValue(condition.value, 'VALUE');
       return block;
     }
+    case 'matchesRegex': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchesRegexCondition);
+
+      block.setFieldValue(condition.columnId, 'COLUMN_ID');
+      block.setFieldValue(condition.pattern, 'PATTERN');
+      return block;
+    }
     case 'greaterThan': {
       const block = createBlock(workspace, BLOCK_TYPES.greaterThanCondition);
 
@@ -8959,6 +9066,7 @@ function collectConditionColumnIds(condition: WorkflowCondition, columnIds: Set<
     case 'contains':
     case 'startsWith':
     case 'endsWith':
+    case 'matchesRegex':
     case 'greaterThan':
     case 'lessThan':
       columnIds.add(condition.columnId);
@@ -10885,6 +10993,39 @@ function validateCondition(condition: WorkflowCondition, table: Table, path: str
 
       return [];
     }
+    case 'matchesRegex': {
+      const column = findColumn(table, condition.columnId);
+
+      if (!column) {
+        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
+      }
+
+      if (!isStringLikeType(column.logicalType)) {
+        return [
+          makeIssue(
+            'incompatibleType',
+            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use regex matching.`,
+            `${path}.columnId`,
+            stepId,
+            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
+          ),
+        ];
+      }
+
+      if (!isValidRegexPattern(condition.pattern)) {
+        return [
+          makeIssue(
+            'invalidRegex',
+            `Regular expression '${condition.pattern}' is invalid.`,
+            `${path}.pattern`,
+            stepId,
+            { pattern: condition.pattern },
+          ),
+        ];
+      }
+
+      return [];
+    }
     case 'greaterThan':
     case 'lessThan': {
       const column = findColumn(table, condition.columnId);
@@ -11504,6 +11645,19 @@ function evaluateCondition(condition: WorkflowCondition, row: TableRow): boolean
       const value = row.cellsByColumnId[condition.columnId];
       return typeof value === 'string' ? value.endsWith(condition.value) : false;
     }
+    case 'matchesRegex': {
+      const value = row.cellsByColumnId[condition.columnId];
+
+      if (typeof value !== 'string') {
+        return false;
+      }
+
+      try {
+        return new RegExp(condition.pattern).test(value);
+      } catch {
+        return false;
+      }
+    }
     case 'greaterThan':
       return compareConditionValues(row.cellsByColumnId[condition.columnId] ?? null, condition.value) > 0;
     case 'lessThan':
@@ -11599,6 +11753,15 @@ function shouldTreatAsEmpty(value: CellValue, treatWhitespaceAsEmpty: boolean) {
 
 function shouldTreatAsEmptyForCoalesce(value: CellValue, treatWhitespaceAsEmpty: boolean) {
   return shouldTreatAsEmpty(value, treatWhitespaceAsEmpty);
+}
+
+function isValidRegexPattern(pattern: string) {
+  try {
+    new RegExp(pattern);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function toCellValue(value: ExpressionRuntimeValue): CellValue {
@@ -12310,6 +12473,7 @@ export type WorkflowCondition =
   | WorkflowContainsCondition
   | WorkflowStartsWithCondition
   | WorkflowEndsWithCondition
+  | WorkflowMatchesRegexCondition
   | WorkflowGreaterThanCondition
   | WorkflowLessThanCondition
   | WorkflowAndCondition
@@ -12344,6 +12508,12 @@ export interface WorkflowEndsWithCondition {
   kind: 'endsWith';
   columnId: string;
   value: string;
+}
+
+export interface WorkflowMatchesRegexCondition {
+  kind: 'matchesRegex';
+  columnId: string;
+  pattern: string;
 }
 
 export interface WorkflowGreaterThanCondition {
@@ -12674,6 +12844,32 @@ describe('workflow validation and execution', () => {
 
     expect(invalidValidation.valid).toBe(false);
     expect(invalidValidation.issues.some((issue) => issue.code === 'schema.maxItems')).toBe(true);
+  });
+
+  it('structurally validates matchesRegex conditions', () => {
+    const workflow = {
+      version: 2,
+      workflowId: 'wf_regex_structure',
+      name: 'Regex structure',
+      steps: [
+        {
+          id: 'step_filter_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
+          },
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
   });
 
   it('lets later valid steps see schema changes from earlier valid steps', () => {
@@ -13072,6 +13268,92 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
   });
 
+  it('filters rows with matchesRegex and rejects invalid or incompatible regex conditions', () => {
+    const table = loadCsvTable('email,order_total\r\nalice@example.com,100\r\nbob,200\r\ncarol@example.com,300\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_filter_regex',
+      name: 'Filter regex',
+      steps: [
+        {
+          id: 'step_filter_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
+          },
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowOrder).toEqual(['row_1', 'row_3']);
+
+    const invalidRegexWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_filter_invalid_regex',
+      name: 'Filter invalid regex',
+      steps: [
+        {
+          id: 'step_filter_invalid_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_email',
+            pattern: '[a-z',
+          },
+        },
+      ],
+    };
+
+    const invalidRegexValidation = validateWorkflowSemantics(invalidRegexWorkflow, table);
+
+    expect(invalidRegexValidation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalidRegex',
+          path: 'steps[0].condition.pattern',
+          stepId: 'step_filter_invalid_regex',
+        }),
+      ]),
+    );
+
+    const incompatibleWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_filter_numeric_regex',
+      name: 'Filter numeric regex',
+      steps: [
+        {
+          id: 'step_filter_numeric_regex',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: {
+            kind: 'matchesRegex',
+            columnId: 'col_order_total',
+            pattern: '^\\d+$',
+          },
+        },
+      ],
+    };
+
+    const incompatibleValidation = validateWorkflowSemantics(incompatibleWorkflow, table);
+
+    expect(incompatibleValidation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'incompatibleType',
+          path: 'steps[0].condition.columnId',
+          stepId: 'step_filter_numeric_regex',
+        }),
+      ]),
+    );
+  });
+
   it('splits and combines columns deterministically and validates duplicate source references', () => {
     const splitTable = loadCsvTable('full_name\r\nAlice Ng\r\nBob\r\nCara Patel Singh\r\n\r\n');
     const splitWorkflow: Workflow = {
@@ -13375,950 +13657,6 @@ function concat(...args: WorkflowExpression[]): WorkflowExpression {
   },
   "include": ["src"]
 }
-
-===== V1_roadmap.md =====
-# V1 Roadmap
-
-## V1 definition
-
-V1 is an internal-only, local-first browser tool for applying reusable, block-defined transformations to one uploaded table at a time, with safe preview and export.
-
-V1 should let an internal user:
-
-1. upload a CSV/XLSX file
-2. inspect the import result and select one active table
-3. inspect the active table
-4. build a simple workflow with blocks
-5. preview the result safely
-6. run the workflow
-7. export the transformed table
-8. save/load the workflow as versioned JSON
-
-That is enough for a useful first internal release.
-
----
-
-## V1 scope
-
-### In scope
-
-The V1 workflow step catalog is exactly:
-
-- fill empty cells
-- trim / normalize text
-- rename columns
-- create a derived column
-- filter rows
-- split columns
-- combine columns
-- deduplicate rows
-- sort rows
-
-These map to the persisted IR step types:
-
-- `fillEmpty`
-- `normalizeText`
-- `renameColumn`
-- `deriveColumn`
-- `filterRows`
-- `splitColumn`
-- `combineColumns`
-- `deduplicateRows`
-- `sortRows`
-
-### Out of scope for V1
-
-Be strict here:
-
-- joins / multi-table workflows
-- group-by / aggregation
-- pivots
-- formula preservation
-- spreadsheet formatting fidelity
-- Excel macros
-- collaboration
-- auth / backend services
-- cloud persistence
-- AI-generated workflows
-- batch processing many files at once
-- full spreadsheet editing
-- arbitrary scripting, loops, or generic user-authored control flow
-- a text DSL as the execution source of truth
-
-That list is what keeps V1 coherent and shippable.
-
----
-
-## V1 product shape
-
-I would define the product as four primary views.
-
-### 1. Import + data view
-
-Shows:
-
-- uploaded file details
-- active table / sheet selector
-- column display names
-- inferred logical types
-- row count
-- sample rows
-- import warnings
-
-### 2. Workflow view
-
-A block-based editor for the V1 step catalog.
-
-Important rule:
-
-- blocks are an authoring view over the workflow IR
-- the workflow IR is the source of truth
-- transient UI selections are allowed in the editor, but persisted workflows must use explicit `columnId` references
-
-### 3. Preview view
-
-Shows:
-
-- validation errors
-- warnings
-- before/after sample
-- affected row count
-- affected cell count
-
-### 4. Workflow library view
-
-For V1, this only needs:
-
-- save workflow
-- load workflow
-- duplicate workflow
-- export/import workflow JSON
-
-Optional for late V1:
-
-- readable DSL export as a secondary representation
-
----
-
-## V1 user stories
-
-These are the concrete stories V1 should satisfy.
-
-### Story 1: Fill empty cells
-
-A user fills empty values in one or more columns with a specified scalar value.
-
-Example:
-
-- fill missing `status` values with `"unknown"`
-
-### Story 2: Normalize text
-
-A user trims and normalizes text in one or more columns.
-
-Examples:
-
-- trim whitespace
-- lowercase email addresses
-- collapse internal whitespace in names
-
-### Story 3: Rename columns
-
-A user changes the exported/display header for a column without changing its stable internal `columnId`.
-
-### Story 4: Create a derived column
-
-A user creates a new column from one or more existing columns.
-
-Examples:
-
-- `full_name = first_name + " " + last_name`
-- `display_label = coalesce(company_name, full_name)`
-
-### Story 5: Filter rows
-
-A user keeps or drops rows based on conditions.
-
-Examples:
-
-- keep rows with non-empty email
-- keep paid orders above 100
-
-### Story 6: Split columns
-
-A user splits one text column into two or more explicit output columns.
-
-Example:
-
-- split `full_name` into `first_name` and `last_name`
-
-### Story 7: Combine columns
-
-A user combines multiple source columns into one new string column.
-
-Example:
-
-- combine `city` and `state` into `location`
-
-### Story 8: Deduplicate rows
-
-A user removes duplicates based on one or more key columns.
-
-Example:
-
-- keep the first row for each exact email
-
-### Story 9: Sort rows
-
-A user sorts rows by one or more columns.
-
-Example:
-
-- sort by `ordered_at desc`, then `order_total desc`
-
-If V1 does these well, it is already a useful internal tool.
-
----
-
-## Recommended V1 architecture
-
-### Frontend
-
-- TypeScript
-- local-first browser app
-- single-page application
-- distributable as a simple bundled frontend
-
-### Core runtime layers
-
-- import layer
-- canonical table model
-- workflow IR
-- validator
-- executor
-- preview/diff engine
-- block editor projection
-- persistence layer
-
-### Core principles
-
-Use:
-
-- a canonical table model for imported and transformed data
-- a typed workflow IR as the only persisted source of truth
-- a block editor as one authoring view over the IR
-- optional readable DSL export later as a secondary representation
-
-Do not use:
-
-- generated JavaScript as the workflow source of truth
-- symbolic persisted targets like â€œcurrently selected columnsâ€
-- a general programming model as the user-facing abstraction
-
----
-
-## Canonical table model for V1
-
-Every uploaded file should normalize into:
-
-- one `workbook`
-- one or more imported `table` objects
-- exactly one `activeTableId`
-- a canonical `schema`
-- stable `columnId` values
-- stable `rowId` values
-- `rowsById`
-- `rowOrder`
-- import warnings
-
-### Supported input
-
-- CSV
-- XLSX
-
-### Import rules
-
-CSV:
-
-- one CSV file becomes one workbook with one table
-- the first row is treated as the header row
-- subsequent rows are data rows
-- the imported table becomes the active table automatically
-
-XLSX:
-
-- one XLSX file becomes one workbook with one table per sheet
-- each sheet uses its first row as the header row
-- the user selects exactly one sheet as the active table
-
-### V1 assumptions
-
-- workflows run against one active table only
-- formulas are imported as values only
-- formatting/styling is ignored
-- merged cells are ignored
-- macros are ignored
-- dates/datetimes are stored as ISO strings with logical type metadata
-- persisted workflow references must use stable `columnId` values, not display names
-
----
-
-## V1 data semantics
-
-These semantics are fixed for V1.
-
-### Empty handling
-
-- `null` and `""` are distinct values
-- emptiness-sensitive behavior treats both `null` and `""` as empty by default
-- whitespace-only strings are preserved as strings
-- whitespace-only is only treated as empty when a step explicitly opts in with `treatWhitespaceAsEmpty`
-
-### Text normalization
-
-`normalizeText` uses explicit flags:
-
-- `trim`
-- `collapseWhitespace`
-- `case: preserve | lower | upper`
-
-### Type inference
-
-Supported logical types:
-
-- `unknown`
-- `string`
-- `number`
-- `boolean`
-- `date`
-- `datetime`
-- `mixed`
-
-Inference is conservative and per-column.
-
-### Duplicate headers
-
-Header normalization is deterministic:
-
-- trim outer whitespace
-- collapse internal whitespace for conflict checks
-- blank headers become `Column`
-- duplicates get suffixes like `Email (2)`
-
-### Deduplication
-
-- V1 uses exact canonical value equality
-- V1 keep rule is fixed to `keep first`
-- â€œfirstâ€ means first in current `rowOrder` when the step executes
-
-### Sorting
-
-- sorts are stable
-- nulls sort last regardless of direction
-
-### Split columns
-
-- `splitColumn` requires explicit `outputColumns`
-- output display names are not inferred at execution time
-- the final output column receives any unsplit remainder
-
-### Combine columns
-
-- `combineColumns` always creates a new string column
-- `null` and `""` are skipped
-- whitespace-only strings are not skipped automatically
-
----
-
-## V1 workflow model
-
-The persisted workflow model is intentionally small and explicit.
-
-### Workflow object
-
-A workflow contains:
-
-- `version`
-- `workflowId`
-- `name`
-- optional `description`
-- ordered `steps`
-
-### Execution model
-
-- steps execute top to bottom
-- later steps see schema changes made by earlier valid steps
-- validation runs in step order
-- invalid steps do not contribute schema changes to later validation
-
-### Important persisted-IR rule
-
-Persisted workflows do not contain:
-
-- symbolic selected columns
-- row selections
-- arbitrary variables
-- loops
-- generic control flow
-
-Selections may exist in the UI, but before persistence they must resolve to explicit `columnId` references.
-
----
-
-## V1 step catalog
-
-### `fillEmpty`
-
-Purpose:
-
-- fill empty cells in targeted columns with a compatible scalar value
-
-Core fields:
-
-- `target`
-- `value`
-- `treatWhitespaceAsEmpty`
-
-### `normalizeText`
-
-Purpose:
-
-- normalize existing string/unknown columns in place
-
-Core fields:
-
-- `target`
-- `trim`
-- `collapseWhitespace`
-- `case`
-
-### `renameColumn`
-
-Purpose:
-
-- change a columnâ€™s display/export name without changing `columnId`
-
-Core fields:
-
-- `columnId`
-- `newDisplayName`
-
-### `deriveColumn`
-
-Purpose:
-
-- create a new column from an expression
-
-Core fields:
-
-- `newColumn`
-- `expression`
-
-Supported expression kinds:
-
-- `literal`
-- `column`
-- `concat`
-- `coalesce`
-
-### `filterRows`
-
-Purpose:
-
-- keep or drop rows based on a condition tree
-
-Core fields:
-
-- `mode`
-- `condition`
-
-Supported condition kinds:
-
-- `isEmpty`
-- `equals`
-- `contains`
-- `startsWith`
-- `endsWith`
-- `greaterThan`
-- `lessThan`
-- `and`
-- `or`
-- `not`
-
-### `splitColumn`
-
-Purpose:
-
-- split one text column into explicit output columns
-
-Core fields:
-
-- `columnId`
-- `delimiter`
-- `outputColumns`
-
-### `combineColumns`
-
-Purpose:
-
-- combine source columns into a new string column
-
-Core fields:
-
-- `target`
-- `separator`
-- `newColumn`
-
-### `deduplicateRows`
-
-Purpose:
-
-- remove duplicates using one or more key columns
-
-Core fields:
-
-- `target`
-
-### `sortRows`
-
-Purpose:
-
-- reorder rows deterministically using one or more sort keys
-
-Core fields:
-
-- `sorts`
-
----
-
-## Validation model
-
-Validation has two layers.
-
-### 1. Structural validation
-
-Validate against the JSON Schema for workflow IR.
-
-### 2. Semantic validation
-
-Validate against the active table schema as it exists at each step.
-
-### Global rules
-
-- missing columns are validation errors
-- workflow-authored display-name conflicts are validation errors
-- duplicate created `columnId` values are validation errors
-- `mixed` is incompatible with operations that require a single comparison or ordering model
-- invalid steps do not silently no-op
-
-### Step-level rules to enforce
-
-At minimum:
-
-- `fillEmpty`: target exists, target non-empty, fill value type-compatible
-- `normalizeText`: targets must be `string` or `unknown`
-- `renameColumn`: referenced column exists and `newDisplayName` is valid
-- `deriveColumn`: new column ID/display name unique; expression references valid
-- `filterRows`: condition operators must be type-compatible
-- `splitColumn`: source exists; source is `string` or `unknown`; delimiter non-empty; output columns valid
-- `combineColumns`: at least two source columns; no repeated source columns; new column valid
-- `deduplicateRows`: at least one key column; no repeated key references
-- `sortRows`: sort keys exist; directions valid; key types orderable
-
----
-
-## V1 roadmap by phase
-
-## Phase 1: foundations and decisions
-
-Goal:
-
-- define the product boundary
-- define the canonical data model
-- define the workflow IR
-- define fixed V1 semantics
-- define validation rules
-- define example workflows and fixtures
-
-Deliverables:
-
-- `docs/v1-scope.md`
-- `docs/data-model.md`
-- `docs/data-semantics.md`
-- `docs/workflow-ir-v1.md`
-- `docs/validation-rules.md`
-- `docs/example-workflows.md`
-- `docs/out-of-scope.md`
-- `schemas/workflow-ir-v1.schema.json`
-- fixtures
-
-Acceptance criteria:
-
-- all V1 step types are representable in IR
-- semantics are explicit, not implied
-- terminology is consistent
-- no unresolved ambiguity around column identity, row identity, or validation order
-
-## Phase 2: import/export and data grid
-
-Goal:
-
-- make file import, active-table selection, and table inspection solid
-
-Deliverables:
-
-- CSV import
-- XLSX import
-- active-sheet selector
-- canonical import normalization
-- data grid preview
-- schema panel
-- import warnings panel
-- CSV/XLSX export
-
-Tasks:
-
-- build upload UI
-- parse CSV and normalize to canonical model
-- parse XLSX and create one table per sheet
-- choose active table
-- render first N rows in a virtualized grid
-- show column display names, `columnId`, inferred type, and missing counts
-- preserve import warnings for display
-
-Acceptance criteria:
-
-- user can load supported internal files
-- CSV always imports as one active table
-- XLSX allows one active-sheet selection
-- malformed files fail gracefully
-- export roundtrip works for supported value-only behavior
-
-## Phase 3: validator and executor
-
-Goal:
-
-- make workflows executable independently of the block editor
-
-Deliverables:
-
-- structural validator
-- semantic validator
-- executor for every V1 step type
-- diff/change summary
-- worker-based execution
-
-Tasks:
-
-- validate workflow JSON against schema
-- validate semantic compatibility against current step-visible schema
-- execute each step type deterministically
-- return transformed table snapshot, warnings, changed row count, and changed cell count
-- add deterministic tests for each step type and cross-step schema evolution
-
-Acceptance criteria:
-
-- every V1 step type has passing tests
-- execution is deterministic
-- schema changes from earlier valid steps are visible to later steps
-- validation errors are concrete and understandable
-
-## Phase 4: block editor
-
-Goal:
-
-- let users author valid workflows visually
-
-Deliverables:
-
-- V1 block catalog
-- block-to-IR conversion
-- IR-to-block reconstruction
-- validation UI in the editor
-
-Tasks:
-
-- create custom blocks for the V1 step catalog
-- support transient UI column selection but resolve it to explicit `columnId` references before persistence
-- build editors for:
-  - target column lists
-  - string/number/boolean literals
-  - expressions
-  - filter condition trees
-  - sort directions
-  - split output columns
-- support reorder / delete / disable step
-- show plain-language summary per step
-
-Acceptance criteria:
-
-- all canonical example workflows can be authored in blocks
-- saved workflows reload into blocks without loss
-- persisted IR never contains symbolic â€œselected columnsâ€
-- invalid workflows are blocked or clearly flagged
-
-## Phase 5: preview and trust features
-
-Goal:
-
-- make users comfortable previewing and running workflows
-
-Deliverables:
-
-- before/after preview
-- affected rows/cells summary
-- warnings panel
-- validation results panel
-- step-focused preview
-
-Tasks:
-
-- compute preview on a sample and full metadata summary
-- show side-by-side table diff
-- show which step affects which columns/rows
-- highlight missing-column and type errors clearly
-- support session reset / rerun
-
-Acceptance criteria:
-
-- user can tell what will change before export
-- user can identify which step caused a change
-- preview remains fast on typical internal files
-
-## Phase 6: workflow persistence
-
-Goal:
-
-- let internal users reuse workflows
-
-Deliverables:
-
-- save/load workflow JSON
-- workflow metadata
-- schema compatibility checks
-- optional readable DSL export
-
-Tasks:
-
-- define on-disk workflow file format
-- save and reload workflows
-- detect missing columns on load/run
-- keep JSON as canonical persisted format
-- optionally add readable DSL export as a secondary representation only
-
-Acceptance criteria:
-
-- user can reuse workflows across compatible files
-- missing-column mismatches fail clearly
-- workflow files are versioned from day one
-
-## Phase 7: hardening and polish
-
-Goal:
-
-- make V1 dependable for internal use
-
-Deliverables:
-
-- robust error handling
-- edge-case coverage
-- example templates
-- quick-start documentation
-
-Tasks:
-
-- test duplicate headers
-- test blank headers
-- test `mixed` columns
-- test formula cells with and without cached values
-- test split/combine edge cases
-- test dedupe after sort
-- improve import warnings
-- ship built-in templates from canonical example workflows
-
-Acceptance criteria:
-
-- internal users can self-serve common cleanup workflows
-- common messy inputs are supported
-- top edge cases are documented and unsurprising
-
----
-
-## Proposed V1 backlog by feature
-
-## A. File handling
-
-Must have:
-
-- upload CSV/XLSX
-- active-table / sheet selection
-- canonical normalization
-- import warnings
-- export CSV/XLSX
-
-Nice to have:
-
-- delimiter override
-- encoding selector
-
-## B. Data inspection
-
-Must have:
-
-- grid preview
-- schema panel
-- inferred logical types
-- missing counts
-- column selection in authoring UI
-
-Nice to have:
-
-- lightweight profiling
-- search/filter in the grid
-
-## C. Workflow authoring
-
-Must have:
-
-- block authoring for all 9 V1 step types
-- expression editor for `deriveColumn`
-- condition editor for `filterRows`
-- reorder/delete/disable steps
-
-Nice to have:
-
-- step duplication
-- template insertion
-- step descriptions
-
-## D. Validation and trust
-
-Must have:
-
-- structural validation
-- semantic validation
-- preview
-- diff
-- warnings
-
-Nice to have:
-
-- step-focused impact summary
-- intermediate snapshot inspection
-
-## E. Persistence
-
-Must have:
-
-- save/load workflow JSON
-
-Nice to have:
-
-- DSL export
-- built-in templates
-
----
-
-## Suggested milestone sequence
-
-I would structure V1 as 5 milestones.
-
-### Milestone 1: import + table model
-
-- upload CSV/XLSX
-- active table selection
-- canonical table model
-- import warnings
-- table preview
-- export CSV/XLSX
-
-### Milestone 2: validator + executor
-
-- workflow IR support
-- schema validation
-- semantic validation
-- executor for all V1 step types
-- tests
-
-### Milestone 3: block authoring
-
-- custom blocks
-- editors for targets, expressions, and conditions
-- block â†” IR mapping
-- save/load roundtrip
-
-### Milestone 4: preview + trust
-
-- before/after preview
-- affected-row / affected-cell summary
-- validation/warnings UI
-- step-focused explanation
-
-### Milestone 5: polish + templates
-
-- example workflow templates
-- edge-case hardening
-- quick-start docs
-- internal usability polish
-
----
-
-## Suggested first templates to ship
-
-Ship these as built-in examples:
-
-1. Fill missing status values
-2. Normalize email addresses
-3. Rename customer ID for export
-4. Create full name
-5. Keep only rows with email
-6. Split full name into first and last name
-7. Create location from city and state
-8. Deduplicate by email
-9. Sort orders by date then total
-10. Messy customer cleanup
-
----
-
-## Team / implementation order recommendation
-
-For a small internal build, I would work in this order:
-
-1. canonical data model
-2. import/export
-3. validator
-4. executor
-5. data grid
-6. block editor
-7. preview/diff
-8. save/load
-9. polish
-
-That order matters. It prevents the block editor from driving the runtime model.
-
----
-
-## What I would deliberately postpone
-
-Even if tempting, postpone:
-
-- multi-table support
-- aggregation
-- pivots
-- generic loops
-- generic control flow
-- regex-heavy features
-- formula preservation
-- AI generation
-- backend storage
-
-For V1, high-level tabular operations are better than exposing a general language.
-
----
-
-## One-sentence summary
-
-V1 is a local-first internal tool for applying reusable, block-defined transformations to one uploaded table at a time, with explicit schema-aware workflows, safe preview, and value-only export.
 
 ===== vite.config.mjs =====
 import { defineConfig } from 'vite';

@@ -65,6 +65,7 @@ export const BLOCK_TYPES = {
   containsCondition: 'contains_condition',
   startsWithCondition: 'starts_with_condition',
   endsWithCondition: 'ends_with_condition',
+  matchesRegexCondition: 'matches_regex_condition',
   greaterThanCondition: 'greater_than_condition',
   lessThanCondition: 'less_than_condition',
   andCondition: 'and_condition',
@@ -334,6 +335,7 @@ export function registerWorkflowBlocks() {
   createStringConditionBlock(BLOCK_TYPES.containsCondition, 'contains');
   createStringConditionBlock(BLOCK_TYPES.startsWithCondition, 'starts with');
   createStringConditionBlock(BLOCK_TYPES.endsWithCondition, 'ends with');
+  createRegexConditionBlock(BLOCK_TYPES.matchesRegexCondition, 'matches regex');
   createLiteralConditionBlock(BLOCK_TYPES.greaterThanCondition, 'greater than');
   createLiteralConditionBlock(BLOCK_TYPES.lessThanCondition, 'less than');
 
@@ -423,6 +425,7 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
           { kind: 'block', type: BLOCK_TYPES.containsCondition },
           { kind: 'block', type: BLOCK_TYPES.startsWithCondition },
           { kind: 'block', type: BLOCK_TYPES.endsWithCondition },
+          { kind: 'block', type: BLOCK_TYPES.matchesRegexCondition },
           { kind: 'block', type: BLOCK_TYPES.greaterThanCondition },
           { kind: 'block', type: BLOCK_TYPES.lessThanCondition },
           { kind: 'block', type: BLOCK_TYPES.andCondition },
@@ -477,6 +480,20 @@ function createStringConditionBlock(type: string, label: string) {
         .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
         .appendField('text')
         .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
+      this.setOutput(true, 'CONDITION');
+      this.setColour(CONDITION_COLOR);
+    },
+  };
+}
+
+function createRegexConditionBlock(type: string, label: string) {
+  Blockly.Blocks[type] = {
+    init() {
+      this.appendDummyInput()
+        .appendField(label)
+        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
+        .appendField('pattern')
+        .appendField(new Blockly.FieldTextInput('.*'), 'PATTERN');
       this.setOutput(true, 'CONDITION');
       this.setColour(CONDITION_COLOR);
     },

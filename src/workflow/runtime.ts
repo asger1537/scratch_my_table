@@ -780,6 +780,39 @@ function validateCondition(condition: WorkflowCondition, table: Table, path: str
 
       return [];
     }
+    case 'matchesRegex': {
+      const column = findColumn(table, condition.columnId);
+
+      if (!column) {
+        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
+      }
+
+      if (!isStringLikeType(column.logicalType)) {
+        return [
+          makeIssue(
+            'incompatibleType',
+            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use regex matching.`,
+            `${path}.columnId`,
+            stepId,
+            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
+          ),
+        ];
+      }
+
+      if (!isValidRegexPattern(condition.pattern)) {
+        return [
+          makeIssue(
+            'invalidRegex',
+            `Regular expression '${condition.pattern}' is invalid.`,
+            `${path}.pattern`,
+            stepId,
+            { pattern: condition.pattern },
+          ),
+        ];
+      }
+
+      return [];
+    }
     case 'greaterThan':
     case 'lessThan': {
       const column = findColumn(table, condition.columnId);
@@ -1399,6 +1432,19 @@ function evaluateCondition(condition: WorkflowCondition, row: TableRow): boolean
       const value = row.cellsByColumnId[condition.columnId];
       return typeof value === 'string' ? value.endsWith(condition.value) : false;
     }
+    case 'matchesRegex': {
+      const value = row.cellsByColumnId[condition.columnId];
+
+      if (typeof value !== 'string') {
+        return false;
+      }
+
+      try {
+        return new RegExp(condition.pattern).test(value);
+      } catch {
+        return false;
+      }
+    }
     case 'greaterThan':
       return compareConditionValues(row.cellsByColumnId[condition.columnId] ?? null, condition.value) > 0;
     case 'lessThan':
@@ -1494,6 +1540,15 @@ function shouldTreatAsEmpty(value: CellValue, treatWhitespaceAsEmpty: boolean) {
 
 function shouldTreatAsEmptyForCoalesce(value: CellValue, treatWhitespaceAsEmpty: boolean) {
   return shouldTreatAsEmpty(value, treatWhitespaceAsEmpty);
+}
+
+function isValidRegexPattern(pattern: string) {
+  try {
+    new RegExp(pattern);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function toCellValue(value: ExpressionRuntimeValue): CellValue {
