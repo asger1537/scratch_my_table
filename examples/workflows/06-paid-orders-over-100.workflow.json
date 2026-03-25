@@ -8,17 +8,36 @@
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "and",
-        "conditions": [
+        "kind": "call",
+        "name": "and",
+        "args": [
           {
-            "kind": "greaterThan",
-            "columnId": "col_order_total",
-            "value": 100
+            "kind": "call",
+            "name": "greaterThan",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_total"
+              },
+              {
+                "kind": "literal",
+                "value": 100
+              }
+            ]
           },
           {
-            "kind": "equals",
-            "columnId": "col_order_status",
-            "value": "paid"
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_status"
+              },
+              {
+                "kind": "literal",
+                "value": "paid"
+              }
+            ]
           }
         ]
       }

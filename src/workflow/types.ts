@@ -39,7 +39,18 @@ export type WorkflowExpressionFunctionName =
   | 'first'
   | 'last'
   | 'coalesce'
-  | 'concat';
+  | 'concat'
+  | 'equals'
+  | 'contains'
+  | 'startsWith'
+  | 'endsWith'
+  | 'matchesRegex'
+  | 'greaterThan'
+  | 'lessThan'
+  | 'and'
+  | 'or'
+  | 'not'
+  | 'isEmpty';
 
 export type WorkflowExpression =
   | WorkflowValueExpression
@@ -67,89 +78,12 @@ export interface WorkflowCallExpression {
   args: WorkflowExpression[];
 }
 
-export type WorkflowCondition =
-  | WorkflowIsEmptyCondition
-  | WorkflowEqualsCondition
-  | WorkflowContainsCondition
-  | WorkflowStartsWithCondition
-  | WorkflowEndsWithCondition
-  | WorkflowMatchesRegexCondition
-  | WorkflowGreaterThanCondition
-  | WorkflowLessThanCondition
-  | WorkflowAndCondition
-  | WorkflowOrCondition
-  | WorkflowNotCondition;
-
-export interface WorkflowIsEmptyCondition {
-  kind: 'isEmpty';
-  columnId: string;
-  treatWhitespaceAsEmpty: boolean;
-}
-
-export interface WorkflowEqualsCondition {
-  kind: 'equals';
-  columnId: string;
-  value: WorkflowNonNullScalar;
-}
-
-export interface WorkflowContainsCondition {
-  kind: 'contains';
-  columnId: string;
-  value: string;
-}
-
-export interface WorkflowStartsWithCondition {
-  kind: 'startsWith';
-  columnId: string;
-  value: string;
-}
-
-export interface WorkflowEndsWithCondition {
-  kind: 'endsWith';
-  columnId: string;
-  value: string;
-}
-
-export interface WorkflowMatchesRegexCondition {
-  kind: 'matchesRegex';
-  columnId: string;
-  pattern: string;
-}
-
-export interface WorkflowGreaterThanCondition {
-  kind: 'greaterThan';
-  columnId: string;
-  value: WorkflowNonNullScalar;
-}
-
-export interface WorkflowLessThanCondition {
-  kind: 'lessThan';
-  columnId: string;
-  value: WorkflowNonNullScalar;
-}
-
-export interface WorkflowAndCondition {
-  kind: 'and';
-  conditions: WorkflowCondition[];
-}
-
-export interface WorkflowOrCondition {
-  kind: 'or';
-  conditions: WorkflowCondition[];
-}
-
-export interface WorkflowNotCondition {
-  kind: 'not';
-  condition: WorkflowCondition;
-}
-
 export interface WorkflowScopedTransformStep {
   id: string;
   type: 'scopedTransform';
   columnIds: string[];
-  rowCondition?: WorkflowCondition;
+  rowCondition?: WorkflowExpression;
   expression: WorkflowExpression;
-  treatWhitespaceAsEmpty: boolean;
 }
 
 export interface WorkflowRenameColumnStep {
@@ -176,7 +110,7 @@ export interface WorkflowFilterRowsStep {
   id: string;
   type: 'filterRows';
   mode: 'keep' | 'drop';
-  condition: WorkflowCondition;
+  condition: WorkflowExpression;
 }
 
 export interface WorkflowSplitColumnStep {

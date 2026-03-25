@@ -3,7 +3,6 @@ export { cloneTable, executeValidatedWorkflow, summarizeWorkflowChanges, validat
 export { validateWorkflowStructure } from './structural';
 export type {
   Workflow,
-  WorkflowCondition,
   WorkflowExecutionResult,
   WorkflowExecutionWarning,
   WorkflowExpression,

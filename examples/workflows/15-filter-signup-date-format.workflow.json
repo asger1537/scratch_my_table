@@ -9,9 +9,18 @@
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "matchesRegex",
-        "columnId": "col_signup_date",
-        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        "kind": "call",
+        "name": "matchesRegex",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_signup_date"
+          },
+          {
+            "kind": "literal",
+            "value": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        ]
       }
     }
   ]

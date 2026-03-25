@@ -39,7 +39,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: call('lower', call('trim', value())),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -80,23 +79,12 @@ describe('block-based workflow authoring', () => {
         {
           kind: 'scopedTransform',
           columnIds: ['col_first_name', 'col_last_name'],
-          rowCondition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'startsWith',
-                columnId: 'col_first_name',
-                value: 'A',
-              },
-              {
-                kind: 'startsWith',
-                columnId: 'col_last_name',
-                value: 'A',
-              },
-            ],
-          },
+          rowCondition: call(
+            'and',
+            call('startsWith', column('col_first_name'), literal('A')),
+            call('startsWith', column('col_last_name'), literal('A')),
+          ),
           expression: call('substring', value(), literal(0), literal(3)),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -114,23 +102,12 @@ describe('block-based workflow authoring', () => {
           id: 'step_scoped_transform_1',
           type: 'scopedTransform',
           columnIds: ['col_first_name', 'col_last_name'],
-          rowCondition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'startsWith',
-                columnId: 'col_first_name',
-                value: 'A',
-              },
-              {
-                kind: 'startsWith',
-                columnId: 'col_last_name',
-                value: 'A',
-              },
-            ],
-          },
+          rowCondition: call(
+            'and',
+            call('startsWith', column('col_first_name'), literal('A')),
+            call('startsWith', column('col_last_name'), literal('A')),
+          ),
           expression: call('substring', value(), literal(0), literal(3)),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     });
@@ -147,7 +124,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_derive_display_name',
@@ -219,7 +195,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: coalesce(value(), column('col_customer_id')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -304,7 +279,7 @@ describe('block-based workflow authoring', () => {
     expect(roundtrip.workflow).toEqual(workflow);
   });
 
-  it('roundtrips matchesRegex conditions through Blockly blocks without semantic loss', () => {
+  it('roundtrips matchesRegex logic expressions through Blockly blocks without semantic loss', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_regex_roundtrip',
@@ -314,11 +289,7 @@ describe('block-based workflow authoring', () => {
           id: 'step_filter_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')),
         },
       ],
     };
@@ -328,7 +299,7 @@ describe('block-based workflow authoring', () => {
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
-    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.matchesRegexCondition);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.matchesRegexFunction);
   });
 
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
@@ -386,17 +357,12 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_drop_missing_email',
           type: 'filterRows',
           mode: 'drop',
-          condition: {
-            kind: 'isEmpty',
-            columnId: 'col_email',
-            treatWhitespaceAsEmpty: false,
-          },
+          condition: call('isEmpty', column('col_email')),
         },
       ],
     };
@@ -412,11 +378,11 @@ describe('block-based workflow authoring', () => {
     expect(run.executionResult).toEqual(expected);
   });
 
-  it('upgrades legacy workflow JSON on import and reconstructs equivalent block trees', () => {
-    const legacyJson = JSON.stringify({
+  it('rejects non-canonical workflow JSON versions on import', () => {
+    const unsupportedJson = JSON.stringify({
       version: 1,
-      workflowId: 'wf_legacy_fill',
-      name: 'Legacy fill',
+      workflowId: 'wf_unsupported_fill',
+      name: 'Unsupported fill',
       steps: [
         {
           id: 'step_fill_status',
@@ -431,30 +397,16 @@ describe('block-based workflow authoring', () => {
       ],
     });
 
-    const parsed = parseWorkflowJson(legacyJson);
+    const parsed = parseWorkflowJson(unsupportedJson);
 
-    expect(parsed.issues).toEqual([]);
-    expect(parsed.workflow).toEqual({
-      version: 2,
-      workflowId: 'wf_legacy_fill',
-      name: 'Legacy fill',
-      description: undefined,
-      steps: [
-        {
-          id: 'step_fill_status',
-          type: 'scopedTransform',
-          columnIds: ['col_status'],
-          expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
-        },
-      ],
-    });
-
-    const workspace = buildWorkspaceFromColumnIds(['col_status'], parsed.workflow!);
-    const roundtrip = workspaceToWorkflow(workspace);
-
-    expect(roundtrip.issues).toEqual([]);
-    expect(roundtrip.workflow).toEqual(parsed.workflow);
+    expect(parsed.workflow).toBeNull();
+    expect(parsed.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'schema.const',
+        }),
+      ]),
+    );
   });
 
   it('surfaces invalid editor blocks clearly when required inputs are missing', () => {
@@ -489,13 +441,13 @@ describe('block-based workflow authoring', () => {
     expect(json).not.toContain('sourceBlockId');
   });
 
-  it('defaults whitespace-empty handling to true in new editor blocks', () => {
+  it('uses expression-based logic blocks instead of legacy condition blocks', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
-    const isEmptyBlock = workspace.newBlock(BLOCK_TYPES.isEmptyCondition);
+    const isEmptyBlock = workspace.newBlock(BLOCK_TYPES.isEmptyFunction);
 
-    expect(transformBlock.getFieldValue('TREAT_WHITESPACE_AS_EMPTY')).toBe('TRUE');
-    expect(isEmptyBlock.getFieldValue('TREAT_WHITESPACE_AS_EMPTY')).toBe('TRUE');
+    expect(transformBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(isEmptyBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
   });
 
   it('exposes schema-aware explicit column IDs for multi-select fields', async () => {
@@ -527,7 +479,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['email_safe'],
           expression: coalesce(value(), literal('NA')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -620,14 +571,12 @@ function buildAllStepsWorkflow(): Workflow {
         type: 'scopedTransform',
         columnIds: ['col_status'],
         expression: coalesce(value(), literal('unknown')),
-        treatWhitespaceAsEmpty: true,
       },
       {
         id: 'step_normalize_text',
         type: 'scopedTransform',
         columnIds: ['col_email', 'col_city'],
         expression: call('lower', call('collapseWhitespace', call('trim', value()))),
-        treatWhitespaceAsEmpty: false,
       },
       {
         id: 'step_drop_columns',
@@ -657,24 +606,11 @@ function buildAllStepsWorkflow(): Workflow {
         id: 'step_filter_rows',
         type: 'filterRows',
         mode: 'keep',
-        condition: {
-          kind: 'and',
-          conditions: [
-            {
-              kind: 'not',
-              condition: {
-                kind: 'isEmpty',
-                columnId: 'col_email',
-                treatWhitespaceAsEmpty: false,
-              },
-            },
-            {
-              kind: 'contains',
-              columnId: 'col_email',
-              value: '@',
-            },
-          ],
-        },
+        condition: call(
+          'and',
+          call('not', call('isEmpty', column('col_email'))),
+          call('contains', column('col_email'), literal('@')),
+        ),
       },
       {
         id: 'step_split_name',
@@ -756,7 +692,29 @@ function column(columnId: string): WorkflowExpression {
 }
 
 function call(
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'substring' | 'replace' | 'split' | 'first' | 'last' | 'coalesce' | 'concat',
+  name:
+    | 'trim'
+    | 'lower'
+    | 'upper'
+    | 'collapseWhitespace'
+    | 'substring'
+    | 'replace'
+    | 'split'
+    | 'first'
+    | 'last'
+    | 'coalesce'
+    | 'concat'
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'matchesRegex'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'and'
+    | 'or'
+    | 'not'
+    | 'isEmpty',
   ...args: WorkflowExpression[]
 ): WorkflowExpression {
   return {

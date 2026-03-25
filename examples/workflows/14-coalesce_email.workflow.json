@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "workflowId": "wf_customers_messy",
-  "name": "Customers Messy",
+  "workflowId": "wf_fill_email_from_customer_id",
+  "name": "Fill missing email from customer ID",
   "steps": [
     {
       "id": "step_scoped_transform_1",
@@ -14,31 +14,47 @@
         "name": "coalesce",
         "args": [
           {
-            "kind": "value"
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
           },
           {
             "kind": "column",
-            "columnId": "col_email_2"
+            "columnId": "col_customer_id"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     },
     {
       "id": "step_filterrows_2",
       "type": "filterRows",
       "mode": "drop",
       "condition": {
-        "kind": "isEmpty",
-        "columnId": "col_email",
-        "treatWhitespaceAsEmpty": true
+        "kind": "call",
+        "name": "isEmpty",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_email"
+              }
+            ]
+          }
+        ]
       }
     },
     {
       "id": "step_dropcolumns_3",
       "type": "dropColumns",
       "columnIds": [
-        "col_email_2"
+        "col_customer_id"
       ]
     }
   ]

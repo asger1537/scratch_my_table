@@ -2,30 +2,30 @@
 
 ## Design Rules
 
-Workflow IR v2 remains intentionally small.
+Workflow IR v2 is the single current workflow format.
 
 Rules:
 
-- `version` is required from day one and is now `2`.
+- `version` is required and always `2`.
 - A workflow is an ordered list of explicit tabular operations.
 - Steps execute top to bottom.
 - Later steps see schema changes made by earlier valid steps.
-- Persisted workflows never refer to transient UI state such as “currently selected columns”.
-- The IR is editor-agnostic. Blockly is an authoring view over this JSON, not the source of truth.
-- The IR does not contain loops, arbitrary variables, user-defined functions, or general control flow.
+- Persisted workflows never refer to transient UI state.
+- The IR is editor-agnostic. Blockly is only an authoring view.
+- The IR does not contain loops, arbitrary variables, or user-defined functions.
 
 ## Workflow Object
 
 Required fields:
 
-- `version`: integer, always `2`
-- `workflowId`: stable workflow identifier
-- `name`: human-readable workflow name
-- `steps`: ordered list of workflow steps
+- `version`
+- `workflowId`
+- `name`
+- `steps`
 
 Optional fields:
 
-- `description`: human-readable workflow description
+- `description`
 
 Example:
 
@@ -41,12 +41,12 @@ Example:
 
 ## Step Object
 
-Every workflow step has:
+Every step has:
 
-- `id`: stable step identifier unique within the workflow
-- `type`: one of the v2 step types below
+- `id`
+- `type`
 
-Workflow IR v2 step types:
+Step types:
 
 - `scopedTransform`
 - `dropColumns`
@@ -61,7 +61,7 @@ Workflow IR v2 step types:
 V1 capability mapping:
 
 - fill empty cells: `scopedTransform` with `coalesce(value, <literal>)`
-- trim / normalize text: `scopedTransform` with built-in function composition such as `lower(trim(value))`
+- trim / normalize text: `scopedTransform` with built-in string calls such as `lower(trim(value))`
 - drop columns: `dropColumns`
 - rename columns: `renameColumn`
 - create a derived column: `deriveColumn`
@@ -73,7 +73,7 @@ V1 capability mapping:
 
 ## Expression Object
 
-`scopedTransform` and `deriveColumn` use the same expression AST.
+Workflow IR v2 uses one shared expression AST for both cell transforms and logical checks.
 
 Expression kinds:
 
@@ -84,24 +84,16 @@ Expression kinds:
 
 Rules:
 
-- `value` means the current selected cell value and is only valid inside `scopedTransform`.
+- `value` means the current selected cell and is valid only inside `scopedTransform.expression`.
 - `literal` returns a scalar value.
-- `column` reads one existing column by `columnId` from the current row and is valid inside both `deriveColumn` and `scopedTransform`.
+- `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
 
-Built-in function names:
+Built-in call names:
 
-- `trim`
-- `lower`
-- `upper`
-- `collapseWhitespace`
-- `substring`
-- `replace`
-- `split`
-- `first`
-- `last`
-- `coalesce`
-- `concat`
+- string / text: `trim`, `lower`, `upper`, `collapseWhitespace`, `substring`, `replace`
+- list / utility: `split`, `first`, `last`, `coalesce`, `concat`
+- logic: `isEmpty`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `and`, `or`, `not`
 
 Examples:
 
@@ -143,50 +135,38 @@ Examples:
 }
 ```
 
-## Condition Object
-
-`filterRows` and `scopedTransform.rowCondition` use the same recursive condition tree.
-
-Leaf conditions:
-
-- `isEmpty`
-- `equals`
-- `contains`
-- `startsWith`
-- `endsWith`
-- `matchesRegex`
-- `greaterThan`
-- `lessThan`
-
-Boolean combinators:
-
-- `and`
-- `or`
-- `not`
-
-Examples:
-
 ```json
 {
-  "kind": "isEmpty",
-  "columnId": "col_email",
-  "treatWhitespaceAsEmpty": true
-}
-```
-
-```json
-{
-  "kind": "and",
-  "conditions": [
+  "kind": "call",
+  "name": "and",
+  "args": [
     {
-      "kind": "startsWith",
-      "columnId": "col_first_name",
-      "value": "A"
+      "kind": "call",
+      "name": "startsWith",
+      "args": [
+        {
+          "kind": "column",
+          "columnId": "col_first_name"
+        },
+        {
+          "kind": "literal",
+          "value": "A"
+        }
+      ]
     },
     {
-      "kind": "startsWith",
-      "columnId": "col_last_name",
-      "value": "A"
+      "kind": "call",
+      "name": "startsWith",
+      "args": [
+        {
+          "kind": "column",
+          "columnId": "col_last_name"
+        },
+        {
+          "kind": "literal",
+          "value": "A"
+        }
+      ]
     }
   ]
 }
@@ -194,42 +174,41 @@ Examples:
 
 ## Validation Error Object
 
-Semantic validation returns structured errors; this object is not part of the persisted workflow itself.
+Semantic validation returns structured errors; this object is not persisted in the workflow itself.
 
 Required fields:
 
-- `code`: stable machine-readable code such as `missingColumn` or `incompatibleType`
-- `severity`: `error` or `warning`
-- `message`: human-readable explanation
-- `path`: JSON-style location such as `steps[2].expression.args[0]`
-- `phase`: `structural` or `semantic`
+- `code`
+- `severity`
+- `message`
+- `path`
+- `phase`
 
 Optional fields:
 
-- `stepId`: the offending workflow step
-- `details`: machine-readable context payload
+- `stepId`
+- `details`
 
 ## Step Definitions
 
 ### `scopedTransform`
 
-Applies one expression to one or more selected columns, optionally only on rows matching a condition.
+Applies one expression to one or more selected columns, optionally only on rows matching a boolean expression.
 
 Fields:
 
 - `columnIds`
 - `rowCondition` optional
 - `expression`
-- `treatWhitespaceAsEmpty`
 
 Rules:
 
 - the expression is evaluated once per selected cell
-- `value` means the current cell value
-- `column` may read another column from the current row while the step is being applied
+- `value` means the current selected cell value
+- `column` may read another column from the current row
 - if `rowCondition` is omitted, all rows are eligible
-- `treatWhitespaceAsEmpty` affects `coalesce` emptiness checks inside the step
-- authoring defaults `treatWhitespaceAsEmpty` to `true`; workflows may still explicitly disable it
+- `rowCondition` must resolve to a boolean value
+- whitespace-sensitive logic is expressed explicitly with functions such as `trim(...)`
 
 Example:
 
@@ -255,12 +234,19 @@ Example:
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     }
   ]
 }
 ```
+
+### `dropColumns`
+
+Drops one or more existing columns from the active table.
+
+Fields:
+
+- `columnIds`
 
 ### `renameColumn`
 
@@ -271,37 +257,6 @@ Fields:
 - `columnId`
 - `newDisplayName`
 
-### `dropColumns`
-
-Drops one or more existing columns from the active table.
-
-Fields:
-
-- `columnIds`
-
-Rules:
-
-- every referenced `columnId` must exist at that step
-- at least one column must be selected
-- the step must leave at least one column in the table
-
-Example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_drop_internal_columns",
-  "name": "Drop internal columns",
-  "steps": [
-    {
-      "id": "step_drop_internal_columns",
-      "type": "dropColumns",
-      "columnIds": ["col_notes", "col_internal_flag"]
-    }
-  ]
-}
-```
-
 ### `deriveColumn`
 
 Creates one new column from an expression.
@@ -309,8 +264,6 @@ Creates one new column from an expression.
 Fields:
 
 - `newColumn`
-  - `columnId`
-  - `displayName`
 - `expression`
 
 Rules:
@@ -318,55 +271,22 @@ Rules:
 - `column` references are valid here
 - `value` is not valid here
 - the authoring UI may present this as `create new column`
-- authoring may initialize the new column as blank by compiling to `{"kind":"literal","value":null}`
-- authoring may initialize the new column by copying another column by compiling to `{"kind":"column","columnId":"..."}` 
-
-Example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_derive_full_name",
-  "name": "Create full name",
-  "steps": [
-    {
-      "id": "step_derive_full_name",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_full_name",
-        "displayName": "full_name"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
-            "kind": "column",
-            "columnId": "col_first_name"
-          },
-          {
-            "kind": "literal",
-            "value": " "
-          },
-          {
-            "kind": "column",
-            "columnId": "col_last_name"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
+- blank initialization compiles to `{"kind":"literal","value":null}`
+- copy-column initialization compiles to `{"kind":"column","columnId":"..."}`
 
 ### `filterRows`
 
-Keeps or drops rows based on a condition.
+Keeps or drops rows based on a boolean expression.
 
 Fields:
 
-- `mode`: `keep` or `drop`
+- `mode`
 - `condition`
+
+Rules:
+
+- `condition` uses the same expression AST as every other logical check
+- `condition` must resolve to a boolean value
 
 ### `splitColumn`
 
@@ -377,8 +297,6 @@ Fields:
 - `columnId`
 - `delimiter`
 - `outputColumns`
-  - `columnId`
-  - `displayName`
 
 ### `combineColumns`
 
@@ -389,8 +307,6 @@ Fields:
 - `columnIds`
 - `separator`
 - `newColumn`
-  - `columnId`
-  - `displayName`
 
 ### `deduplicateRows`
 
@@ -407,5 +323,3 @@ Sorts rows using one or more sort keys.
 Fields:
 
 - `sorts`
-  - `columnId`
-  - `direction`: `asc` or `desc`

@@ -139,12 +139,12 @@
             },
             "name": {
               "type": "string",
-              "const": "substring"
+              "enum": ["isEmpty", "not"]
             },
             "args": {
               "type": "array",
-              "minItems": 3,
-              "maxItems": 3,
+              "minItems": 1,
+              "maxItems": 1,
               "items": {
                 "$ref": "#/$defs/expression"
               }
@@ -162,12 +162,57 @@
             },
             "name": {
               "type": "string",
-              "const": "split"
+              "enum": ["split", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan"]
             },
             "args": {
               "type": "array",
               "minItems": 2,
               "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
+              "enum": ["and", "or", "concat"]
+            },
+            "args": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
+              "const": "substring"
+            },
+            "args": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
               "items": {
                 "$ref": "#/$defs/expression"
               }
@@ -196,241 +241,6 @@
               }
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "name", "args"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "call"
-            },
-            "name": {
-              "type": "string",
-              "const": "coalesce"
-            },
-            "args": {
-              "type": "array",
-              "minItems": 2,
-              "maxItems": 2,
-              "items": {
-                "$ref": "#/$defs/expression"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "name", "args"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "call"
-            },
-            "name": {
-              "type": "string",
-              "const": "concat"
-            },
-            "args": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "$ref": "#/$defs/expression"
-              }
-            }
-          }
-        }
-      ]
-    },
-    "condition": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "treatWhitespaceAsEmpty"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "isEmpty"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "treatWhitespaceAsEmpty": {
-              "type": "boolean"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "equals"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "pattern"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "matchesRegex"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "pattern": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "contains"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "startsWith"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "endsWith"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "greaterThan"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "lessThan"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "conditions"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "and"
-            },
-            "conditions": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "$ref": "#/$defs/condition"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "conditions"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "or"
-            },
-            "conditions": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "$ref": "#/$defs/condition"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "condition"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "not"
-            },
-            "condition": {
-              "$ref": "#/$defs/condition"
-            }
-          }
         }
       ]
     },
@@ -453,7 +263,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "type", "columnIds", "expression", "treatWhitespaceAsEmpty"],
+          "required": ["id", "type", "columnIds", "expression"],
           "properties": {
             "id": {
               "$ref": "#/$defs/id"
@@ -466,13 +276,10 @@
               "$ref": "#/$defs/columnIds"
             },
             "rowCondition": {
-              "$ref": "#/$defs/condition"
+              "$ref": "#/$defs/expression"
             },
             "expression": {
               "$ref": "#/$defs/expression"
-            },
-            "treatWhitespaceAsEmpty": {
-              "type": "boolean"
             }
           }
         },
@@ -550,7 +357,7 @@
               "enum": ["keep", "drop"]
             },
             "condition": {
-              "$ref": "#/$defs/condition"
+              "$ref": "#/$defs/expression"
             }
           }
         },

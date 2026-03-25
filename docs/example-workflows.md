@@ -10,7 +10,7 @@ Description:
 
 Intended effect:
 
-- Rows with `null`, `""`, or whitespace-only status become `unknown`.
+- Rows with `null` or `""` status become `unknown`.
 
 IR example:
 
@@ -36,8 +36,7 @@ IR example:
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     }
   ]
 }
@@ -79,8 +78,7 @@ IR example:
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     }
   ]
 }
@@ -170,7 +168,7 @@ Description:
 
 Intended effect:
 
-- Any row whose `email` cell is empty or whitespace-only is dropped from the output table.
+- Any row whose trimmed `email` cell is empty is dropped from the output table.
 
 IR example:
 
@@ -185,12 +183,26 @@ IR example:
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "not",
-        "condition": {
-          "kind": "isEmpty",
-          "columnId": "col_email",
-          "treatWhitespaceAsEmpty": true
-        }
+        "kind": "call",
+        "name": "not",
+        "args": [
+          {
+            "kind": "call",
+            "name": "isEmpty",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_email"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     }
   ]
@@ -220,17 +232,36 @@ IR example:
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "and",
-        "conditions": [
+        "kind": "call",
+        "name": "and",
+        "args": [
           {
-            "kind": "greaterThan",
-            "columnId": "col_order_total",
-            "value": 100
+            "kind": "call",
+            "name": "greaterThan",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_total"
+              },
+              {
+                "kind": "literal",
+                "value": 100
+              }
+            ]
           },
           {
-            "kind": "equals",
-            "columnId": "col_order_status",
-            "value": "paid"
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_status"
+              },
+              {
+                "kind": "literal",
+                "value": "paid"
+              }
+            ]
           }
         ]
       }
@@ -409,8 +440,7 @@ IR example:
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     },
     {
       "id": "step_normalize_name",
@@ -430,8 +460,7 @@ IR example:
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     },
     {
       "id": "step_fill_status",
@@ -449,8 +478,7 @@ IR example:
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     },
     {
       "id": "step_location",
@@ -467,9 +495,20 @@ IR example:
       "type": "filterRows",
       "mode": "drop",
       "condition": {
-        "kind": "isEmpty",
-        "columnId": "col_email",
-        "treatWhitespaceAsEmpty": true
+        "kind": "call",
+        "name": "isEmpty",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_email"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -636,15 +675,20 @@ IR example:
         "name": "coalesce",
         "args": [
           {
-            "kind": "value"
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
           },
           {
             "kind": "column",
             "columnId": "col_customer_id"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     }
   ]
 }
@@ -674,9 +718,100 @@ IR example:
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "matchesRegex",
-        "columnId": "col_signup_date",
-        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        "kind": "call",
+        "name": "matchesRegex",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_signup_date"
+          },
+          {
+            "kind": "literal",
+            "value": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## 16. Keep High-Value Orders That Are Paid or Shipped
+
+Description:
+
+- Keep only orders above a value threshold when the status is either `paid` or `shipped`.
+
+Intended effect:
+
+- Rows remain only when `order_total > 100` and `order_status` is one of two accepted values.
+- This example demonstrates boolean composition with `and(...)`, `or(...)`, and `greaterThan(...)`.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_high_value_paid_or_shipped",
+  "name": "Keep high-value paid or shipped orders",
+  "steps": [
+    {
+      "id": "step_keep_high_value_paid_or_shipped",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "call",
+        "name": "and",
+        "args": [
+          {
+            "kind": "call",
+            "name": "greaterThan",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_total"
+              },
+              {
+                "kind": "literal",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "or",
+            "args": [
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_order_status"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "paid"
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_order_status"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "shipped"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     }
   ]

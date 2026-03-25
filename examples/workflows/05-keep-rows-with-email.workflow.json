@@ -8,12 +8,26 @@
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "not",
-        "condition": {
-          "kind": "isEmpty",
-          "columnId": "col_email",
-          "treatWhitespaceAsEmpty": true
-        }
+        "kind": "call",
+        "name": "not",
+        "args": [
+          {
+            "kind": "call",
+            "name": "isEmpty",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_email"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     }
   ]

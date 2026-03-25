@@ -12,7 +12,6 @@ import type {
   Workflow,
   WorkflowCallExpression,
   WorkflowCombineColumnsStep,
-  WorkflowCondition,
   WorkflowDeduplicateRowsStep,
   WorkflowExecutionWarning,
   WorkflowExpression,
@@ -40,15 +39,14 @@ interface WorkflowChangeSummary {
 }
 
 interface ExpressionContext {
-  scope: 'scopedTransform' | 'deriveColumn';
+  scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
   valueLogicalType?: LogicalType;
 }
 
 interface ExpressionExecutionContext {
-  scope: 'scopedTransform' | 'deriveColumn';
+  scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
   row: TableRow;
   currentValue: CellValue;
-  treatWhitespaceAsEmpty: boolean;
 }
 
 type ExpressionRuntimeValue = CellValue | string[];
@@ -216,7 +214,7 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
   validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
 
   if (step.rowCondition) {
-    issues.push(...validateCondition(step.rowCondition, table, `${basePath}.rowCondition`, step.id));
+    issues.push(...validateBooleanExpression(step.rowCondition, table, `${basePath}.rowCondition`, step.id));
   }
 
   columns.forEach((column, columnIndex) => {
@@ -253,18 +251,6 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
           `Scoped transform expression in step '${step.id}' must resolve to a scalar cell value.`,
           `${basePath}.expression`,
           step.id,
-        ),
-      );
-    }
-
-    if (step.treatWhitespaceAsEmpty && !isStringLikeType(column.logicalType) && expressionUsesCoalesce(step.expression)) {
-      issues.push(
-        makeIssue(
-          'incompatibleType',
-          `Whitespace-only empty matching is only valid for string or unknown columns, but '${column.columnId}' is '${column.logicalType}'.`,
-          `${basePath}.treatWhitespaceAsEmpty`,
-          step.id,
-          { columnId: column.columnId, logicalType: column.logicalType },
         ),
       );
     }
@@ -359,7 +345,7 @@ function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveCol
 }
 
 function validateFilterRowsStep(step: Extract<WorkflowStep, { type: 'filterRows' }>, table: Table, basePath: string) {
-  return validateCondition(step.condition, table, `${basePath}.condition`, step.id);
+  return validateBooleanExpression(step.condition, table, `${basePath}.condition`, step.id);
 }
 
 function validateSplitColumnStep(step: Extract<WorkflowStep, { type: 'splitColumn' }>, table: Table, basePath: string) {
@@ -528,6 +514,23 @@ function validateExpression(
         issues: [makeIssue('invalidExpression', `Unsupported expression kind in step '${stepId}'.`, path, stepId)],
       };
   }
+}
+
+function validateBooleanExpression(expression: WorkflowExpression, table: Table, path: string, stepId: string) {
+  const result = validateExpression(expression, table, path, stepId, {
+    scope: 'predicate',
+  });
+  const issues = [...result.issues];
+
+  if (result.valueKind !== 'scalar') {
+    issues.push(makeIssue('invalidExpression', 'Logical expression must resolve to a scalar boolean value.', path, stepId));
+  }
+
+  if (result.logicalType !== 'boolean' && result.logicalType !== 'unknown') {
+    issues.push(makeIssue('incompatibleType', 'Logical expression must resolve to a boolean.', path, stepId));
+  }
+
+  return issues;
 }
 
 function validateCallExpression(
@@ -719,6 +722,122 @@ function validateCallExpression(
         valueKind: 'scalar',
         issues,
       };
+    case 'isEmpty': {
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function 'isEmpty' requires exactly one argument.`, path, stepId));
+      }
+
+      if (results[0]?.valueKind !== 'scalar') {
+        issues.push(makeIssue('invalidExpression', `Function 'isEmpty' only accepts scalar inputs.`, `${path}.args[0]`, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'not': {
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function 'not' requires exactly one argument.`, path, stepId));
+      }
+
+      if (results[0]?.valueKind !== 'scalar' || !isBooleanLikeType(results[0]?.logicalType ?? 'unknown')) {
+        issues.push(makeIssue('incompatibleType', `Function 'not' requires a boolean input.`, `${path}.args[0]`, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'and':
+    case 'or': {
+      if (results.length < 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires at least two arguments.`, path, stepId));
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isBooleanLikeType(result.logicalType)) {
+          issues.push(makeIssue('incompatibleType', `Function '${expression.name}' requires boolean inputs.`, `${path}.args[${index}]`, stepId));
+        }
+      });
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'equals': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'equals' requires exactly two arguments.`, path, stepId));
+      }
+
+      if (results.some((result) => result.valueKind !== 'scalar')) {
+        issues.push(makeIssue('invalidExpression', `Function 'equals' only accepts scalar inputs.`, path, stepId));
+      }
+
+      if (!areComparableEqualityTypes(results[0]?.logicalType ?? 'unknown', results[1]?.logicalType ?? 'unknown')) {
+        issues.push(makeIssue('incompatibleType', `Function 'equals' requires comparable scalar inputs.`, path, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'greaterThan':
+    case 'lessThan': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly two arguments.`, path, stepId));
+      }
+
+      if (results.some((result) => result.valueKind !== 'scalar')) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' only accepts scalar inputs.`, path, stepId));
+      }
+
+      if (!areComparableOrderingTypes(results[0]?.logicalType ?? 'unknown', results[1]?.logicalType ?? 'unknown')) {
+        issues.push(makeIssue('incompatibleType', `Function '${expression.name}' requires comparable ordered inputs.`, path, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'contains':
+    case 'startsWith':
+    case 'endsWith':
+    case 'matchesRegex': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly two arguments.`, path, stepId));
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isStringLikeType(result.logicalType)) {
+          issues.push(makeIssue('incompatibleType', `Function '${expression.name}' requires string inputs.`, `${path}.args[${index}]`, stepId));
+        }
+      });
+
+      if (
+        expression.name === 'matchesRegex'
+        && expression.args[1]?.kind === 'literal'
+        && typeof expression.args[1].value === 'string'
+        && !isValidRegexPattern(expression.args[1].value)
+      ) {
+        issues.push(makeIssue('invalidRegex', `Regular expression '${expression.args[1].value}' is invalid.`, `${path}.args[1]`, stepId, { pattern: expression.args[1].value }));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
     default:
       return {
         logicalType: 'unknown',
@@ -726,149 +845,6 @@ function validateCallExpression(
         issues: [...issues, makeIssue('invalidExpression', `Unsupported function '${expression.name}' in step '${stepId}'.`, path, stepId)],
       };
   }
-}
-
-function validateCondition(condition: WorkflowCondition, table: Table, path: string, stepId: string): WorkflowValidationIssue[] {
-  switch (condition.kind) {
-    case 'isEmpty':
-      return validateColumnCondition(condition.columnId, table, `${path}.columnId`, stepId);
-    case 'equals': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (column.logicalType === 'mixed') {
-        return [makeIssue('incompatibleType', `Column '${condition.columnId}' has type 'mixed' and cannot be compared with equals.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isEqualsLiteralCompatible(condition.value, column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Literal value is incompatible with column '${condition.columnId}' of type '${column.logicalType}'.`,
-            `${path}.value`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, value: condition.value },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'contains':
-    case 'startsWith':
-    case 'endsWith': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isStringLikeType(column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use string comparator '${condition.kind}'.`,
-            `${path}.columnId`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'matchesRegex': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isStringLikeType(column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use regex matching.`,
-            `${path}.columnId`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
-          ),
-        ];
-      }
-
-      if (!isValidRegexPattern(condition.pattern)) {
-        return [
-          makeIssue(
-            'invalidRegex',
-            `Regular expression '${condition.pattern}' is invalid.`,
-            `${path}.pattern`,
-            stepId,
-            { pattern: condition.pattern },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'greaterThan':
-    case 'lessThan': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isOrderingType(column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use comparator '${condition.kind}'.`,
-            `${path}.columnId`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
-          ),
-        ];
-      }
-
-      if (!isOrderingLiteralCompatible(condition.value, column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Literal value is incompatible with ordering comparator '${condition.kind}' on column '${condition.columnId}'.`,
-            `${path}.value`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, value: condition.value },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'and':
-    case 'or':
-      if (condition.conditions.length < 2) {
-        return [makeIssue('invalidCondition', `Condition '${condition.kind}' in step '${stepId}' requires at least two child conditions.`, path, stepId)];
-      }
-
-      return condition.conditions.flatMap((child, index) => validateCondition(child, table, `${path}.conditions[${index}]`, stepId));
-    case 'not':
-      return validateCondition(condition.condition, table, `${path}.condition`, stepId);
-    default:
-      return [makeIssue('invalidCondition', `Unsupported condition kind in step '${stepId}'.`, path, stepId)];
-  }
-}
-
-function validateColumnCondition(columnId: string, table: Table, path: string, stepId: string) {
-  const column = findColumn(table, columnId);
-
-  if (!column) {
-    return [makeIssue('missingColumn', `Column '${columnId}' does not exist at step '${stepId}'.`, path, stepId, { columnId })];
-  }
-
-  return [];
 }
 
 function resolveColumnIds(
@@ -1011,7 +987,14 @@ function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep): WorkflowS
 
 function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformStep): WorkflowStepApplyResult {
   const rowsById = mapRows(table, (row) => {
-    if (step.rowCondition && !evaluateCondition(step.rowCondition, row)) {
+    if (
+      step.rowCondition
+      && !Boolean(evaluateExpression(step.rowCondition, {
+        scope: 'predicate',
+        row,
+        currentValue: null,
+      }))
+    ) {
       return {
         rowId: row.rowId,
         cellsByColumnId: { ...row.cellsByColumnId },
@@ -1026,7 +1009,6 @@ function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformSte
         scope: 'scopedTransform',
         row,
         currentValue,
-        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
       }));
 
       cellsByColumnId[columnId] = nextValue;
@@ -1111,7 +1093,6 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
         scope: 'deriveColumn',
         row,
         currentValue: null,
-        treatWhitespaceAsEmpty: false,
       })),
     },
   }));
@@ -1133,7 +1114,11 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
 function applyFilterRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'filterRows' }>): WorkflowStepApplyResult {
   const keptRowIds = table.rowOrder.filter((rowId) => {
     const row = table.rowsById[rowId];
-    const matches = evaluateCondition(step.condition, row);
+    const matches = Boolean(evaluateExpression(step.condition, {
+      scope: 'predicate',
+      row,
+      currentValue: null,
+    }));
 
     return step.mode === 'keep' ? matches : !matches;
   });
@@ -1398,7 +1383,7 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
     case 'coalesce': {
       const first = evaluateExpression(expression.args[0], context);
 
-      if (Array.isArray(first) || !shouldTreatAsEmptyForCoalesce(first, context.treatWhitespaceAsEmpty)) {
+      if (Array.isArray(first) || !isEmptyValue(first)) {
         return first;
       }
 
@@ -1409,54 +1394,62 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
         .map((argument) => evaluateExpression(argument, context))
         .map((value) => (Array.isArray(value) || value === null ? '' : String(value)))
         .join('');
-    default:
-      return null;
-  }
-}
-
-function evaluateCondition(condition: WorkflowCondition, row: TableRow): boolean {
-  switch (condition.kind) {
-    case 'isEmpty':
-      return shouldTreatAsEmpty(row.cellsByColumnId[condition.columnId] ?? null, condition.treatWhitespaceAsEmpty);
-    case 'equals':
-      return Object.is(row.cellsByColumnId[condition.columnId] ?? null, condition.value);
+    case 'isEmpty': {
+      const value = evaluateExpression(expression.args[0], context);
+      return !Array.isArray(value) && isEmptyValue(value);
+    }
+    case 'not':
+      return !Boolean(evaluateExpression(expression.args[0], context));
+    case 'and':
+      return expression.args.every((argument) => Boolean(evaluateExpression(argument, context)));
+    case 'or':
+      return expression.args.some((argument) => Boolean(evaluateExpression(argument, context)));
+    case 'equals': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return !Array.isArray(left) && !Array.isArray(right) && Object.is(left, right);
+    }
+    case 'greaterThan': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return !Array.isArray(left) && !Array.isArray(right) && compareExpressionValues(left, right) > 0;
+    }
+    case 'lessThan': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return !Array.isArray(left) && !Array.isArray(right) && compareExpressionValues(left, right) < 0;
+    }
     case 'contains': {
-      const value = row.cellsByColumnId[condition.columnId];
-      return typeof value === 'string' ? value.includes(condition.value) : false;
+      const value = evaluateExpression(expression.args[0], context);
+      const search = evaluateExpression(expression.args[1], context);
+      return typeof value === 'string' && typeof search === 'string' ? value.includes(search) : false;
     }
     case 'startsWith': {
-      const value = row.cellsByColumnId[condition.columnId];
-      return typeof value === 'string' ? value.startsWith(condition.value) : false;
+      const value = evaluateExpression(expression.args[0], context);
+      const search = evaluateExpression(expression.args[1], context);
+      return typeof value === 'string' && typeof search === 'string' ? value.startsWith(search) : false;
     }
     case 'endsWith': {
-      const value = row.cellsByColumnId[condition.columnId];
-      return typeof value === 'string' ? value.endsWith(condition.value) : false;
+      const value = evaluateExpression(expression.args[0], context);
+      const search = evaluateExpression(expression.args[1], context);
+      return typeof value === 'string' && typeof search === 'string' ? value.endsWith(search) : false;
     }
     case 'matchesRegex': {
-      const value = row.cellsByColumnId[condition.columnId];
+      const value = evaluateExpression(expression.args[0], context);
+      const pattern = evaluateExpression(expression.args[1], context);
 
-      if (typeof value !== 'string') {
+      if (typeof value !== 'string' || typeof pattern !== 'string') {
         return false;
       }
 
       try {
-        return new RegExp(condition.pattern).test(value);
+        return new RegExp(pattern).test(value);
       } catch {
         return false;
       }
     }
-    case 'greaterThan':
-      return compareConditionValues(row.cellsByColumnId[condition.columnId] ?? null, condition.value) > 0;
-    case 'lessThan':
-      return compareConditionValues(row.cellsByColumnId[condition.columnId] ?? null, condition.value) < 0;
-    case 'and':
-      return condition.conditions.every((child) => evaluateCondition(child, row));
-    case 'or':
-      return condition.conditions.some((child) => evaluateCondition(child, row));
-    case 'not':
-      return !evaluateCondition(condition.condition, row);
     default:
-      return false;
+      return null;
   }
 }
 
@@ -1530,16 +1523,8 @@ function getDisplayNameKey(displayName: string) {
   return normalizeWorkflowDisplayName(displayName).toLocaleLowerCase();
 }
 
-function shouldTreatAsEmpty(value: CellValue, treatWhitespaceAsEmpty: boolean) {
-  if (value === null || value === '') {
-    return true;
-  }
-
-  return treatWhitespaceAsEmpty && typeof value === 'string' && value.trim() === '';
-}
-
-function shouldTreatAsEmptyForCoalesce(value: CellValue, treatWhitespaceAsEmpty: boolean) {
-  return shouldTreatAsEmpty(value, treatWhitespaceAsEmpty);
+function isEmptyValue(value: CellValue) {
+  return value === null || value === '';
 }
 
 function isValidRegexPattern(pattern: string) {
@@ -1591,43 +1576,7 @@ function inferLiteralLogicalType(value: CellValue): LogicalType {
   return 'string';
 }
 
-function isEqualsLiteralCompatible(value: CellValue, logicalType: LogicalType) {
-  switch (logicalType) {
-    case 'unknown':
-      return value !== null;
-    case 'string':
-      return typeof value === 'string';
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'boolean':
-      return typeof value === 'boolean';
-    case 'date':
-      return typeof value === 'string' && isIsoDate(value);
-    case 'datetime':
-      return typeof value === 'string' && isIsoDateTime(value);
-    case 'mixed':
-      return false;
-    default:
-      return false;
-  }
-}
-
-function isOrderingLiteralCompatible(value: CellValue, logicalType: LogicalType) {
-  switch (logicalType) {
-    case 'unknown':
-      return (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && (isIsoDate(value) || isIsoDateTime(value)));
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'date':
-      return typeof value === 'string' && isIsoDate(value);
-    case 'datetime':
-      return typeof value === 'string' && isIsoDateTime(value);
-    default:
-      return false;
-  }
-}
-
-function compareConditionValues(left: CellValue, right: CellValue) {
+function compareExpressionValues(left: CellValue, right: CellValue) {
   if (left === null) {
     return -1;
   }
@@ -1671,16 +1620,36 @@ function compareSortValues(left: CellValue, right: CellValue, logicalType: Logic
   }
 }
 
-function expressionUsesCoalesce(expression: WorkflowExpression): boolean {
-  if (expression.kind === 'call' && expression.name === 'coalesce') {
-    return true;
-  }
+function isBooleanLikeType(logicalType: LogicalType) {
+  return logicalType === 'boolean' || logicalType === 'unknown';
+}
 
-  if (expression.kind !== 'call') {
+function areComparableEqualityTypes(left: LogicalType, right: LogicalType) {
+  if (left === 'mixed' || right === 'mixed') {
     return false;
   }
 
-  return expression.args.some((argument) => expressionUsesCoalesce(argument));
+  const concreteTypes = new Set([left, right].filter((logicalType) => logicalType !== 'unknown'));
+  return concreteTypes.size <= 1;
+}
+
+function areComparableOrderingTypes(left: LogicalType, right: LogicalType) {
+  if (!isOrderingType(left) || !isOrderingType(right)) {
+    return false;
+  }
+
+  const concreteTypes = new Set([left, right].filter((logicalType) => logicalType !== 'unknown'));
+
+  if (concreteTypes.size === 0) {
+    return true;
+  }
+
+  if (concreteTypes.size > 1) {
+    return false;
+  }
+
+  const [logicalType] = [...concreteTypes];
+  return logicalType === 'number' || logicalType === 'date' || logicalType === 'datetime';
 }
 
 function makeIssue(

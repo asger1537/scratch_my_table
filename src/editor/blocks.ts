@@ -8,7 +8,7 @@ const TABLE_OPERATION_COLOR = '#8c3a18';
 const SUPPORT_COLOR = '#6b6a5c';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
-const CONDITION_COLOR = '#355070';
+const LOGIC_COLOR = '#355070';
 const CREATE_COLUMN_INPUT_NAMES = {
   mode: 'CREATE_MODE',
   copySource: 'COPY_COLUMN_ID',
@@ -42,7 +42,6 @@ export const BLOCK_TYPES = {
   sortRowsStep: 'sort_rows_step',
   outputColumnItem: 'output_column_item',
   sortItem: 'sort_item',
-  conditionItem: 'condition_item',
   currentValueExpression: 'current_value_expression',
   literalString: 'literal_string',
   literalNumber: 'literal_number',
@@ -60,17 +59,17 @@ export const BLOCK_TYPES = {
   lastFunction: 'last_function',
   coalesceFunction: 'coalesce_function',
   concatFunction: 'concat_function',
-  isEmptyCondition: 'is_empty_condition',
-  equalsCondition: 'equals_condition',
-  containsCondition: 'contains_condition',
-  startsWithCondition: 'starts_with_condition',
-  endsWithCondition: 'ends_with_condition',
-  matchesRegexCondition: 'matches_regex_condition',
-  greaterThanCondition: 'greater_than_condition',
-  lessThanCondition: 'less_than_condition',
-  andCondition: 'and_condition',
-  orCondition: 'or_condition',
-  notCondition: 'not_condition',
+  isEmptyFunction: 'is_empty_function',
+  equalsFunction: 'equals_function',
+  containsFunction: 'contains_function',
+  startsWithFunction: 'starts_with_function',
+  endsWithFunction: 'ends_with_function',
+  matchesRegexFunction: 'matches_regex_function',
+  greaterThanFunction: 'greater_than_function',
+  lessThanFunction: 'less_than_function',
+  andFunction: 'and_function',
+  orFunction: 'or_function',
+  notFunction: 'not_function',
 } as const;
 
 export function registerWorkflowBlocks() {
@@ -84,11 +83,8 @@ export function registerWorkflowBlocks() {
     block.appendDummyInput()
       .appendField('on columns')
       .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
-    block.appendValueInput('ROW_CONDITION').setCheck('CONDITION').appendField('for rows where');
+    block.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
     block.appendValueInput('EXPRESSION').setCheck('EXPRESSION').appendField('apply');
-    block.appendDummyInput()
-      .appendField('treat whitespace as empty')
-      .appendField(new Blockly.FieldCheckbox('TRUE'), 'TREAT_WHITESPACE_AS_EMPTY');
   });
 
   createStepBlock(BLOCK_TYPES.renameColumnStep, TABLE_OPERATION_COLOR, (block) => {
@@ -133,7 +129,7 @@ export function registerWorkflowBlocks() {
         ['keep', 'keep'],
         ['drop', 'drop'],
       ]), 'MODE');
-    block.appendValueInput('CONDITION').setCheck('CONDITION').appendField('where');
+    block.appendValueInput('CONDITION').setCheck('EXPRESSION').appendField('where');
   });
 
   createStepBlock(BLOCK_TYPES.splitColumnStep, TABLE_OPERATION_COLOR, (block) => {
@@ -197,15 +193,6 @@ export function registerWorkflowBlocks() {
     },
   };
 
-  Blockly.Blocks[BLOCK_TYPES.conditionItem] = {
-    init() {
-      this.appendValueInput('CONDITION').setCheck('CONDITION').appendField('condition');
-      this.setPreviousStatement(true, 'CONDITION_ITEM');
-      this.setNextStatement(true, 'CONDITION_ITEM');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-
   Blockly.Blocks[BLOCK_TYPES.currentValueExpression] = {
     init() {
       this.appendDummyInput().appendField('current value');
@@ -265,12 +252,12 @@ export function registerWorkflowBlocks() {
     },
   };
 
-  createUnaryFunctionBlock(BLOCK_TYPES.trimFunction, 'trim');
-  createUnaryFunctionBlock(BLOCK_TYPES.lowerFunction, 'lower');
-  createUnaryFunctionBlock(BLOCK_TYPES.upperFunction, 'upper');
-  createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace');
-  createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first');
-  createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last');
+  createUnaryFunctionBlock(BLOCK_TYPES.trimFunction, 'trim', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.lowerFunction, 'lower', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.upperFunction, 'upper', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last', FUNCTION_COLOR);
 
   Blockly.Blocks[BLOCK_TYPES.substringFunction] = {
     init() {
@@ -301,54 +288,19 @@ export function registerWorkflowBlocks() {
     },
   };
 
-  Blockly.Blocks[BLOCK_TYPES.coalesceFunction] = {
-    init() {
-      this.appendValueInput('FIRST').setCheck('EXPRESSION').appendField('coalesce');
-      this.appendValueInput('SECOND').setCheck('EXPRESSION').appendField('fallback');
-      this.setOutput(true, 'EXPRESSION');
-      this.setColour(FUNCTION_COLOR);
-    },
-  };
-
-  Blockly.Blocks[BLOCK_TYPES.concatFunction] = {
-    init() {
-      this.appendValueInput('FIRST').setCheck('EXPRESSION').appendField('concat');
-      this.appendValueInput('SECOND').setCheck('EXPRESSION').appendField('with');
-      this.setOutput(true, 'EXPRESSION');
-      this.setColour(FUNCTION_COLOR);
-    },
-  };
-
-  Blockly.Blocks[BLOCK_TYPES.isEmptyCondition] = {
-    init() {
-      this.appendDummyInput()
-        .appendField('is empty')
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
-        .appendField('treat whitespace as empty')
-        .appendField(new Blockly.FieldCheckbox('TRUE'), 'TREAT_WHITESPACE_AS_EMPTY');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-
-  createLiteralConditionBlock(BLOCK_TYPES.equalsCondition, 'equals');
-  createStringConditionBlock(BLOCK_TYPES.containsCondition, 'contains');
-  createStringConditionBlock(BLOCK_TYPES.startsWithCondition, 'starts with');
-  createStringConditionBlock(BLOCK_TYPES.endsWithCondition, 'ends with');
-  createRegexConditionBlock(BLOCK_TYPES.matchesRegexCondition, 'matches regex');
-  createLiteralConditionBlock(BLOCK_TYPES.greaterThanCondition, 'greater than');
-  createLiteralConditionBlock(BLOCK_TYPES.lessThanCondition, 'less than');
-
-  createConditionGroupBlock(BLOCK_TYPES.andCondition, 'and', 'CONDITIONS');
-  createConditionGroupBlock(BLOCK_TYPES.orCondition, 'or', 'CONDITIONS');
-
-  Blockly.Blocks[BLOCK_TYPES.notCondition] = {
-    init() {
-      this.appendValueInput('CONDITION').setCheck('CONDITION').appendField('not');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
+  createBinaryFunctionBlock(BLOCK_TYPES.coalesceFunction, 'coalesce', 'FIRST', 'fallback', 'SECOND', FUNCTION_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.concatFunction, 'concat', 'FIRST', 'with', 'SECOND', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.isEmptyFunction, 'is empty', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.equalsFunction, 'equals', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.containsFunction, 'contains', 'FIRST', 'text', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.startsWithFunction, 'starts with', 'FIRST', 'text', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.endsWithFunction, 'ends with', 'FIRST', 'text', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.matchesRegexFunction, 'matches regex', 'FIRST', 'pattern', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.greaterThanFunction, 'greater than', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.lessThanFunction, 'less than', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.andFunction, 'and', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.orFunction, 'or', 'FIRST', 'or', 'SECOND', LOGIC_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
 }
 
 export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInfo {
@@ -408,30 +360,29 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
       },
       {
         kind: 'category',
+        name: 'Logic',
+        colour: LOGIC_COLOR,
+        contents: [
+          { kind: 'block', type: BLOCK_TYPES.isEmptyFunction },
+          { kind: 'block', type: BLOCK_TYPES.equalsFunction },
+          { kind: 'block', type: BLOCK_TYPES.containsFunction },
+          { kind: 'block', type: BLOCK_TYPES.startsWithFunction },
+          { kind: 'block', type: BLOCK_TYPES.endsWithFunction },
+          { kind: 'block', type: BLOCK_TYPES.matchesRegexFunction },
+          { kind: 'block', type: BLOCK_TYPES.greaterThanFunction },
+          { kind: 'block', type: BLOCK_TYPES.lessThanFunction },
+          { kind: 'block', type: BLOCK_TYPES.andFunction },
+          { kind: 'block', type: BLOCK_TYPES.orFunction },
+          { kind: 'block', type: BLOCK_TYPES.notFunction },
+        ],
+      },
+      {
+        kind: 'category',
         name: 'Lists',
         colour: SUPPORT_COLOR,
         contents: [
           { kind: 'block', type: BLOCK_TYPES.outputColumnItem },
           { kind: 'block', type: BLOCK_TYPES.sortItem },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Conditions',
-        colour: CONDITION_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.isEmptyCondition },
-          { kind: 'block', type: BLOCK_TYPES.equalsCondition },
-          { kind: 'block', type: BLOCK_TYPES.containsCondition },
-          { kind: 'block', type: BLOCK_TYPES.startsWithCondition },
-          { kind: 'block', type: BLOCK_TYPES.endsWithCondition },
-          { kind: 'block', type: BLOCK_TYPES.matchesRegexCondition },
-          { kind: 'block', type: BLOCK_TYPES.greaterThanCondition },
-          { kind: 'block', type: BLOCK_TYPES.lessThanCondition },
-          { kind: 'block', type: BLOCK_TYPES.andCondition },
-          { kind: 'block', type: BLOCK_TYPES.orCondition },
-          { kind: 'block', type: BLOCK_TYPES.notCondition },
-          { kind: 'block', type: BLOCK_TYPES.conditionItem },
         ],
       },
     ],
@@ -449,64 +400,30 @@ function createStepBlock(type: string, colour: string, buildFields: (block: Bloc
   };
 }
 
-function createUnaryFunctionBlock(type: string, label: string) {
+function createUnaryFunctionBlock(type: string, label: string, colour: string) {
   Blockly.Blocks[type] = {
     init() {
       this.appendValueInput('INPUT').setCheck('EXPRESSION').appendField(label);
       this.setOutput(true, 'EXPRESSION');
-      this.setColour(FUNCTION_COLOR);
+      this.setColour(colour);
     },
   };
 }
 
-function createLiteralConditionBlock(type: string, label: string) {
+function createBinaryFunctionBlock(
+  type: string,
+  label: string,
+  firstInput: string,
+  secondLabel: string,
+  secondInput: string,
+  colour: string,
+) {
   Blockly.Blocks[type] = {
     init() {
-      this.appendDummyInput()
-        .appendField(label)
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
-      this.appendValueInput('VALUE').setCheck('NON_NULL_LITERAL').appendField('value');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-}
-
-function createStringConditionBlock(type: string, label: string) {
-  Blockly.Blocks[type] = {
-    init() {
-      this.appendDummyInput()
-        .appendField(label)
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
-        .appendField('text')
-        .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-}
-
-function createRegexConditionBlock(type: string, label: string) {
-  Blockly.Blocks[type] = {
-    init() {
-      this.appendDummyInput()
-        .appendField(label)
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
-        .appendField('pattern')
-        .appendField(new Blockly.FieldTextInput('.*'), 'PATTERN');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-}
-
-function createConditionGroupBlock(type: string, label: string, inputName: string) {
-  Blockly.Blocks[type] = {
-    init() {
-      this.appendDummyInput().appendField(label);
-      this.appendStatementInput(inputName).setCheck('CONDITION_ITEM').appendField('conditions');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
+      this.appendValueInput(firstInput).setCheck('EXPRESSION').appendField(label);
+      this.appendValueInput(secondInput).setCheck('EXPRESSION').appendField(secondLabel);
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(colour);
     },
   };
 }

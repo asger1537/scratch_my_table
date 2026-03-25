@@ -1,5 +1,5 @@
 import { slugify } from '../domain/normalize';
-import type { Workflow, WorkflowCondition, WorkflowExpression, WorkflowStep } from '../workflow';
+import type { Workflow, WorkflowExpression, WorkflowStep } from '../workflow';
 
 import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
@@ -23,9 +23,8 @@ interface AuthoringStepBase {
 export interface AuthoringScopedTransformStep extends AuthoringStepBase {
   kind: 'scopedTransform';
   columnIds: string[];
-  rowCondition?: WorkflowCondition;
+  rowCondition?: WorkflowExpression;
   expression: WorkflowExpression;
-  treatWhitespaceAsEmpty: boolean;
 }
 
 export interface AuthoringRenameColumnStep extends AuthoringStepBase {
@@ -51,7 +50,7 @@ export interface AuthoringDeriveColumnStep extends AuthoringStepBase {
 export interface AuthoringFilterRowsStep extends AuthoringStepBase {
   kind: 'filterRows';
   mode: 'keep' | 'drop';
-  condition: WorkflowCondition;
+  condition: WorkflowExpression;
 }
 
 export interface AuthoringSplitColumnStep extends AuthoringStepBase {
@@ -149,7 +148,6 @@ function compileStep(step: AuthoringStep, index: number, usedStepIds: Set<string
         columnIds: step.columnIds,
         rowCondition: step.rowCondition,
         expression: step.expression,
-        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
       };
     case 'renameColumn':
       return {
@@ -218,7 +216,6 @@ function workflowStepToAuthoringStep(step: WorkflowStep): AuthoringStep {
         columnIds: [...step.columnIds],
         rowCondition: step.rowCondition,
         expression: step.expression,
-        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
       };
     case 'renameColumn':
       return {

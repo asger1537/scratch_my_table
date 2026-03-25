@@ -24,8 +24,7 @@
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     },
     {
       "id": "step_normalize_name",
@@ -48,8 +47,7 @@
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     },
     {
       "id": "step_fill_status",
@@ -69,8 +67,7 @@
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     },
     {
       "id": "step_location",
@@ -90,9 +87,20 @@
       "type": "filterRows",
       "mode": "drop",
       "condition": {
-        "kind": "isEmpty",
-        "columnId": "col_email",
-        "treatWhitespaceAsEmpty": true
+        "kind": "call",
+        "name": "isEmpty",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_email"
+              }
+            ]
+          }
+        ]
       }
     },
     {

@@ -8,13 +8,13 @@ Rules:
 - every file uses `version: 2`
 - all column references use explicit `columnId` values
 - scoped cell transforms use `scopedTransform` plus the expression AST
+- filters and row predicates use the same expression AST with boolean-returning `call` nodes
 - these files are used for authoring, import/export, migration, and roundtrip testing
 
 Notes:
 
 - the `columnId` values are illustrative and assume compatible imported schemas
 - the examples correspond to the workflows documented in `docs/example-workflows.md`
-- supported legacy `version: 1` workflows are still upgraded on load, but these examples are stored in canonical v2 form
 
 Files:
 
@@ -33,3 +33,4 @@ Files:
 - `13-drop-columns.workflow.json`
 - `14-coalesce_email.workflow.json`
 - `15-filter-signup-date-format.workflow.json`
+- `16-high-value-paid-or-shipped.workflow.json`

@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "workflowId": "wf_high_value_paid_or_shipped",
+  "name": "Keep high-value paid or shipped orders",
+  "description": "Keep rows where order_total is greater than 100 and order_status is either paid or shipped.",
+  "steps": [
+    {
+      "id": "step_keep_high_value_paid_or_shipped",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "call",
+        "name": "and",
+        "args": [
+          {
+            "kind": "call",
+            "name": "greaterThan",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_total"
+              },
+              {
+                "kind": "literal",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "or",
+            "args": [
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_order_status"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "paid"
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_order_status"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "shipped"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

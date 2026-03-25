@@ -4,30 +4,25 @@
 
 Workflow IR v2 validation has two layers:
 
-1. Structural validation against `schemas/workflow-ir-v2.schema.json`.
-2. Semantic validation against the active table schema as it exists at each workflow step.
+1. Structural validation against `schemas/workflow-ir-v2.schema.json`
+2. Semantic validation against the active table schema as it exists at each workflow step
 
 Rules:
 
 - Validation runs in step order.
 - A valid step may change the schema seen by later steps.
 - An invalid step does not contribute schema changes to later validation.
-- The validator continues after an error to collect more concrete issues.
-- Missing columns are always validation errors, never silent no-ops.
+- The validator continues after an error to collect more issues.
+- Missing columns are always validation errors.
 
 ## Global Rules
 
 ### Workflow-Level Rules
 
-- `version` must equal `2`.
-- `workflowId` must be present.
-- `name` must be present.
-- Step `id` values must be unique within the workflow.
-
-Supported migration behavior:
-
-- supported legacy `version: 1` workflows are upgraded to canonical v2 before structural validation completes
-- after upgrade, all later validation runs against the v2 shape only
+- `version` must equal `2`
+- `workflowId` must be present
+- `name` must be present
+- step `id` values must be unique
 
 ### Column Reference Rules
 
@@ -49,9 +44,9 @@ Display name conflict checks use the same normalization as import:
 
 Rules:
 
-- `renameColumn`, `deriveColumn`, `splitColumn`, and `combineColumns` must not create a conflicting display name.
-- Workflow-authored naming conflicts are validation errors.
-- V1 does not auto-suffix workflow-authored names.
+- `renameColumn`, `deriveColumn`, `splitColumn`, and `combineColumns` must not create a conflicting display name
+- workflow-authored naming conflicts are validation errors
+- workflow-authored names are not auto-suffixed
 
 Error code:
 
@@ -59,7 +54,7 @@ Error code:
 
 ### Created Column ID Rules
 
-- Any new `columnId` must be unique within the schema visible at that step.
+- Any new `columnId` must be unique within the visible schema.
 - `splitColumn` output column IDs must be distinct from one another.
 - A new `columnId` must not reuse an existing imported or previously created column ID.
 
@@ -73,9 +68,9 @@ Validation uses the column `logicalType` visible at that step.
 
 Rules:
 
-- `unknown` is treated as compatible when the active table provides no contradictory non-null values.
-- `mixed` is incompatible with operations that require a single ordering or comparison model.
-- String functions do not silently coerce number or boolean columns in place.
+- `unknown` is treated as compatible when the active table provides no contradictory non-null values
+- `mixed` is incompatible with operations that require a single comparison or ordering model
+- string functions do not silently coerce number or boolean columns in place
 
 Error code:
 
@@ -83,7 +78,7 @@ Error code:
 
 ## Expression Rules
 
-Workflow IR v2 uses the shared expression AST:
+Workflow IR v2 uses one shared expression AST:
 
 - `value`
 - `literal`
@@ -92,27 +87,44 @@ Workflow IR v2 uses the shared expression AST:
 
 Rules:
 
-- `value` is valid only inside `scopedTransform`.
-- `column` is valid inside both `deriveColumn` and `scopedTransform`.
-- `literal` is always structurally valid.
-- `call` must use one supported built-in function name and the correct arity.
+- `value` is valid only inside `scopedTransform.expression`
+- `column` is valid anywhere row-scoped expressions are evaluated
+- `literal` is always structurally valid
+- `call` must use one supported built-in function name and the correct arity
+- logical checks in `filterRows.condition` and `scopedTransform.rowCondition` are ordinary expressions and must resolve to boolean
 
 Function rules:
 
-- `trim`, `lower`, `upper`, `collapseWhitespace` require exactly 1 string-like argument
+- `trim`, `lower`, `upper`, `collapseWhitespace`, `first`, `last`, `isEmpty`, and `not` require exactly 1 argument
 - `substring` requires 3 arguments: string input, numeric start, numeric length
 - `replace` requires 3 arguments: string input, string `from`, string `to`
-- `split` requires 2 scalar arguments: string input and string delimiter, and returns an intermediate list value
-- `first` and `last` require exactly 1 argument and accept either a string or a list value
-- `coalesce` requires exactly 2 arguments with compatible logical types
-- `concat` requires at least 2 arguments and returns a string
-- Final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values; list values are only valid as intermediate results
+- `split`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, and `lessThan` require exactly 2 arguments
+- `and`, `or`, and `concat` require at least 2 arguments
+- `split` returns an intermediate list value
+- final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values
+
+Type rules:
+
+- `trim`, `lower`, `upper`, `collapseWhitespace` require string-like inputs
+- `substring` requires string, number, number
+- `replace` requires string, string, string
+- `split` requires string, string
+- `first` and `last` accept a string or intermediate list
+- `coalesce` requires scalar inputs with compatible logical types
+- `concat` accepts scalar inputs and returns `string`
+- `isEmpty` requires a scalar input and returns `boolean`
+- `not` requires a boolean-like input and returns `boolean`
+- `and` and `or` require boolean-like inputs and return `boolean`
+- `equals` requires comparable scalar inputs and returns `boolean`
+- `greaterThan` and `lessThan` require ordered comparable scalar inputs and return `boolean`
+- `contains`, `startsWith`, `endsWith`, and `matchesRegex` require string-like inputs and return `boolean`
 
 Errors:
 
 - `invalidExpression`
 - `incompatibleType`
 - `missingColumn`
+- `invalidRegex`
 
 ## Step Rules
 
@@ -123,7 +135,7 @@ Valid when:
 - every targeted column exists
 - at least one target column is provided
 - target column references are unique
-- `rowCondition`, if present, is valid
+- `rowCondition`, if present, is a valid boolean expression
 - the expression is valid for every targeted column type
 
 Rules:
@@ -131,14 +143,13 @@ Rules:
 - `value` is evaluated as the current selected cell
 - `column` may read any existing column from the current row
 - `rowCondition` is evaluated against the current row before applying the expression
-- `treatWhitespaceAsEmpty` affects `coalesce(...)` empty matching only
-- authoring defaults `treatWhitespaceAsEmpty` to `true`; workflows may still explicitly set it to `false`
-- `treatWhitespaceAsEmpty: true` is only valid when a `coalesce` call may inspect string or unknown cells
+- if whitespace-sensitive emptiness is needed, express it explicitly with calls such as `trim(...)` and `isEmpty(...)`
 
 Common capability mappings:
 
 - fill empty cells: `coalesce(value, <literal>)`
-- normalize text: nested string functions such as `lower(trim(value))`
+- fill empty trimmed text: `coalesce(trim(value), <literal>)`
+- normalize text: nested string calls such as `lower(trim(value))`
 
 Errors:
 
@@ -156,11 +167,6 @@ Valid when:
 - `newDisplayName` is non-empty after trimming
 - the normalized new display name does not conflict with any other visible display name
 
-Rules:
-
-- Renaming does not change `columnId`.
-- Renaming a column to its current display name is valid.
-
 Errors:
 
 - `missingColumn`
@@ -175,11 +181,6 @@ Valid when:
 - at least one column is provided
 - column references are unique
 - at least one column remains after the drop
-
-Rules:
-
-- dropped columns are removed from the visible schema for later steps
-- later steps validate against the reduced schema after the drop step has applied
 
 Errors:
 
@@ -197,12 +198,6 @@ Valid when:
 - every referenced column in the expression exists at that step
 - the expression does not use `value`
 
-Rules:
-
-- `column` references are valid here
-- `concat` may combine mixed literal and column inputs because it stringifies values
-- `coalesce` inputs must still resolve to compatible logical types or `unknown`
-
 Errors:
 
 - `duplicateColumnId`
@@ -216,22 +211,12 @@ Errors:
 Valid when:
 
 - every referenced column in the condition exists
-- each condition uses a comparator compatible with the referenced column type
-
-Comparator rules:
-
-- `isEmpty` is valid for any column type
-- `equals` is valid for any non-mixed column if the literal value matches the column type
-- `contains`, `startsWith`, `endsWith`, and `matchesRegex` require `string` or `unknown`
-- `matchesRegex` also requires a syntactically valid regular expression pattern
-- `greaterThan` and `lessThan` require `number`, `date`, `datetime`, or `unknown`
-- `and` and `or` require at least two child conditions
-- `not` requires exactly one child condition
+- the condition resolves to a boolean logical type
 
 Errors:
 
 - `missingColumn`
-- `invalidCondition`
+- `invalidExpression`
 - `invalidRegex`
 - `incompatibleType`
 
@@ -245,13 +230,6 @@ Valid when:
 - `outputColumns` contains at least two entries
 - every output `columnId` is unique
 - every output `displayName` is unique and does not conflict with existing display names
-
-Execution edge cases:
-
-- null input produces null in every output column
-- fewer parts than outputs produces trailing nulls
-- more parts than outputs merges the remainder into the last output column
-- the source column remains in the schema
 
 Errors:
 
@@ -270,12 +248,6 @@ Valid when:
 - source column references are unique
 - the new column ID and display name are unique
 
-Rules:
-
-- source column order is the order listed in `columnIds`
-- the result column logical type is `string`
-- source columns remain in the schema
-
 Errors:
 
 - `missingColumn`
@@ -292,12 +264,6 @@ Valid when:
 - at least one key column is provided
 - key column references are unique
 
-Edge cases:
-
-- duplicate rows are detected using exact canonical value equality on the current table state
-- if all key values are equal, the first row in current `rowOrder` survives
-- if `sortRows` appears earlier in the workflow, its order determines which row is kept
-
 Errors:
 
 - `missingColumn`
@@ -313,15 +279,6 @@ Valid when:
 - each sort key is unique within the step
 - every sort key column is not `mixed`
 
-Edge cases:
-
-- nulls sort last in both ascending and descending order
-- rows equal on all sort keys preserve prior relative order
-- string sort is case-sensitive code-point order
-- number sort is numeric
-- boolean sort is `false < true`
-- date/datetime sort uses ISO chronological order
-
 Errors:
 
 - `missingColumn`
@@ -331,27 +288,13 @@ Errors:
 
 ## Missing-Column Behavior
 
-Missing-column behavior is fixed:
-
 - A referenced missing `columnId` is a validation error.
 - Preview and run are blocked until the error is resolved.
-- The system must not silently skip the step.
-- The system must not fall back to matching on display name.
+- The system does not silently skip the step.
+- The system does not fall back to matching on display name.
 
 ## Incompatible-Type Behavior
 
-Incompatible-type behavior is also fixed:
-
 - Semantic incompatibility is a validation error, not a warning.
 - V1 does not silently cast target columns for in-place operations.
-- The intentional stringification operations are `concat` and `combineColumns`.
-
-## Error Reporting
-
-Every semantic error should include:
-
-- error code
-- human-readable message
-- step ID
-- JSON path
-- enough detail to explain the failing `columnId`, comparator, function, or proposed display name
+- Intentional stringification operations are `concat` and `combineColumns`.

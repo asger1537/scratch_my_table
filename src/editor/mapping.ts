@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 
 import { type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
-import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowCondition, type WorkflowExpression } from '../workflow';
+import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from '../workflow';
 
 import {
   authoringWorkflowToWorkflow,
@@ -314,7 +314,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
     case BLOCK_TYPES.scopedTransformStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
       const expression = readRequiredExpression(block, 'EXPRESSION');
-      const rowCondition = readOptionalCondition(block, 'ROW_CONDITION');
+      const rowCondition = readOptionalExpression(block, 'ROW_CONDITION');
 
       if ('issue' in columnIds) {
         return { step: undefined as never, issue: columnIds.issue };
@@ -335,9 +335,8 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockId: block.id,
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
-          rowCondition: rowCondition.condition,
+          rowCondition: rowCondition.expression,
           expression: expression.expression,
-          treatWhitespaceAsEmpty: getFieldBoolean(block, 'TREAT_WHITESPACE_AS_EMPTY'),
         },
       };
     }
@@ -388,7 +387,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
       };
     }
     case BLOCK_TYPES.filterRowsStep: {
-      const condition = readRequiredCondition(block, 'CONDITION');
+      const condition = readRequiredExpression(block, 'CONDITION');
 
       if ('issue' in condition) {
         return { step: undefined as never, issue: condition.issue };
@@ -401,7 +400,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockId: block.id,
           sourceBlockType: block.type,
           mode: getFieldString(block, 'MODE') as 'keep' | 'drop',
-          condition: condition.condition,
+          condition: condition.expression,
         },
       };
     }
@@ -525,14 +524,14 @@ function readRequiredSorts(block: Blockly.Block, inputName: string) {
   return 'issue' in items ? items : { sorts: items.values };
 }
 
-function readOptionalCondition(block: Blockly.Block, inputName: string): { condition?: WorkflowCondition } | { issue: EditorIssue } {
-  const conditionBlock = block.getInputTargetBlock(inputName);
+function readOptionalExpression(block: Blockly.Block, inputName: string): { expression?: WorkflowExpression } | { issue: EditorIssue } {
+  const expressionBlock = block.getInputTargetBlock(inputName);
 
-  if (!conditionBlock) {
-    return { condition: undefined };
+  if (!expressionBlock) {
+    return { expression: undefined };
   }
 
-  return readCondition(conditionBlock);
+  return readExpression(expressionBlock);
 }
 
 function readRequiredExpression(block: Blockly.Block, inputName: string): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -583,6 +582,28 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
+    case BLOCK_TYPES.isEmptyFunction:
+      return readUnaryCall(block, 'isEmpty');
+    case BLOCK_TYPES.notFunction:
+      return readUnaryCall(block, 'not');
+    case BLOCK_TYPES.equalsFunction:
+      return readFixedArityCall(block, 'equals', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.containsFunction:
+      return readFixedArityCall(block, 'contains', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.startsWithFunction:
+      return readFixedArityCall(block, 'startsWith', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.endsWithFunction:
+      return readFixedArityCall(block, 'endsWith', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.matchesRegexFunction:
+      return readFixedArityCall(block, 'matchesRegex', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.greaterThanFunction:
+      return readFixedArityCall(block, 'greaterThan', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.lessThanFunction:
+      return readFixedArityCall(block, 'lessThan', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.andFunction:
+      return readFlattenedBinaryCall(block, 'and', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.orFunction:
+      return readFlattenedBinaryCall(block, 'or', ['FIRST', 'SECOND']);
     default:
       return {
         issue: {
@@ -597,14 +618,36 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
 
 function readUnaryCall(
   block: Blockly.Block,
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last',
+  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'isEmpty' | 'not',
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   return readFixedArityCall(block, name, ['INPUT']);
 }
 
 function readFixedArityCall(
   block: Blockly.Block,
-  name: 'substring' | 'replace' | 'split' | 'coalesce' | 'concat' | 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last',
+  name:
+    | 'substring'
+    | 'replace'
+    | 'split'
+    | 'coalesce'
+    | 'concat'
+    | 'trim'
+    | 'lower'
+    | 'upper'
+    | 'collapseWhitespace'
+    | 'first'
+    | 'last'
+    | 'isEmpty'
+    | 'not'
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'matchesRegex'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'and'
+    | 'or',
   inputNames: string[],
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   const args: WorkflowExpression[] = [];
@@ -629,170 +672,38 @@ function readFixedArityCall(
 }
 
 function readConcatCall(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
-  const result = readFixedArityCall(block, 'concat', ['FIRST', 'SECOND']);
+  return readFlattenedBinaryCall(block, 'concat', ['FIRST', 'SECOND']);
+}
+
+function readFlattenedBinaryCall(
+  block: Blockly.Block,
+  name: 'concat' | 'and' | 'or',
+  inputNames: [string, string],
+): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const result = readFixedArityCall(block, name, inputNames);
 
   if ('issue' in result) {
     return result;
   }
 
   return {
-    expression: flattenConcatExpression(result.expression),
+    expression: flattenCallExpression(result.expression, name),
   };
 }
 
-function flattenConcatExpression(expression: WorkflowExpression): WorkflowExpression {
-  if (expression.kind !== 'call' || expression.name !== 'concat') {
+function flattenCallExpression(expression: WorkflowExpression, name: 'concat' | 'and' | 'or'): WorkflowExpression {
+  if (expression.kind !== 'call' || expression.name !== name) {
     return expression;
   }
 
   return {
     kind: 'call',
-    name: 'concat',
+    name,
     args: expression.args.flatMap((argument) => {
-      const flattened = flattenConcatExpression(argument);
-      return flattened.kind === 'call' && flattened.name === 'concat' ? flattened.args : [flattened];
+      const flattened = flattenCallExpression(argument, name);
+      return flattened.kind === 'call' && flattened.name === name ? flattened.args : [flattened];
     }),
   };
-}
-
-function readRequiredCondition(block: Blockly.Block, inputName: string): { condition: WorkflowCondition } | { issue: EditorIssue } {
-  const conditionBlock = block.getInputTargetBlock(inputName);
-
-  if (!conditionBlock) {
-    return {
-      issue: missingInputIssue(block, inputName),
-    };
-  }
-
-  return readCondition(conditionBlock);
-}
-
-function readCondition(block: Blockly.Block): { condition: WorkflowCondition } | { issue: EditorIssue } {
-  switch (block.type) {
-    case BLOCK_TYPES.isEmptyCondition:
-      return {
-        condition: {
-          kind: 'isEmpty',
-          columnId: getFieldString(block, 'COLUMN_ID'),
-          treatWhitespaceAsEmpty: getFieldBoolean(block, 'TREAT_WHITESPACE_AS_EMPTY'),
-        },
-      };
-    case BLOCK_TYPES.equalsCondition: {
-      const value = readRequiredLiteral(block, 'VALUE');
-
-      return 'issue' in value
-        ? value
-        : {
-            condition: {
-              kind: 'equals',
-              columnId: getFieldString(block, 'COLUMN_ID'),
-              value: value.value,
-            },
-          };
-    }
-    case BLOCK_TYPES.containsCondition:
-      return { condition: { kind: 'contains', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
-    case BLOCK_TYPES.startsWithCondition:
-      return { condition: { kind: 'startsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
-    case BLOCK_TYPES.endsWithCondition:
-      return { condition: { kind: 'endsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
-    case BLOCK_TYPES.matchesRegexCondition:
-      return { condition: { kind: 'matchesRegex', columnId: getFieldString(block, 'COLUMN_ID'), pattern: getFieldString(block, 'PATTERN') } };
-    case BLOCK_TYPES.greaterThanCondition: {
-      const value = readRequiredLiteral(block, 'VALUE');
-
-      return 'issue' in value
-        ? value
-        : {
-            condition: {
-              kind: 'greaterThan',
-              columnId: getFieldString(block, 'COLUMN_ID'),
-              value: value.value,
-            },
-          };
-    }
-    case BLOCK_TYPES.lessThanCondition: {
-      const value = readRequiredLiteral(block, 'VALUE');
-
-      return 'issue' in value
-        ? value
-        : {
-            condition: {
-              kind: 'lessThan',
-              columnId: getFieldString(block, 'COLUMN_ID'),
-              value: value.value,
-            },
-          };
-    }
-    case BLOCK_TYPES.andCondition: {
-      const items = readStatementItems(block.getInputTargetBlock('CONDITIONS'), BLOCK_TYPES.conditionItem, 'missingConditionItems', (item) => {
-        const condition = readRequiredCondition(item, 'CONDITION');
-
-        if ('issue' in condition) {
-          throw condition.issue;
-        }
-
-        return condition.condition;
-      });
-
-      return 'issue' in items ? items : { condition: { kind: 'and', conditions: items.values } };
-    }
-    case BLOCK_TYPES.orCondition: {
-      const items = readStatementItems(block.getInputTargetBlock('CONDITIONS'), BLOCK_TYPES.conditionItem, 'missingConditionItems', (item) => {
-        const condition = readRequiredCondition(item, 'CONDITION');
-
-        if ('issue' in condition) {
-          throw condition.issue;
-        }
-
-        return condition.condition;
-      });
-
-      return 'issue' in items ? items : { condition: { kind: 'or', conditions: items.values } };
-    }
-    case BLOCK_TYPES.notCondition: {
-      const condition = readRequiredCondition(block, 'CONDITION');
-
-      return 'issue' in condition ? condition : { condition: { kind: 'not', condition: condition.condition } };
-    }
-    default:
-      return {
-        issue: {
-          code: 'invalidConditionBlock',
-          message: `Block '${block.type}' is not a supported condition block.`,
-          blockId: block.id,
-          blockType: block.type,
-        },
-      };
-  }
-}
-
-function readRequiredLiteral(block: Blockly.Block, inputName: string): { value: string | number | boolean } | { issue: EditorIssue } {
-  const literalBlock = block.getInputTargetBlock(inputName);
-
-  if (!literalBlock) {
-    return {
-      issue: missingInputIssue(block, inputName),
-    };
-  }
-
-  switch (literalBlock.type) {
-    case BLOCK_TYPES.literalString:
-      return { value: getFieldString(literalBlock, 'VALUE') };
-    case BLOCK_TYPES.literalNumber:
-      return { value: Number(literalBlock.getFieldValue('VALUE') ?? 0) };
-    case BLOCK_TYPES.literalBoolean:
-      return { value: getFieldString(literalBlock, 'VALUE') === 'true' };
-    default:
-      return {
-        issue: {
-          code: 'invalidLiteralBlock',
-          message: `Block '${literalBlock.type}' is not a supported non-null literal block.`,
-          blockId: literalBlock.id,
-          blockType: literalBlock.type,
-        },
-      };
-  }
 }
 
 function readStatementItems<T>(
@@ -869,10 +780,9 @@ function createScopedTransformBlock(workspace: Blockly.Workspace, step: Authorin
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(serializeColumnSelectionValue(step.columnIds), 'COLUMN_IDS');
-  block.setFieldValue(step.treatWhitespaceAsEmpty ? 'TRUE' : 'FALSE', 'TREAT_WHITESPACE_AS_EMPTY');
 
   if (step.rowCondition) {
-    connectValueBlock(block, 'ROW_CONDITION', createConditionBlock(workspace, step.rowCondition));
+    connectValueBlock(block, 'ROW_CONDITION', createExpressionBlock(workspace, step.rowCondition));
   }
 
   connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
@@ -921,7 +831,7 @@ function createFilterRowsBlock(workspace: Blockly.Workspace, step: AuthoringFilt
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(step.mode, 'MODE');
-  connectValueBlock(block, 'CONDITION', createConditionBlock(workspace, step.condition));
+  connectValueBlock(block, 'CONDITION', createExpressionBlock(workspace, step.condition));
   return block;
 }
 
@@ -1034,7 +944,9 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'upper':
     case 'collapseWhitespace':
     case 'first':
-    case 'last': {
+    case 'last':
+    case 'isEmpty':
+    case 'not': {
       const blockType = {
         trim: BLOCK_TYPES.trimFunction,
         lower: BLOCK_TYPES.lowerFunction,
@@ -1042,6 +954,8 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
         collapseWhitespace: BLOCK_TYPES.collapseWhitespaceFunction,
         first: BLOCK_TYPES.firstFunction,
         last: BLOCK_TYPES.lastFunction,
+        isEmpty: BLOCK_TYPES.isEmptyFunction,
+        not: BLOCK_TYPES.notFunction,
       }[expression.name];
       const block = createBlock(workspace, blockType);
 
@@ -1078,16 +992,45 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
       return block;
     }
+    case 'equals':
+    case 'contains':
+    case 'startsWith':
+    case 'endsWith':
+    case 'matchesRegex':
+    case 'greaterThan':
+    case 'lessThan': {
+      const blockType = {
+        equals: BLOCK_TYPES.equalsFunction,
+        contains: BLOCK_TYPES.containsFunction,
+        startsWith: BLOCK_TYPES.startsWithFunction,
+        endsWith: BLOCK_TYPES.endsWithFunction,
+        matchesRegex: BLOCK_TYPES.matchesRegexFunction,
+        greaterThan: BLOCK_TYPES.greaterThanFunction,
+        lessThan: BLOCK_TYPES.lessThanFunction,
+      }[expression.name];
+      const block = createBlock(workspace, blockType);
+
+      connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'and':
+    case 'or':
     case 'concat': {
       if (expression.args.length > 2) {
         return createCallBlock(workspace, {
           kind: 'call',
-          name: 'concat',
-          args: [expression.args[0], { kind: 'call', name: 'concat', args: expression.args.slice(1) }],
+          name: expression.name,
+          args: [expression.args[0], { kind: 'call', name: expression.name, args: expression.args.slice(1) }],
         });
       }
 
-      const block = createBlock(workspace, BLOCK_TYPES.concatFunction);
+      const blockType = {
+        and: BLOCK_TYPES.andFunction,
+        or: BLOCK_TYPES.orFunction,
+        concat: BLOCK_TYPES.concatFunction,
+      }[expression.name];
+      const block = createBlock(workspace, blockType);
 
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
@@ -1095,99 +1038,6 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     }
     default:
       throw new Error(`Unsupported expression call '${expression.name}'.`);
-  }
-}
-
-function createConditionBlock(workspace: Blockly.Workspace, condition: WorkflowCondition): Blockly.Block {
-  switch (condition.kind) {
-    case 'isEmpty': {
-      const block = createBlock(workspace, BLOCK_TYPES.isEmptyCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.treatWhitespaceAsEmpty ? 'TRUE' : 'FALSE', 'TREAT_WHITESPACE_AS_EMPTY');
-      return block;
-    }
-    case 'equals': {
-      const block = createBlock(workspace, BLOCK_TYPES.equalsCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, condition.value));
-      return block;
-    }
-    case 'contains': {
-      const block = createBlock(workspace, BLOCK_TYPES.containsCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.value, 'VALUE');
-      return block;
-    }
-    case 'startsWith': {
-      const block = createBlock(workspace, BLOCK_TYPES.startsWithCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.value, 'VALUE');
-      return block;
-    }
-    case 'endsWith': {
-      const block = createBlock(workspace, BLOCK_TYPES.endsWithCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.value, 'VALUE');
-      return block;
-    }
-    case 'matchesRegex': {
-      const block = createBlock(workspace, BLOCK_TYPES.matchesRegexCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.pattern, 'PATTERN');
-      return block;
-    }
-    case 'greaterThan': {
-      const block = createBlock(workspace, BLOCK_TYPES.greaterThanCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, condition.value));
-      return block;
-    }
-    case 'lessThan': {
-      const block = createBlock(workspace, BLOCK_TYPES.lessThanCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, condition.value));
-      return block;
-    }
-    case 'and': {
-      const block = createBlock(workspace, BLOCK_TYPES.andCondition);
-      const items = condition.conditions.map((child) => {
-        const itemBlock = createBlock(workspace, BLOCK_TYPES.conditionItem);
-
-        connectValueBlock(itemBlock, 'CONDITION', createConditionBlock(workspace, child));
-        return itemBlock;
-      });
-
-      connectStatementChain(block, 'CONDITIONS', items);
-      return block;
-    }
-    case 'or': {
-      const block = createBlock(workspace, BLOCK_TYPES.orCondition);
-      const items = condition.conditions.map((child) => {
-        const itemBlock = createBlock(workspace, BLOCK_TYPES.conditionItem);
-
-        connectValueBlock(itemBlock, 'CONDITION', createConditionBlock(workspace, child));
-        return itemBlock;
-      });
-
-      connectStatementChain(block, 'CONDITIONS', items);
-      return block;
-    }
-    case 'not': {
-      const block = createBlock(workspace, BLOCK_TYPES.notCondition);
-
-      connectValueBlock(block, 'CONDITION', createConditionBlock(workspace, condition.condition));
-      return block;
-    }
-    default:
-      throw new Error(`Unsupported condition kind '${(condition as WorkflowCondition).kind}'.`);
   }
 }
 
@@ -1251,10 +1101,6 @@ function connectValueBlock(parent: Blockly.Block, inputName: string, child: Bloc
 
 function getFieldString(block: Blockly.Block, fieldName: string) {
   return String(block.getFieldValue(fieldName) ?? '');
-}
-
-function getFieldBoolean(block: Blockly.Block, fieldName: string) {
-  return getFieldString(block, fieldName) === 'TRUE';
 }
 
 function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {

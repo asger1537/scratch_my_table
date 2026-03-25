@@ -8,7 +8,7 @@ import { getActiveTable, type Table } from '../domain/model';
 import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from './index';
 
 describe('workflow validation and execution', () => {
-  it('structurally validates canonical v2 workflows and upgrades legacy v1 workflows', () => {
+  it('structurally validates canonical v2 workflows and rejects non-v2 workflow versions', () => {
     const validWorkflow: Workflow = {
       version: 2,
       workflowId: 'wf_valid',
@@ -19,7 +19,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -30,10 +29,10 @@ describe('workflow validation and execution', () => {
       issues: [],
     });
 
-    const legacyWorkflow = {
+    const unsupportedWorkflow = {
       version: 1,
-      workflowId: 'wf_legacy',
-      name: 'Legacy workflow',
+      workflowId: 'wf_unsupported',
+      name: 'Unsupported workflow',
       steps: [
         {
           id: 'step_fill_status',
@@ -48,66 +47,17 @@ describe('workflow validation and execution', () => {
       ],
     };
 
-    const upgraded = validateWorkflowStructure(legacyWorkflow);
+    const rejected = validateWorkflowStructure(unsupportedWorkflow);
 
-    expect(upgraded.valid).toBe(true);
-    expect(upgraded.workflow).toEqual({
-      version: 2,
-      workflowId: 'wf_legacy',
-      name: 'Legacy workflow',
-      steps: validWorkflow.steps,
-    });
-  });
-
-  it('defaults legacy whitespace-empty flags to true when they are omitted', () => {
-    const legacyWorkflow = {
-      version: 1,
-      workflowId: 'wf_legacy_defaults',
-      name: 'Legacy defaults',
-      steps: [
-        {
-          id: 'step_fill_status',
-          type: 'fillEmpty',
-          target: {
-            kind: 'columns',
-            columnIds: ['col_status'],
-          },
-          value: 'unknown',
-        },
-        {
-          id: 'step_keep_email',
-          type: 'filterRows',
-          mode: 'keep',
-          condition: {
-            kind: 'isEmpty',
-            columnId: 'col_email',
-          },
-        },
-      ],
-    };
-
-    const upgraded = validateWorkflowStructure(legacyWorkflow);
-
-    expect(upgraded.valid).toBe(true);
-    expect(upgraded.workflow?.steps).toEqual([
-      {
-        id: 'step_fill_status',
-        type: 'scopedTransform',
-        columnIds: ['col_status'],
-        expression: coalesce(value(), literal('unknown')),
-        treatWhitespaceAsEmpty: true,
-      },
-      {
-        id: 'step_keep_email',
-        type: 'filterRows',
-        mode: 'keep',
-        condition: {
-          kind: 'isEmpty',
-          columnId: 'col_email',
-          treatWhitespaceAsEmpty: true,
-        },
-      },
-    ]);
+    expect(rejected.valid).toBe(false);
+    expect(rejected.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'schema.const',
+          path: 'version',
+        }),
+      ]),
+    );
   });
 
   it('rejects duplicate step IDs and schema-invalid expression shapes', () => {
@@ -121,7 +71,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: false,
         },
         {
           id: 'step_repeat',
@@ -151,7 +100,6 @@ describe('workflow validation and execution', () => {
             name: 'lower',
             args: [value(), literal('extra')],
           },
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -162,7 +110,7 @@ describe('workflow validation and execution', () => {
     expect(invalidValidation.issues.some((issue) => issue.code === 'schema.maxItems')).toBe(true);
   });
 
-  it('structurally validates matchesRegex conditions', () => {
+  it('structurally validates boolean expression filters', () => {
     const workflow = {
       version: 2,
       workflowId: 'wf_regex_structure',
@@ -172,11 +120,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_email',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')),
         },
       ],
     };
@@ -251,7 +195,7 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'missingColumn' && issue.stepId === 'step_rename_missing')).toBe(true);
   });
 
-  it('executes scoped transforms with row conditions, multi-column targets, and coalesce semantics', () => {
+  it('executes scoped transforms with row conditions, multi-column targets, and explicit coalesce emptiness semantics', () => {
     const table = loadCsvTable('first_name,last_name,status,region\r\nAlice,Ng,,west\r\nAmy,Adams,  ,west\r\nBen,Ortiz,,east\r\n');
     const workflow: Workflow = {
       version: 2,
@@ -262,13 +206,8 @@ describe('workflow validation and execution', () => {
           id: 'step_fill_unknown',
           type: 'scopedTransform',
           columnIds: ['col_first_name', 'col_last_name', 'col_status'],
-          rowCondition: {
-            kind: 'equals',
-            columnId: 'col_region',
-            value: 'west',
-          },
+          rowCondition: call('equals', column('col_region'), literal('west')),
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -278,9 +217,9 @@ describe('workflow validation and execution', () => {
     expect(execution.validationErrors).toEqual([]);
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_first_name).toBe('Alice');
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status).toBe('unknown');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status).toBe('unknown');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status).toBe('  ');
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status).toBe(null);
-    expect(execution.changedCellCount).toBe(2);
+    expect(execution.changedCellCount).toBe(1);
   });
 
   it('allows scoped transforms to read another column from the same row', () => {
@@ -295,7 +234,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: coalesce(value(), column('col_customer_id')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -308,7 +246,7 @@ describe('workflow validation and execution', () => {
     expect(execution.validationErrors).toEqual([]);
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('C001');
     expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_email).toBe('bob@example.com');
-    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('C003');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('   ');
   });
 
   it('executes nested built-in scoped-transform functions deterministically', async () => {
@@ -323,29 +261,19 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: call('lower', call('trim', value())),
-          treatWhitespaceAsEmpty: false,
         },
         {
           id: 'step_clean_full_name',
           type: 'scopedTransform',
           columnIds: ['col_full_name'],
           expression: call('replace', call('collapseWhitespace', call('trim', value())), literal('Ng'), literal('NG')),
-          treatWhitespaceAsEmpty: false,
         },
         {
           id: 'step_abbreviate_status',
           type: 'scopedTransform',
           columnIds: ['col_status'],
-          rowCondition: {
-            kind: 'not',
-            condition: {
-              kind: 'isEmpty',
-              columnId: 'col_status',
-              treatWhitespaceAsEmpty: true,
-            },
-          },
+          rowCondition: call('not', call('isEmpty', call('trim', column('col_status')))),
           expression: call('substring', call('upper', call('trim', value())), literal(0), literal(3)),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -371,7 +299,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_signup_date'],
           expression: call('lower', value()),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -526,7 +453,7 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_initials).toBe('DL');
   });
 
-  it('filters rows with recursive conditions and rejects incompatible comparators', async () => {
+  it('filters rows with boolean call expressions and rejects incompatible comparators', async () => {
     const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
       version: 2,
@@ -537,21 +464,11 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_paid_orders',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'greaterThan',
-                columnId: 'col_order_total',
-                value: 100,
-              },
-              {
-                kind: 'equals',
-                columnId: 'col_order_status',
-                value: 'paid',
-              },
-            ],
-          },
+          condition: call(
+            'and',
+            call('greaterThan', column('col_order_total'), literal(100)),
+            call('equals', column('col_order_status'), literal('paid')),
+          ),
         },
       ],
     };
@@ -570,11 +487,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_bad_compare',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'greaterThan',
-            columnId: 'col_customer_email',
-            value: 100,
-          },
+          condition: call('greaterThan', column('col_customer_email'), literal(100)),
         },
       ],
     };
@@ -584,7 +497,7 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
   });
 
-  it('filters rows with matchesRegex and rejects invalid or incompatible regex conditions', () => {
+  it('filters rows with matchesRegex expressions and rejects invalid or incompatible regex inputs', () => {
     const table = loadCsvTable('email,order_total\r\nalice@example.com,100\r\nbob,200\r\ncarol@example.com,300\r\n');
     const workflow: Workflow = {
       version: 2,
@@ -595,11 +508,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')),
         },
       ],
     };
@@ -618,11 +527,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_invalid_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '[a-z',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('[a-z')),
         },
       ],
     };
@@ -633,7 +538,7 @@ describe('workflow validation and execution', () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: 'invalidRegex',
-          path: 'steps[0].condition.pattern',
+          path: 'steps[0].condition.args[1]',
           stepId: 'step_filter_invalid_regex',
         }),
       ]),
@@ -648,11 +553,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_numeric_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_order_total',
-            pattern: '^\\d+$',
-          },
+          condition: call('matchesRegex', column('col_order_total'), literal('^\\d+$')),
         },
       ],
     };
@@ -663,7 +564,7 @@ describe('workflow validation and execution', () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: 'incompatibleType',
-          path: 'steps[0].condition.columnId',
+          path: 'steps[0].condition.args[0]',
           stepId: 'step_filter_numeric_regex',
         }),
       ]),
@@ -843,7 +744,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_make_location',
@@ -859,11 +759,7 @@ describe('workflow validation and execution', () => {
           id: 'step_drop_missing_email',
           type: 'filterRows',
           mode: 'drop',
-          condition: {
-            kind: 'isEmpty',
-            columnId: 'col_email',
-            treatWhitespaceAsEmpty: false,
-          },
+          condition: call('isEmpty', column('col_email')),
         },
         {
           id: 'step_sort_signup',
@@ -933,7 +829,29 @@ function column(columnId: string): WorkflowExpression {
 }
 
 function call(
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'substring' | 'replace' | 'split' | 'first' | 'last' | 'coalesce' | 'concat',
+  name:
+    | 'trim'
+    | 'lower'
+    | 'upper'
+    | 'collapseWhitespace'
+    | 'substring'
+    | 'replace'
+    | 'split'
+    | 'first'
+    | 'last'
+    | 'coalesce'
+    | 'concat'
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'matchesRegex'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'and'
+    | 'or'
+    | 'not'
+    | 'isEmpty',
   ...args: WorkflowExpression[]
 ): WorkflowExpression {
   return {

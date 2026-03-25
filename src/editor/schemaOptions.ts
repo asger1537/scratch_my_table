@@ -1,5 +1,5 @@
 import type { Column } from '../domain/model';
-import type { Workflow, WorkflowCondition, WorkflowExpression, WorkflowStep } from '../workflow';
+import type { Workflow, WorkflowExpression, WorkflowStep } from '../workflow';
 
 let currentColumns: Column[] = [];
 let extraColumnIds = new Set<string>();
@@ -50,7 +50,7 @@ function collectStepColumnIds(step: WorkflowStep, columnIds: Set<string>) {
     case 'scopedTransform':
       step.columnIds.forEach((columnId) => columnIds.add(columnId));
       if (step.rowCondition) {
-        collectConditionColumnIds(step.rowCondition, columnIds);
+        collectExpressionColumnIds(step.rowCondition, columnIds);
       }
       collectExpressionColumnIds(step.expression, columnIds);
       return;
@@ -70,7 +70,7 @@ function collectStepColumnIds(step: WorkflowStep, columnIds: Set<string>) {
       collectExpressionColumnIds(step.expression, columnIds);
       return;
     case 'filterRows':
-      collectConditionColumnIds(step.condition, columnIds);
+      collectExpressionColumnIds(step.condition, columnIds);
       return;
     default:
       return;
@@ -90,26 +90,3 @@ function collectExpressionColumnIds(expression: WorkflowExpression, columnIds: S
   }
 }
 
-function collectConditionColumnIds(condition: WorkflowCondition, columnIds: Set<string>) {
-  switch (condition.kind) {
-    case 'isEmpty':
-    case 'equals':
-    case 'contains':
-    case 'startsWith':
-    case 'endsWith':
-    case 'matchesRegex':
-    case 'greaterThan':
-    case 'lessThan':
-      columnIds.add(condition.columnId);
-      return;
-    case 'and':
-    case 'or':
-      condition.conditions.forEach((child) => collectConditionColumnIds(child, columnIds));
-      return;
-    case 'not':
-      collectConditionColumnIds(condition.condition, columnIds);
-      return;
-    default:
-      return;
-  }
-}
