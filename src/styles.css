@@ -547,7 +547,22 @@ code {
   padding: 0.3rem;
 }
 
+.blockly-search-dropdown {
+  width: min(18rem, 72vw);
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.3rem;
+}
+
 .blockly-column-multiselect__search {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  background: #fffdf9;
+}
+
+.blockly-search-dropdown__search {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.75rem;
@@ -581,6 +596,14 @@ code {
   background: #fff;
 }
 
+.blockly-search-dropdown__list {
+  max-height: 14rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: #fff;
+}
+
 .blockly-column-multiselect__option,
 .blockly-column-multiselect__empty {
   display: flex;
@@ -589,12 +612,40 @@ code {
   padding: 0.65rem 0.8rem;
 }
 
+.blockly-search-dropdown__option,
+.blockly-search-dropdown__empty {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  padding: 0.65rem 0.8rem;
+}
+
 .blockly-column-multiselect__option + .blockly-column-multiselect__option {
+  border-top: 1px solid #efe4d6;
+}
+
+.blockly-search-dropdown__option + .blockly-search-dropdown__option {
   border-top: 1px solid #efe4d6;
 }
 
 .blockly-column-multiselect__empty {
   color: var(--muted);
+}
+
+.blockly-search-dropdown__empty {
+  color: var(--muted);
+}
+
+.blockly-search-dropdown__option {
+  cursor: pointer;
+}
+
+.blockly-search-dropdown__option:hover,
+.blockly-search-dropdown__option--selected {
+  background: #fff2e8;
 }
 
 .blocklyDropDownDiv {

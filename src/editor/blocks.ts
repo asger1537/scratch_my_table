@@ -1,6 +1,7 @@
 import * as Blockly from 'blockly';
 
 import { FieldColumnMultiSelect } from './FieldColumnMultiSelect';
+import { FieldSearchDropdown } from './FieldSearchDropdown';
 import { getSchemaColumnOptions } from './schemaOptions';
 
 const TRANSFORM_COLOR = '#b04a1f';
@@ -9,6 +10,7 @@ const SUPPORT_COLOR = '#6b6a5c';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
 const LOGIC_COLOR = '#355070';
+const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
 const CREATE_COLUMN_INPUT_NAMES = {
   mode: 'CREATE_MODE',
   copySource: 'COPY_COLUMN_ID',
@@ -23,6 +25,30 @@ export const CREATE_COLUMN_MODES = {
   expression: 'expression',
 } as const;
 export type CreateColumnMode = typeof CREATE_COLUMN_MODES[keyof typeof CREATE_COLUMN_MODES];
+type LogicalGroupBlock = Blockly.Block & {
+  itemCount_?: number;
+  updateShape_?: () => void;
+};
+type PredicateFunctionBlock = Blockly.Block & {
+  updateShape_?: (operator?: PredicateFunctionOperator) => void;
+};
+type ComparatorOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+type PredicateFunctionOperator = 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
+const COMPARATOR_OPTIONS: Array<[string, ComparatorOperator]> = [
+  ['=', 'eq'],
+  ['≠', 'ne'],
+  ['<', 'lt'],
+  ['≤', 'lte'],
+  ['>', 'gt'],
+  ['≥', 'gte'],
+];
+const PREDICATE_FUNCTION_OPTIONS: Array<{ label: string; value: PredicateFunctionOperator; searchText: string }> = [
+  { label: 'contains', value: 'contains', searchText: 'contains includes has text substring' },
+  { label: 'starts with', value: 'startsWith', searchText: 'starts with begins prefix' },
+  { label: 'ends with', value: 'endsWith', searchText: 'ends with suffix' },
+  { label: 'matches regex', value: 'matchesRegex', searchText: 'matches regex pattern regular expression' },
+  { label: 'is empty', value: 'isEmpty', searchText: 'is empty blank null missing' },
+];
 
 function createSchemaColumnDropdown() {
   return new Blockly.FieldDropdown(function (this: Blockly.FieldDropdown) {
@@ -59,16 +85,9 @@ export const BLOCK_TYPES = {
   lastFunction: 'last_function',
   coalesceFunction: 'coalesce_function',
   concatFunction: 'concat_function',
-  isEmptyFunction: 'is_empty_function',
-  equalsFunction: 'equals_function',
-  containsFunction: 'contains_function',
-  startsWithFunction: 'starts_with_function',
-  endsWithFunction: 'ends_with_function',
-  matchesRegexFunction: 'matches_regex_function',
-  greaterThanFunction: 'greater_than_function',
-  lessThanFunction: 'less_than_function',
-  andFunction: 'and_function',
-  orFunction: 'or_function',
+  comparisonFunction: 'comparison_function',
+  predicateFunction: 'predicate_function',
+  logicalBinaryFunction: 'logical_binary_function',
   notFunction: 'not_function',
 } as const;
 
@@ -290,16 +309,35 @@ export function registerWorkflowBlocks() {
 
   createBinaryFunctionBlock(BLOCK_TYPES.coalesceFunction, 'coalesce', 'FIRST', 'fallback', 'SECOND', FUNCTION_COLOR);
   createBinaryFunctionBlock(BLOCK_TYPES.concatFunction, 'concat', 'FIRST', 'with', 'SECOND', FUNCTION_COLOR);
-  createUnaryFunctionBlock(BLOCK_TYPES.isEmptyFunction, 'is empty', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.equalsFunction, 'equals', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.containsFunction, 'contains', 'FIRST', 'text', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.startsWithFunction, 'starts with', 'FIRST', 'text', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.endsWithFunction, 'ends with', 'FIRST', 'text', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.matchesRegexFunction, 'matches regex', 'FIRST', 'pattern', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.greaterThanFunction, 'greater than', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.lessThanFunction, 'less than', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.andFunction, 'and', 'FIRST', 'and', 'SECOND', LOGIC_COLOR);
-  createBinaryFunctionBlock(BLOCK_TYPES.orFunction, 'or', 'FIRST', 'or', 'SECOND', LOGIC_COLOR);
+  createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
+  Blockly.Blocks[BLOCK_TYPES.predicateFunction] = {
+    init(this: PredicateFunctionBlock) {
+      this.setOutput(true, 'EXPRESSION');
+      this.setInputsInline(true);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = (operator?: PredicateFunctionOperator) => updatePredicateFunctionShape(this, operator);
+      this.updateShape_('contains');
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.logicalBinaryFunction] = {
+    init(this: LogicalGroupBlock) {
+      this.itemCount_ = 2;
+      this.setOutput(true, 'EXPRESSION');
+      this.setInputsInline(false);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = () => updateLogicalGroupShape(this);
+      this.updateShape_();
+    },
+    saveExtraState(this: LogicalGroupBlock) {
+      return {
+        itemCount: Math.max(2, this.itemCount_ ?? 2),
+      };
+    },
+    loadExtraState(this: LogicalGroupBlock, state: { itemCount?: number }) {
+      this.itemCount_ = Math.max(2, Number(state.itemCount) || 2);
+      this.updateShape_?.();
+    },
+  };
   createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
 }
 
@@ -363,16 +401,9 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
         name: 'Logic',
         colour: LOGIC_COLOR,
         contents: [
-          { kind: 'block', type: BLOCK_TYPES.isEmptyFunction },
-          { kind: 'block', type: BLOCK_TYPES.equalsFunction },
-          { kind: 'block', type: BLOCK_TYPES.containsFunction },
-          { kind: 'block', type: BLOCK_TYPES.startsWithFunction },
-          { kind: 'block', type: BLOCK_TYPES.endsWithFunction },
-          { kind: 'block', type: BLOCK_TYPES.matchesRegexFunction },
-          { kind: 'block', type: BLOCK_TYPES.greaterThanFunction },
-          { kind: 'block', type: BLOCK_TYPES.lessThanFunction },
-          { kind: 'block', type: BLOCK_TYPES.andFunction },
-          { kind: 'block', type: BLOCK_TYPES.orFunction },
+          { kind: 'block', type: BLOCK_TYPES.comparisonFunction },
+          { kind: 'block', type: BLOCK_TYPES.predicateFunction },
+          { kind: 'block', type: BLOCK_TYPES.logicalBinaryFunction },
           { kind: 'block', type: BLOCK_TYPES.notFunction },
         ],
       },
@@ -422,10 +453,207 @@ function createBinaryFunctionBlock(
     init() {
       this.appendValueInput(firstInput).setCheck('EXPRESSION').appendField(label);
       this.appendValueInput(secondInput).setCheck('EXPRESSION').appendField(secondLabel);
+      this.setInputsInline(true);
       this.setOutput(true, 'EXPRESSION');
       this.setColour(colour);
     },
   };
+}
+
+function createDropdownBinaryFunctionBlock(
+  type: string,
+  options: [string, string][],
+  fieldName: string,
+  colour: string,
+) {
+  Blockly.Blocks[type] = {
+    init() {
+      this.appendValueInput('FIRST').setCheck('EXPRESSION');
+      this.appendValueInput('SECOND')
+        .setCheck('EXPRESSION')
+        .appendField(new Blockly.FieldDropdown(options), fieldName);
+      this.setInputsInline(true);
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(colour);
+    },
+  };
+}
+
+function updateLogicalGroupShape(block: LogicalGroupBlock) {
+  const currentOperator = normalizeLogicalGroupOperator(block.getFieldValue('OPERATOR'));
+  if (block.getInput('HEADER')) {
+    block.removeInput('HEADER');
+  }
+
+  let index = 0;
+
+  while (block.getInput(`ITEM${index}`)) {
+    block.removeInput(`ITEM${index}`);
+    index += 1;
+  }
+
+  block.appendDummyInput('HEADER')
+    .appendField('conditions')
+    .appendField(createLogicalGroupOperatorField(block), 'OPERATOR')
+    .appendField(createLogicalGroupActionField('add', 'Add condition', (field) => {
+      const sourceBlock = field.getSourceBlock() as LogicalGroupBlock | null;
+
+      if (!sourceBlock) {
+        return;
+      }
+
+      resizeLogicalGroup(sourceBlock, Math.max(2, sourceBlock.itemCount_ ?? 2) + 1);
+    }), 'ADD_ITEM')
+    .appendField(createLogicalGroupActionField('remove', 'Remove condition', (field) => {
+      const sourceBlock = field.getSourceBlock() as LogicalGroupBlock | null;
+
+      if (!sourceBlock) {
+        return;
+      }
+
+      resizeLogicalGroup(sourceBlock, Math.max(2, sourceBlock.itemCount_ ?? 2) - 1);
+    }), 'REMOVE_ITEM');
+  block.setFieldValue(currentOperator, 'OPERATOR');
+
+  const itemCount = Math.max(2, block.itemCount_ ?? 2);
+
+  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
+    block.appendValueInput(`ITEM${itemIndex}`)
+      .setCheck('EXPRESSION')
+      .appendField(`condition ${itemIndex + 1}`);
+  }
+
+  block.setInputsInline(false);
+}
+
+function updatePredicateFunctionShape(block: PredicateFunctionBlock, operator = normalizePredicateFunctionOperator(block.getFieldValue('OPERATOR'))) {
+  const primaryConnection =
+    block.getInput('FIRST')?.connection?.targetConnection
+    ?? block.getInput('INPUT')?.connection?.targetConnection
+    ?? null;
+  const secondaryConnection = block.getInput('SECOND')?.connection?.targetConnection ?? null;
+
+  ['FIRST', 'SECOND', 'INPUT'].forEach((inputName) => {
+    if (block.getInput(inputName)) {
+      block.removeInput(inputName);
+    }
+  });
+
+  if (isUnaryPredicateFunctionOperator(operator)) {
+    block.appendValueInput('INPUT')
+      .setCheck('EXPRESSION')
+      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
+    primaryConnection?.reconnect(block, 'INPUT');
+  } else {
+    block.appendValueInput('FIRST').setCheck('EXPRESSION');
+    block.appendValueInput('SECOND')
+      .setCheck('EXPRESSION')
+      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
+    primaryConnection?.reconnect(block, 'FIRST');
+    secondaryConnection?.reconnect(block, 'SECOND');
+  }
+
+  block.setInputsInline(true);
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
+}
+
+function createPredicateFunctionOperatorField(block: PredicateFunctionBlock, operator: PredicateFunctionOperator) {
+  return new FieldSearchDropdown(
+    operator,
+    PREDICATE_FUNCTION_OPTIONS,
+    (newValue) => {
+      const normalizedValue = normalizePredicateFunctionOperator(newValue);
+      block.updateShape_?.(normalizedValue);
+      return normalizedValue;
+    },
+  );
+}
+
+function createLogicalGroupActionField(
+  kind: 'add' | 'remove',
+  alt: string,
+  onClick: (field: Blockly.FieldImage) => void,
+) {
+  return new Blockly.FieldImage(
+    createLogicalGroupActionIcon(kind),
+    LOGICAL_GROUP_ACTION_ICON_SIZE,
+    LOGICAL_GROUP_ACTION_ICON_SIZE,
+    alt,
+    onClick,
+  );
+}
+
+function createLogicalGroupActionIcon(kind: 'add' | 'remove') {
+  const glyph = kind === 'add'
+    ? '<line x1="9" y1="4" x2="9" y2="14" stroke="#355070" stroke-width="1.6" stroke-linecap="round"/><line x1="4" y1="9" x2="14" y2="9" stroke="#355070" stroke-width="1.6" stroke-linecap="round"/>'
+    : '<line x1="4" y1="9" x2="14" y2="9" stroke="#355070" stroke-width="1.6" stroke-linecap="round"/>';
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${LOGICAL_GROUP_ACTION_ICON_SIZE}" height="${LOGICAL_GROUP_ACTION_ICON_SIZE}" viewBox="0 0 18 18"><rect x="0.75" y="0.75" width="16.5" height="16.5" rx="4" fill="#f6efe6" stroke="#355070" stroke-width="1.5"/>${glyph}</svg>`,
+  )}`;
+}
+
+function createLogicalGroupOperatorField(block: LogicalGroupBlock) {
+  return new Blockly.FieldDropdown([
+    ['and', 'and'],
+    ['or', 'or'],
+  ], (newValue) => {
+    return normalizeLogicalGroupOperator(newValue);
+  });
+}
+
+function normalizeLogicalGroupOperator(value: unknown) {
+  return value === 'or' ? 'or' : 'and';
+}
+
+function normalizePredicateFunctionOperator(value: unknown): PredicateFunctionOperator {
+  switch (value) {
+    case 'startsWith':
+    case 'endsWith':
+    case 'matchesRegex':
+    case 'isEmpty':
+    case 'contains':
+      return value;
+    default:
+      return 'contains';
+  }
+}
+
+function isUnaryPredicateFunctionOperator(operator: PredicateFunctionOperator) {
+  return operator === 'isEmpty';
+}
+
+function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
+  const nextCount = Math.max(2, itemCount);
+  const currentCount = Math.max(2, block.itemCount_ ?? 2);
+
+  if (nextCount === currentCount) {
+    return;
+  }
+
+  const connections = Array.from({ length: currentCount }, (_, index) => (
+    block.getInput(`ITEM${index}`)?.connection?.targetConnection ?? null
+  ));
+
+  for (let index = nextCount; index < currentCount; index += 1) {
+    connections[index]?.disconnect();
+  }
+
+  block.itemCount_ = nextCount;
+  block.updateShape_?.();
+
+  const reconnectCount = Math.min(nextCount, connections.length);
+
+  for (let index = 0; index < reconnectCount; index += 1) {
+    connections[index]?.reconnect(block, `ITEM${index}`);
+  }
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
 }
 
 function appendNewColumnFields(block: Blockly.Block) {

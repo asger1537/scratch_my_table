@@ -582,28 +582,14 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
-    case BLOCK_TYPES.isEmptyFunction:
-      return readUnaryCall(block, 'isEmpty');
     case BLOCK_TYPES.notFunction:
       return readUnaryCall(block, 'not');
-    case BLOCK_TYPES.equalsFunction:
-      return readFixedArityCall(block, 'equals', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.containsFunction:
-      return readFixedArityCall(block, 'contains', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.startsWithFunction:
-      return readFixedArityCall(block, 'startsWith', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.endsWithFunction:
-      return readFixedArityCall(block, 'endsWith', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.matchesRegexFunction:
-      return readFixedArityCall(block, 'matchesRegex', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.greaterThanFunction:
-      return readFixedArityCall(block, 'greaterThan', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.lessThanFunction:
-      return readFixedArityCall(block, 'lessThan', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.andFunction:
-      return readFlattenedBinaryCall(block, 'and', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.orFunction:
-      return readFlattenedBinaryCall(block, 'or', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.comparisonFunction:
+      return readComparisonExpression(block);
+    case BLOCK_TYPES.predicateFunction:
+      return readPredicateExpression(block);
+    case BLOCK_TYPES.logicalBinaryFunction:
+      return readLogicalBinaryExpression(block);
     default:
       return {
         issue: {
@@ -691,6 +677,71 @@ function readFlattenedBinaryCall(
   };
 }
 
+function readComparisonExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const first = readRequiredExpression(block, 'FIRST');
+  const second = readRequiredExpression(block, 'SECOND');
+
+  if ('issue' in first) {
+    return first;
+  }
+
+  if ('issue' in second) {
+    return second;
+  }
+
+  return {
+    expression: createComparatorExpression(
+      getFieldString(block, 'OPERATOR') as 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte',
+      first.expression,
+      second.expression,
+    ),
+  };
+}
+
+function readPredicateExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const operator = getFieldString(block, 'OPERATOR') as 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
+
+  if (operator === 'isEmpty') {
+    return readFixedArityCall(block, operator, ['INPUT']);
+  }
+
+  return readFixedArityCall(block, operator, ['FIRST', 'SECOND']);
+}
+
+function readLogicalBinaryExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const operator = getFieldString(block, 'OPERATOR') as 'and' | 'or';
+  const inputNames = getLogicalGroupInputNames(block);
+
+  if (inputNames.length < 2) {
+    return {
+      issue: missingInputIssue(block, `ITEM${inputNames.length}`),
+    };
+  }
+
+  const args: WorkflowExpression[] = [];
+
+  for (const inputName of inputNames) {
+    const expression = readRequiredExpression(block, inputName);
+
+    if ('issue' in expression) {
+      return expression;
+    }
+
+    args.push(expression.expression);
+  }
+
+  return {
+    expression: flattenCallExpression(
+      {
+        kind: 'call',
+        name: operator,
+        args,
+      },
+      operator,
+    ),
+  };
+}
+
 function flattenCallExpression(expression: WorkflowExpression, name: 'concat' | 'and' | 'or'): WorkflowExpression {
   if (expression.kind !== 'call' || expression.name !== name) {
     return expression;
@@ -704,6 +755,209 @@ function flattenCallExpression(expression: WorkflowExpression, name: 'concat' | 
       return flattened.kind === 'call' && flattened.name === name ? flattened.args : [flattened];
     }),
   };
+}
+
+function createComparatorExpression(
+  operator: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte',
+  first: WorkflowExpression,
+  second: WorkflowExpression,
+): WorkflowExpression {
+  switch (operator) {
+    case 'eq':
+      return {
+        kind: 'call',
+        name: 'equals',
+        args: [first, second],
+      };
+    case 'ne':
+      return {
+        kind: 'call',
+        name: 'not',
+        args: [{
+          kind: 'call',
+          name: 'equals',
+          args: [first, second],
+        }],
+      };
+    case 'lt':
+      return {
+        kind: 'call',
+        name: 'lessThan',
+        args: [first, second],
+      };
+    case 'lte':
+      return {
+        kind: 'call',
+        name: 'or',
+        args: [
+          {
+            kind: 'call',
+            name: 'lessThan',
+            args: [first, second],
+          },
+          {
+            kind: 'call',
+            name: 'equals',
+            args: [first, second],
+          },
+        ],
+      };
+    case 'gt':
+      return {
+        kind: 'call',
+        name: 'greaterThan',
+        args: [first, second],
+      };
+    case 'gte':
+      return {
+        kind: 'call',
+        name: 'or',
+        args: [
+          {
+            kind: 'call',
+            name: 'greaterThan',
+            args: [first, second],
+          },
+          {
+            kind: 'call',
+            name: 'equals',
+            args: [first, second],
+          },
+        ],
+      };
+    default:
+      return {
+        kind: 'call',
+        name: 'equals',
+        args: [first, second],
+      };
+  }
+}
+
+function detectComparatorExpression(expression: Extract<WorkflowExpression, { kind: 'call' }>) {
+  switch (expression.name) {
+    case 'equals':
+      return {
+        operator: 'eq' as const,
+        first: expression.args[0],
+        second: expression.args[1],
+      };
+    case 'lessThan':
+      return {
+        operator: 'lt' as const,
+        first: expression.args[0],
+        second: expression.args[1],
+      };
+    case 'greaterThan':
+      return {
+        operator: 'gt' as const,
+        first: expression.args[0],
+        second: expression.args[1],
+      };
+    case 'not': {
+      const candidate = expression.args[0];
+
+      if (candidate?.kind === 'call' && candidate.name === 'equals') {
+        return {
+          operator: 'ne' as const,
+          first: candidate.args[0],
+          second: candidate.args[1],
+        };
+      }
+
+      return null;
+    }
+    case 'or':
+      return detectRangeComparatorExpression(expression);
+    default:
+      return null;
+  }
+}
+
+function detectRangeComparatorExpression(expression: Extract<WorkflowExpression, { kind: 'call' }>) {
+  if (expression.args.length !== 2) {
+    return null;
+  }
+
+  const [left, right] = expression.args;
+
+  const lessThanMatch = matchComparatorPair(left, right, 'lessThan');
+
+  if (lessThanMatch) {
+    return {
+      operator: 'lte' as const,
+      first: lessThanMatch.first,
+      second: lessThanMatch.second,
+    };
+  }
+
+  const greaterThanMatch = matchComparatorPair(left, right, 'greaterThan');
+
+  if (greaterThanMatch) {
+    return {
+      operator: 'gte' as const,
+      first: greaterThanMatch.first,
+      second: greaterThanMatch.second,
+    };
+  }
+
+  return null;
+}
+
+function matchComparatorPair(
+  left: WorkflowExpression,
+  right: WorkflowExpression,
+  comparisonName: 'lessThan' | 'greaterThan',
+) {
+  const direct = matchComparatorPairOrder(left, right, comparisonName);
+
+  if (direct) {
+    return direct;
+  }
+
+  return matchComparatorPairOrder(right, left, comparisonName);
+}
+
+function matchComparatorPairOrder(
+  comparisonExpression: WorkflowExpression,
+  equalsExpression: WorkflowExpression,
+  comparisonName: 'lessThan' | 'greaterThan',
+) {
+  if (comparisonExpression.kind !== 'call' || comparisonExpression.name !== comparisonName) {
+    return null;
+  }
+
+  if (equalsExpression.kind !== 'call' || equalsExpression.name !== 'equals') {
+    return null;
+  }
+
+  if (
+    sameExpression(comparisonExpression.args[0], equalsExpression.args[0])
+    && sameExpression(comparisonExpression.args[1], equalsExpression.args[1])
+  ) {
+    return {
+      first: comparisonExpression.args[0],
+      second: comparisonExpression.args[1],
+    };
+  }
+
+  return null;
+}
+
+function sameExpression(left: WorkflowExpression, right: WorkflowExpression) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function getLogicalGroupInputNames(block: Blockly.Block) {
+  const inputNames: string[] = [];
+  let index = 0;
+
+  while (block.getInput(`ITEM${index}`)) {
+    inputNames.push(`ITEM${index}`);
+    index += 1;
+  }
+
+  return inputNames;
 }
 
 function readStatementItems<T>(
@@ -938,6 +1192,17 @@ function createExpressionBlock(workspace: Blockly.Workspace, expression: Workflo
 }
 
 function createCallBlock(workspace: Blockly.Workspace, expression: Extract<WorkflowExpression, { kind: 'call' }>) {
+  const comparatorExpression = detectComparatorExpression(expression);
+
+  if (comparatorExpression) {
+    const block = createBlock(workspace, BLOCK_TYPES.comparisonFunction);
+
+    block.setFieldValue(comparatorExpression.operator, 'OPERATOR');
+    connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, comparatorExpression.first));
+    connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, comparatorExpression.second));
+    return block;
+  }
+
   switch (expression.name) {
     case 'trim':
     case 'lower':
@@ -945,7 +1210,6 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'collapseWhitespace':
     case 'first':
     case 'last':
-    case 'isEmpty':
     case 'not': {
       const blockType = {
         trim: BLOCK_TYPES.trimFunction,
@@ -954,7 +1218,6 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
         collapseWhitespace: BLOCK_TYPES.collapseWhitespaceFunction,
         first: BLOCK_TYPES.firstFunction,
         last: BLOCK_TYPES.lastFunction,
-        isEmpty: BLOCK_TYPES.isEmptyFunction,
         not: BLOCK_TYPES.notFunction,
       }[expression.name];
       const block = createBlock(workspace, blockType);
@@ -992,30 +1255,49 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
       return block;
     }
-    case 'equals':
     case 'contains':
     case 'startsWith':
     case 'endsWith':
     case 'matchesRegex':
-    case 'greaterThan':
-    case 'lessThan': {
-      const blockType = {
-        equals: BLOCK_TYPES.equalsFunction,
-        contains: BLOCK_TYPES.containsFunction,
-        startsWith: BLOCK_TYPES.startsWithFunction,
-        endsWith: BLOCK_TYPES.endsWithFunction,
-        matchesRegex: BLOCK_TYPES.matchesRegexFunction,
-        greaterThan: BLOCK_TYPES.greaterThanFunction,
-        lessThan: BLOCK_TYPES.lessThanFunction,
-      }[expression.name];
-      const block = createBlock(workspace, blockType);
+    case 'isEmpty': {
+      const block = createBlock(workspace, BLOCK_TYPES.predicateFunction);
+
+      block.setFieldValue(expression.name, 'OPERATOR');
+
+      if (expression.name === 'isEmpty') {
+        connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+        return block;
+      }
 
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
       return block;
     }
     case 'and':
-    case 'or':
+    case 'or': {
+      const flattenedExpression = flattenCallExpression(expression, expression.name) as Extract<WorkflowExpression, { kind: 'call' }>;
+      const block = createBlock(workspace, BLOCK_TYPES.logicalBinaryFunction);
+      const logicalBlock = block as Blockly.Block & {
+        loadExtraState?: (state: { itemCount?: number }) => void;
+        itemCount_?: number;
+        updateShape_?: () => void;
+      };
+
+      logicalBlock.loadExtraState?.({ itemCount: Math.max(2, flattenedExpression.args.length) });
+
+      if (!logicalBlock.loadExtraState) {
+        logicalBlock.itemCount_ = Math.max(2, flattenedExpression.args.length);
+        logicalBlock.updateShape_?.();
+      }
+
+      block.setFieldValue(flattenedExpression.name, 'OPERATOR');
+
+      flattenedExpression.args.forEach((argument: WorkflowExpression, index: number) => {
+        connectValueBlock(block, `ITEM${index}`, createExpressionBlock(workspace, argument));
+      });
+
+      return block;
+    }
     case 'concat': {
       if (expression.args.length > 2) {
         return createCallBlock(workspace, {
@@ -1025,12 +1307,7 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
         });
       }
 
-      const blockType = {
-        and: BLOCK_TYPES.andFunction,
-        or: BLOCK_TYPES.orFunction,
-        concat: BLOCK_TYPES.concatFunction,
-      }[expression.name];
-      const block = createBlock(workspace, blockType);
+      const block = createBlock(workspace, BLOCK_TYPES.concatFunction);
 
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));

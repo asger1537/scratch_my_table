@@ -299,7 +299,71 @@ describe('block-based workflow authoring', () => {
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
-    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.matchesRegexFunction);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.predicateFunction);
+  });
+
+  it('roundtrips symbolic comparator operators without semantic loss', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_symbolic_comparators',
+      name: 'Symbolic comparators',
+      steps: [
+        {
+          id: 'step_filter_orders',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call(
+            'and',
+            call('or',
+              call('lessThan', column('col_order_total'), literal(100)),
+              call('equals', column('col_order_total'), literal(100)),
+            ),
+            call('not', call('equals', column('col_order_status'), literal('cancelled'))),
+          ),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_order_total', 'col_order_status'], workflow);
+    const comparisonBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.comparisonFunction);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(comparisonBlocks.map((block) => block.getFieldValue('OPERATOR')).sort()).toEqual(['lte', 'ne']);
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('reconstructs flat multi-argument logical groups as one horizontal block', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_flat_logic_group',
+      name: 'Flat logic group',
+      steps: [
+        {
+          id: 'step_filter_orders',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call(
+            'and',
+            call('greaterThan', column('col_order_total'), literal(100)),
+            call('equals', column('col_order_status'), literal('paid')),
+            call('not', call('isEmpty', column('col_customer_id'))),
+          ),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_order_total', 'col_order_status', 'col_customer_id'], workflow);
+    const logicalBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.logicalBinaryFunction);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(logicalBlocks).toHaveLength(1);
+    expect(logicalBlocks[0]?.getFieldValue('OPERATOR')).toBe('and');
+    expect(logicalBlocks[0]?.getInput('ITEM0')).toBeTruthy();
+    expect(logicalBlocks[0]?.getInput('ITEM1')).toBeTruthy();
+    expect(logicalBlocks[0]?.getInput('ITEM2')).toBeTruthy();
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
   });
 
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
@@ -444,10 +508,25 @@ describe('block-based workflow authoring', () => {
   it('uses expression-based logic blocks instead of legacy condition blocks', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
-    const isEmptyBlock = workspace.newBlock(BLOCK_TYPES.isEmptyFunction);
+    const comparisonBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
+    const predicateBlock = workspace.newBlock(BLOCK_TYPES.predicateFunction);
+    const logicalBlock = workspace.newBlock(BLOCK_TYPES.logicalBinaryFunction);
 
     expect(transformBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
-    expect(isEmptyBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(predicateBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(comparisonBlock.getFieldValue('OPERATOR')).toBe('eq');
+    expect(predicateBlock.getFieldValue('OPERATOR')).toBe('contains');
+    expect(logicalBlock.getFieldValue('OPERATOR')).toBe('and');
+    expect(comparisonBlock.inputsInline).toBe(true);
+    expect(predicateBlock.inputsInline).toBe(true);
+    expect(logicalBlock.inputsInline).toBe(false);
+    expect(logicalBlock.getInput('HEADER')).toBeTruthy();
+    expect(logicalBlock.getField('ADD_ITEM')).toBeTruthy();
+    expect(logicalBlock.getField('REMOVE_ITEM')).toBeTruthy();
+    expect(predicateBlock.getInput('FIRST')).toBeTruthy();
+    expect(predicateBlock.getInput('SECOND')).toBeTruthy();
+    expect(logicalBlock.getInput('ITEM0')).toBeTruthy();
+    expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
   });
 
   it('exposes schema-aware explicit column IDs for multi-select fields', async () => {
