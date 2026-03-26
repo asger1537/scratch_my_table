@@ -80,7 +80,10 @@ export const BLOCK_TYPES = {
   collapseWhitespaceFunction: 'collapse_whitespace_function',
   substringFunction: 'substring_function',
   replaceFunction: 'replace_function',
+  extractRegexFunction: 'extract_regex_function',
+  replaceRegexFunction: 'replace_regex_function',
   splitFunction: 'split_function',
+  atIndexFunction: 'at_index_function',
   firstFunction: 'first_function',
   lastFunction: 'last_function',
   coalesceFunction: 'coalesce_function',
@@ -298,6 +301,16 @@ export function registerWorkflowBlocks() {
     },
   };
 
+  createBinaryFunctionBlock(BLOCK_TYPES.extractRegexFunction, 'extract regex', 'INPUT', 'pattern', 'PATTERN', FUNCTION_COLOR);
+  Blockly.Blocks[BLOCK_TYPES.replaceRegexFunction] = {
+    init() {
+      this.appendValueInput('INPUT').setCheck('EXPRESSION').appendField('replace regex');
+      this.appendValueInput('PATTERN').setCheck('EXPRESSION').appendField('pattern');
+      this.appendValueInput('REPLACEMENT').setCheck('EXPRESSION').appendField('with');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(FUNCTION_COLOR);
+    },
+  };
   Blockly.Blocks[BLOCK_TYPES.splitFunction] = {
     init() {
       this.appendValueInput('INPUT').setCheck('EXPRESSION').appendField('split');
@@ -307,6 +320,7 @@ export function registerWorkflowBlocks() {
     },
   };
 
+  createBinaryFunctionBlock(BLOCK_TYPES.atIndexFunction, 'get item at', 'INPUT', 'index', 'INDEX', FUNCTION_COLOR);
   createBinaryFunctionBlock(BLOCK_TYPES.coalesceFunction, 'coalesce', 'FIRST', 'fallback', 'SECOND', FUNCTION_COLOR);
   createBinaryFunctionBlock(BLOCK_TYPES.concatFunction, 'concat', 'FIRST', 'with', 'SECOND', FUNCTION_COLOR);
   createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
@@ -389,9 +403,12 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
           { kind: 'block', type: BLOCK_TYPES.collapseWhitespaceFunction },
           { kind: 'block', type: BLOCK_TYPES.substringFunction },
           { kind: 'block', type: BLOCK_TYPES.replaceFunction },
+          { kind: 'block', type: BLOCK_TYPES.extractRegexFunction },
+          { kind: 'block', type: BLOCK_TYPES.replaceRegexFunction },
           { kind: 'block', type: BLOCK_TYPES.splitFunction },
           { kind: 'block', type: BLOCK_TYPES.firstFunction },
           { kind: 'block', type: BLOCK_TYPES.lastFunction },
+          { kind: 'block', type: BLOCK_TYPES.atIndexFunction },
           { kind: 'block', type: BLOCK_TYPES.coalesceFunction },
           { kind: 'block', type: BLOCK_TYPES.concatFunction },
         ],

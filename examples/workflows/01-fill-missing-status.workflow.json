@@ -14,7 +14,13 @@
         "name": "coalesce",
         "args": [
           {
-            "kind": "value"
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
           },
           {
             "kind": "literal",

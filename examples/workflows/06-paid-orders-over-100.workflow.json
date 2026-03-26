@@ -1,10 +1,10 @@
 {
   "version": 2,
-  "workflowId": "wf_paid_orders_over_100",
-  "name": "Paid orders over 100",
+  "workflowId": "wf_keep_active_or_pending_vips",
+  "name": "Keep active or pending VIP customers",
   "steps": [
     {
-      "id": "step_paid_orders_over_100",
+      "id": "step_keep_active_or_pending_vips",
       "type": "filterRows",
       "mode": "keep",
       "condition": {
@@ -13,29 +13,73 @@
         "args": [
           {
             "kind": "call",
-            "name": "greaterThan",
+            "name": "equals",
             "args": [
               {
                 "kind": "column",
-                "columnId": "col_order_total"
+                "columnId": "col_vip"
               },
               {
                 "kind": "literal",
-                "value": 100
+                "value": true
               }
             ]
           },
           {
             "kind": "call",
-            "name": "equals",
+            "name": "or",
             "args": [
               {
-                "kind": "column",
-                "columnId": "col_order_status"
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "lower",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_status"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "active"
+                  }
+                ]
               },
               {
-                "kind": "literal",
-                "value": "paid"
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "lower",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_status"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "pending"
+                  }
+                ]
               }
             ]
           }

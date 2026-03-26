@@ -1,11 +1,12 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { importCsvWorkbook } from '../domain/csv';
 import { getActiveTable, type Table } from '../domain/model';
-import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from './index';
+import { importXlsxWorkbook } from '../domain/xlsx';
+import { executeValidatedWorkflow, executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from './index';
 
 describe('workflow validation and execution', () => {
   it('structurally validates canonical v2 workflows and rejects non-v2 workflow versions', () => {
@@ -130,6 +131,38 @@ describe('workflow validation and execution', () => {
       workflow,
       issues: [],
     });
+  });
+
+  it('runs every example workflow against Customers_Messy.xlsx', async () => {
+    const workbookPath = path.resolve(process.cwd(), 'Customers_Messy.xlsx');
+    const workbookBytes = await readFile(workbookPath);
+    const arrayBuffer = workbookBytes.buffer.slice(
+      workbookBytes.byteOffset,
+      workbookBytes.byteOffset + workbookBytes.byteLength,
+    ) as ArrayBuffer;
+    const workbook = importXlsxWorkbook('Customers_Messy.xlsx', arrayBuffer);
+    const table = getActiveTable(workbook);
+
+    if (!table) {
+      throw new Error('Expected active table for Customers_Messy.xlsx.');
+    }
+
+    const exampleDirectory = path.resolve(process.cwd(), 'examples', 'workflows');
+    const exampleFiles = (await readdir(exampleDirectory))
+      .filter((fileName) => fileName.endsWith('.workflow.json'))
+      .sort();
+
+    for (const fileName of exampleFiles) {
+      const workflow = JSON.parse(await readFile(path.join(exampleDirectory, fileName), 'utf8')) as Workflow;
+      const structural = validateWorkflowStructure(workflow);
+      const semantic = validateWorkflowSemantics(workflow, table);
+      const execution = executeWorkflow(workflow, table);
+
+      expect(structural.valid, `${fileName} should pass structural validation`).toBe(true);
+      expect(semantic.valid, `${fileName} should pass semantic validation`).toBe(true);
+      expect(execution.validationErrors, `${fileName} should execute without validation errors`).toEqual([]);
+      expect(execution.transformedTable, `${fileName} should produce a transformed table`).not.toBeNull();
+    }
   });
 
   it('lets later valid steps see schema changes from earlier valid steps', () => {
@@ -451,6 +484,108 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_initials).toBe('AN');
     expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_initials).toBe('CS');
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_initials).toBe('DL');
+  });
+
+  it('evaluates atIndex on strings and split lists deterministically', () => {
+    const table = loadCsvTable('full_name\r\nFirst Middle Last\r\nSolo\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_extract_name_parts',
+      name: 'Extract name parts',
+      steps: [
+        {
+          id: 'step_extract_middle_name',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_middle_name',
+            displayName: 'middle_name',
+          },
+          expression: call('atIndex', call('split', column('col_full_name'), literal(' ')), literal(1)),
+        },
+        {
+          id: 'step_extract_out_of_bounds',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_missing_part',
+            displayName: 'missing_part',
+          },
+          expression: call('atIndex', call('split', column('col_full_name'), literal(' ')), literal(10)),
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_middle_name).toBe('Middle');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_middle_name).toBe(null);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_missing_part).toBe(null);
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_missing_part).toBe(null);
+  });
+
+  it('evaluates extractRegex and replaceRegex deterministically', () => {
+    const table = loadCsvTable('note\r\nOrder: ORD-1234 (urgent)\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_regex_transforms',
+      name: 'Regex transforms',
+      steps: [
+        {
+          id: 'step_extract_order_id',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_order_id',
+            displayName: 'order_id',
+          },
+          expression: call('extractRegex', column('col_note'), literal('ORD-\\d+')),
+        },
+        {
+          id: 'step_compact_note',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_note_compact',
+            displayName: 'note_compact',
+          },
+          expression: call('replaceRegex', column('col_note'), literal('\\s+'), literal('_')),
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_order_id).toBe('ORD-1234');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_note_compact).toBe('Order:_ORD-1234_(urgent)');
+
+    const malformedWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_regex_transforms_malformed',
+      name: 'Regex transforms malformed',
+      steps: [
+        {
+          id: 'step_bad_extract',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_extract',
+            displayName: 'bad_extract',
+          },
+          expression: call('extractRegex', column('col_note'), literal('[abc')),
+        },
+        {
+          id: 'step_bad_replace',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_replace',
+            displayName: 'bad_replace',
+          },
+          expression: call('replaceRegex', column('col_note'), literal('[abc'), literal('_')),
+        },
+      ],
+    };
+
+    const malformedExecution = executeValidatedWorkflow(malformedWorkflow, table);
+
+    expect(malformedExecution.transformedTable.rowsById.row_1.cellsByColumnId.col_bad_extract).toBe(null);
+    expect(malformedExecution.transformedTable.rowsById.row_1.cellsByColumnId.col_bad_replace).toBe('Order: ORD-1234 (urgent)');
   });
 
   it('filters rows with boolean call expressions and rejects incompatible comparators', async () => {
@@ -836,7 +971,10 @@ function call(
     | 'collapseWhitespace'
     | 'substring'
     | 'replace'
+    | 'extractRegex'
+    | 'replaceRegex'
     | 'split'
+    | 'atIndex'
     | 'first'
     | 'last'
     | 'coalesce'

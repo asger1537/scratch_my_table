@@ -238,6 +238,68 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.lastFunction);
   });
 
+  it('reconstructs atIndex function trees', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_extract_middle_name',
+      name: 'Extract middle name',
+      steps: [
+        {
+          id: 'step_extract_middle_name',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_middle_name',
+            displayName: 'middle_name',
+          },
+          expression: call('atIndex', call('split', column('col_name'), literal(' ')), literal(1)),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_name', 'col_middle_name'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.atIndexFunction);
+  });
+
+  it('reconstructs extractRegex and replaceRegex function trees', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_regex_transform_blocks',
+      name: 'Regex transform blocks',
+      steps: [
+        {
+          id: 'step_extract_order_id',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_order_id',
+            displayName: 'order_id',
+          },
+          expression: call('extractRegex', column('col_note'), literal('ORD-\\d+')),
+        },
+        {
+          id: 'step_clean_note',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_note_compact',
+            displayName: 'note_compact',
+          },
+          expression: call('replaceRegex', column('col_note'), literal('\\s+'), literal('_')),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_note', 'col_order_id', 'col_note_compact'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.extractRegexFunction);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.replaceRegexFunction);
+  });
+
   it('reconstructs deriveColumn workflows as create-column blank and copy modes when possible', () => {
     const workflow: Workflow = {
       version: 2,
@@ -778,7 +840,10 @@ function call(
     | 'collapseWhitespace'
     | 'substring'
     | 'replace'
+    | 'extractRegex'
+    | 'replaceRegex'
     | 'split'
+    | 'atIndex'
     | 'first'
     | 'last'
     | 'coalesce'

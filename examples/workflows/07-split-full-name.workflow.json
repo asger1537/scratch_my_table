@@ -1,21 +1,21 @@
 {
   "version": 2,
-  "workflowId": "wf_split_full_name",
-  "name": "Split full name",
+  "workflowId": "wf_split_last_name",
+  "name": "Split last name",
   "steps": [
     {
-      "id": "step_split_full_name",
+      "id": "step_split_last_name",
       "type": "splitColumn",
-      "columnId": "col_full_name",
+      "columnId": "col_last_name",
       "delimiter": " ",
       "outputColumns": [
         {
-          "columnId": "col_first_name",
-          "displayName": "first_name"
+          "columnId": "col_last_name_part_1",
+          "displayName": "last_name_part_1"
         },
         {
-          "columnId": "col_last_name",
-          "displayName": "last_name"
+          "columnId": "col_last_name_part_2",
+          "displayName": "last_name_part_2"
         }
       ]
     }

@@ -1,19 +1,19 @@
 {
   "version": 2,
-  "workflowId": "wf_sort_orders",
-  "name": "Sort orders",
+  "workflowId": "wf_sort_customers",
+  "name": "Sort customers",
   "steps": [
     {
-      "id": "step_sort_orders",
+      "id": "step_sort_customers",
       "type": "sortRows",
       "sorts": [
         {
-          "columnId": "col_ordered_at",
+          "columnId": "col_sign_up_date",
           "direction": "desc"
         },
         {
-          "columnId": "col_order_total",
-          "direction": "desc"
+          "columnId": "col_last_name",
+          "direction": "asc"
         }
       ]
     }

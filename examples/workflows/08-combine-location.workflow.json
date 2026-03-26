@@ -1,19 +1,19 @@
 {
   "version": 2,
-  "workflowId": "wf_combine_location",
-  "name": "Create location column",
+  "workflowId": "wf_combine_contact_emails",
+  "name": "Create contact emails column",
   "steps": [
     {
-      "id": "step_combine_location",
+      "id": "step_combine_contact_emails",
       "type": "combineColumns",
       "columnIds": [
-        "col_city",
-        "col_state"
+        "col_email",
+        "col_email_2"
       ],
-      "separator": ", ",
+      "separator": " | ",
       "newColumn": {
-        "columnId": "col_location",
-        "displayName": "location"
+        "columnId": "col_contact_emails",
+        "displayName": "contact_emails"
       }
     }
   ]

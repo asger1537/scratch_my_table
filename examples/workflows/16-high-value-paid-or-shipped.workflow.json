@@ -1,11 +1,11 @@
 {
   "version": 2,
-  "workflowId": "wf_high_value_paid_or_shipped",
-  "name": "Keep high-value paid or shipped orders",
-  "description": "Keep rows where order_total is greater than 100 and order_status is either paid or shipped.",
+  "workflowId": "wf_keep_north_or_west_active_or_pending_customers",
+  "name": "Keep north or west customers who are active or pending",
+  "description": "Keep rows where the segment is north or west and the status is active or pending.",
   "steps": [
     {
-      "id": "step_keep_high_value_paid_or_shipped",
+      "id": "step_keep_north_or_west_active_or_pending_customers",
       "type": "filterRows",
       "mode": "keep",
       "condition": {
@@ -14,15 +14,59 @@
         "args": [
           {
             "kind": "call",
-            "name": "greaterThan",
+            "name": "or",
             "args": [
               {
-                "kind": "column",
-                "columnId": "col_order_total"
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "lower",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_column"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "north"
+                  }
+                ]
               },
               {
-                "kind": "literal",
-                "value": 100
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "lower",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_column"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "west"
+                  }
+                ]
               }
             ]
           },
@@ -35,12 +79,24 @@
                 "name": "equals",
                 "args": [
                   {
-                    "kind": "column",
-                    "columnId": "col_order_status"
+                    "kind": "call",
+                    "name": "lower",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_status"
+                          }
+                        ]
+                      }
+                    ]
                   },
                   {
                     "kind": "literal",
-                    "value": "paid"
+                    "value": "active"
                   }
                 ]
               },
@@ -49,12 +105,24 @@
                 "name": "equals",
                 "args": [
                   {
-                    "kind": "column",
-                    "columnId": "col_order_status"
+                    "kind": "call",
+                    "name": "lower",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_status"
+                          }
+                        ]
+                      }
+                    ]
                   },
                   {
                     "kind": "literal",
-                    "value": "shipped"
+                    "value": "pending"
                   }
                 ]
               }

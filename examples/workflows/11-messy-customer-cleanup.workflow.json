@@ -2,13 +2,14 @@
   "version": 2,
   "workflowId": "wf_messy_customer_cleanup",
   "name": "Messy customer cleanup",
-  "description": "Normalize text, fill defaults, remove incomplete rows, and sort for export.",
+  "description": "Normalize text, recover missing email from Email (2), fill defaults, remove incomplete rows, and sort for export.",
   "steps": [
     {
       "id": "step_normalize_email",
       "type": "scopedTransform",
       "columnIds": [
-        "col_email"
+        "col_email",
+        "col_email_2"
       ],
       "expression": {
         "kind": "call",
@@ -27,11 +28,13 @@
       }
     },
     {
-      "id": "step_normalize_name",
+      "id": "step_normalize_text_columns",
       "type": "scopedTransform",
       "columnIds": [
-        "col_full_name",
-        "col_city"
+        "col_first_name",
+        "col_last_name",
+        "col_column",
+        "col_status"
       ],
       "expression": {
         "kind": "call",
@@ -50,6 +53,38 @@
       }
     },
     {
+      "id": "step_fill_email_from_email_2",
+      "type": "scopedTransform",
+      "columnIds": [
+        "col_email"
+      ],
+      "expression": {
+        "kind": "call",
+        "name": "coalesce",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_email_2"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "step_fill_status",
       "type": "scopedTransform",
       "columnIds": [
@@ -60,7 +95,13 @@
         "name": "coalesce",
         "args": [
           {
-            "kind": "value"
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
           },
           {
             "kind": "literal",
@@ -70,16 +111,61 @@
       }
     },
     {
-      "id": "step_location",
-      "type": "combineColumns",
-      "columnIds": [
-        "col_city",
-        "col_state"
-      ],
-      "separator": ", ",
+      "id": "step_full_name",
+      "type": "deriveColumn",
       "newColumn": {
-        "columnId": "col_location",
-        "displayName": "location"
+        "columnId": "col_full_name",
+        "displayName": "full_name"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "concat",
+        "args": [
+          {
+            "kind": "call",
+            "name": "coalesce",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_first_name"
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": ""
+              }
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": " "
+          },
+          {
+            "kind": "call",
+            "name": "coalesce",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_last_name"
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": ""
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -115,11 +201,11 @@
       "type": "sortRows",
       "sorts": [
         {
-          "columnId": "col_signup_date",
+          "columnId": "col_sign_up_date",
           "direction": "desc"
         },
         {
-          "columnId": "col_full_name",
+          "columnId": "col_last_name",
           "direction": "asc"
         }
       ]

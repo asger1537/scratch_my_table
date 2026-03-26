@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "workflowId": "wf_fill_email_from_customer_id",
-  "name": "Fill missing email from customer ID",
+  "workflowId": "wf_fill_email_from_email_2",
+  "name": "Fill missing email from Email (2)",
   "steps": [
     {
       "id": "step_scoped_transform_1",
@@ -23,8 +23,14 @@
             ]
           },
           {
-            "kind": "column",
-            "columnId": "col_customer_id"
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_email_2"
+              }
+            ]
           }
         ]
       }
@@ -54,7 +60,7 @@
       "id": "step_dropcolumns_3",
       "type": "dropColumns",
       "columnIds": [
-        "col_customer_id"
+        "col_email_2"
       ]
     }
   ]

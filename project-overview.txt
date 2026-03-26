@@ -1,5 +1,5 @@
 Project overview
-Generated: 2026-03-24 15:48:57 +01:00
+Generated: 2026-03-26 09:04:00 +01:00
 
 Included files
 --------------
@@ -27,6 +27,7 @@ src\domain\xlsx.ts
 src\editor\authoring.ts
 src\editor\blocks.ts
 src\editor\FieldColumnMultiSelect.ts
+src\editor\FieldSearchDropdown.ts
 src\editor\index.ts
 src\editor\integration.ts
 src\editor\mapping.test.ts
@@ -63,6 +64,17 @@ The absolute highest priority constraint in this repository is that **we do not 
 *   **No Legacy Support:** Do not write migration scripts, legacy adapters, versioned upgrade paths (e.g., `v1_to_v2` mappers), or fallback logic for older data shapes.
 *   **One Single Version:** We aim for exactly one single, clean, current version of the code. The codebase must reflect only the present architectural truth.
 *   **If it changes, it breaks:** If we decide to change the schema or the AST (e.g., merging `Condition` into `Expression`), we do not support both simultaneously. We replace the old concept entirely.
+
+## 2. Current Workflow Runtime Truth
+
+The current canonical workflow format is **Workflow IR v2** with a single shared `Expression` AST.
+
+Rules:
+
+*   **No `Condition` AST:** Logical checks for `filterRows.condition` and `scopedTransform.rowCondition` use the same `Expression` AST as transforms.
+*   **Boolean logic is functional:** Predicates are represented with boolean-returning `call` nodes such as `and`, `or`, `not`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, and `isEmpty`.
+*   **Editor is not the source of truth:** Blockly is an authoring layer over canonical workflow JSON. Runtime validation and execution operate on canonical IR only.
+*   **Whitespace-sensitive logic is explicit:** Do not introduce special predicate flags for whitespace emptiness. Use function composition such as `isEmpty(trim(column("email")))`.
 
 ===== docs\data-model.md =====
 # Canonical Data Model
@@ -344,8 +356,8 @@ Rules:
 
 - `null` means the source cell had no value.
 - `""` means the source explicitly contained an empty text value.
-- Emptiness-sensitive workflow behavior treats both `null` and `""` as empty where the step semantics say â€œemptyâ€.
-- `null` is not equal to `""` for deduplication, equality filters, or sort comparison.
+- Emptiness-sensitive behavior only treats `null` and `""` as empty.
+- `null` is not equal to `""` for equality checks, deduplication, or sort comparison.
 
 ### Whitespace-Only Values
 
@@ -354,14 +366,13 @@ Whitespace-only text is preserved on import as a string.
 Rules:
 
 - `"   "` is not automatically converted to `null`.
-- whitespace-only strings are treated as empty by default for emptiness-sensitive workflow behavior.
-- `isEmpty` treats whitespace-only strings as empty unless `treatWhitespaceAsEmpty` is explicitly `false`.
-- `scopedTransform` treats whitespace-only strings as empty for `coalesce(...)` unless `treatWhitespaceAsEmpty` is explicitly `false`.
-- String functions such as `trim(value)` or `collapseWhitespace(value)` may turn whitespace-only strings into `""`.
+- whitespace-only strings are not treated as empty by default
+- if a workflow wants whitespace-sensitive emptiness, it must express that directly, for example `isEmpty(trim(column("email")))`
+- `trim(...)` or `collapseWhitespace(...)` may turn whitespace-only strings into `""`
 
 ## Expression Semantics
 
-Workflow IR v2 uses one explicit expression AST.
+Workflow IR v2 uses one shared expression AST for both data transforms and logical checks.
 
 Expression node kinds:
 
@@ -372,10 +383,10 @@ Expression node kinds:
 
 Rules:
 
-- `value` means the current selected cell and is valid only inside `scopedTransform`.
-- `column` means another column in the current row and is valid inside both `deriveColumn` and `scopedTransform`.
-- `literal` may be `string`, `number`, `boolean`, or `null`.
-- `call` applies one built-in pure function.
+- `value` means the current selected cell and is valid only inside `scopedTransform.expression`
+- `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
+- `literal` may be `string`, `number`, `boolean`, or `null`
+- `call` applies one built-in pure function
 
 Built-in function semantics:
 
@@ -388,30 +399,31 @@ Built-in function semantics:
 - `split(x, delimiter)`: splits a string into a list of string parts
 - `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
 - `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
-- `coalesce(a, b)`: returns `a` unless `a` is considered empty for this step, otherwise returns `b`
-- `concat(a, b, ...)`: stringifies non-null values and joins them with no separator
+- `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
+- `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
+- `isEmpty(x)`: returns `true` only when `x` is `null` or `""`
+- `equals(a, b)`: exact scalar equality
+- `contains(a, b)`: string containment
+- `startsWith(a, b)`: string prefix check
+- `endsWith(a, b)`: string suffix check
+- `matchesRegex(a, b)`: regex test where `b` is a pattern string
+- `greaterThan(a, b)`: ordered scalar comparison
+- `lessThan(a, b)`: ordered scalar comparison
+- `and(a, b, ...)`: boolean conjunction
+- `or(a, b, ...)`: boolean disjunction
+- `not(x)`: boolean negation
 
 Determinism rules:
 
 - Functions are pure and deterministic.
-- No function can mutate other cells, rows, or schema.
+- No function mutates other cells, rows, or schema.
 - V1 does not support user-defined functions, loops, or recursion.
-
-## Condition Semantics
-
-Condition fields are in transition toward the shared expression AST.
-
-Rules:
-
-- Legacy condition objects remain valid.
-- Any expression that resolves to a boolean logical type is now also legal in condition fields such as `filterRows.condition` and `scopedTransform.rowCondition`.
-- This change only relaxes the structural contract; the existing condition blocks and condition-specific authoring remain in place until a later migration.
 
 ## Type Inference
 
 ### Supported Logical Types
 
-The schema-level logical types for V1 are:
+Schema-level logical types:
 
 - `unknown`
 - `string`
@@ -436,13 +448,6 @@ Rules:
 7. If every non-null value is a string and none of the rules above apply, the column type is `string`.
 8. Otherwise the column type is `mixed`.
 
-Conservative parsing rules:
-
-- CSV values are only promoted beyond `string` when the parse is unambiguous.
-- Locale-dependent formats such as `03/04/2025` remain `string`.
-- Numbers with thousands separators remain `string`.
-- Dates and datetimes are stored as ISO strings in cells, with the logical type recorded in the schema.
-
 ## Duplicate Column Names
 
 Header normalization is deterministic and happens at import time.
@@ -455,11 +460,6 @@ Rules:
 4. If a normalized display name already exists, append ` (2)`, ` (3)`, and so on.
 5. Duplicate checks are case-insensitive.
 6. `columnId` is generated separately and does not depend on later renames.
-
-Examples:
-
-- `Email`, ` email `, and `EMAIL` become `Email`, `Email (2)`, and `Email (3)`.
-- blank, blank become `Column` and `Column (2)`.
 
 ## Formulas on Import
 
@@ -479,7 +479,7 @@ Rules:
 Rules:
 
 - Deduplication keys are evaluated after all prior workflow steps.
-- The default and only V1 keep rule is `keep first`.
+- The only keep rule is `keep first`.
 - â€œFirstâ€ means first row in the current `rowOrder` when the step executes.
 - `null` equals `null`.
 - `""` equals `""`.
@@ -506,9 +506,9 @@ Rules:
 
 Rules:
 
-- The IR must contain explicit `outputColumns`; output names are not inferred at execution time.
+- The IR must contain explicit `outputColumns`.
 - The default UI suggestion for new display names is `<source display name>_1`, `<source display name>_2`, and so on.
-- Output display names must still pass the normal duplicate-name validation rules.
+- Output display names must still pass normal duplicate-name validation rules.
 - The number of output columns controls the maximum number of produced parts.
 - If the input has fewer parts than output columns, trailing outputs become `null`.
 - If the input has more parts than output columns, the final output column receives the unsplit remainder.
@@ -528,7 +528,7 @@ Rules:
 
 ## Open Questions
 
-None for the current milestone. The current defaults are fixed instead of configurable.
+None for the current milestone.
 
 ===== docs\example-workflows.md =====
 # Example Workflows
@@ -543,7 +543,7 @@ Description:
 
 Intended effect:
 
-- Rows with `null`, `""`, or whitespace-only status become `unknown`.
+- Rows with `null` or `""` status become `unknown`.
 
 IR example:
 
@@ -569,8 +569,7 @@ IR example:
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     }
   ]
 }
@@ -612,8 +611,7 @@ IR example:
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     }
   ]
 }
@@ -703,7 +701,7 @@ Description:
 
 Intended effect:
 
-- Any row whose `email` cell is empty or whitespace-only is dropped from the output table.
+- Any row whose trimmed `email` cell is empty is dropped from the output table.
 
 IR example:
 
@@ -718,12 +716,26 @@ IR example:
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "not",
-        "condition": {
-          "kind": "isEmpty",
-          "columnId": "col_email",
-          "treatWhitespaceAsEmpty": true
-        }
+        "kind": "call",
+        "name": "not",
+        "args": [
+          {
+            "kind": "call",
+            "name": "isEmpty",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_email"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     }
   ]
@@ -753,17 +765,36 @@ IR example:
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "and",
-        "conditions": [
+        "kind": "call",
+        "name": "and",
+        "args": [
           {
-            "kind": "greaterThan",
-            "columnId": "col_order_total",
-            "value": 100
+            "kind": "call",
+            "name": "greaterThan",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_total"
+              },
+              {
+                "kind": "literal",
+                "value": 100
+              }
+            ]
           },
           {
-            "kind": "equals",
-            "columnId": "col_order_status",
-            "value": "paid"
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_status"
+              },
+              {
+                "kind": "literal",
+                "value": "paid"
+              }
+            ]
           }
         ]
       }
@@ -942,8 +973,7 @@ IR example:
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     },
     {
       "id": "step_normalize_name",
@@ -963,8 +993,7 @@ IR example:
             ]
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": false
+      }
     },
     {
       "id": "step_fill_status",
@@ -982,8 +1011,7 @@ IR example:
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     },
     {
       "id": "step_location",
@@ -1000,9 +1028,20 @@ IR example:
       "type": "filterRows",
       "mode": "drop",
       "condition": {
-        "kind": "isEmpty",
-        "columnId": "col_email",
-        "treatWhitespaceAsEmpty": true
+        "kind": "call",
+        "name": "isEmpty",
+        "args": [
+          {
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_email"
+              }
+            ]
+          }
+        ]
       }
     },
     {
@@ -1169,15 +1208,20 @@ IR example:
         "name": "coalesce",
         "args": [
           {
-            "kind": "value"
+            "kind": "call",
+            "name": "trim",
+            "args": [
+              {
+                "kind": "value"
+              }
+            ]
           },
           {
             "kind": "column",
             "columnId": "col_customer_id"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     }
   ]
 }
@@ -1207,9 +1251,100 @@ IR example:
       "type": "filterRows",
       "mode": "keep",
       "condition": {
-        "kind": "matchesRegex",
-        "columnId": "col_signup_date",
-        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        "kind": "call",
+        "name": "matchesRegex",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_signup_date"
+          },
+          {
+            "kind": "literal",
+            "value": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## 16. Keep High-Value Orders That Are Paid or Shipped
+
+Description:
+
+- Keep only orders above a value threshold when the status is either `paid` or `shipped`.
+
+Intended effect:
+
+- Rows remain only when `order_total > 100` and `order_status` is one of two accepted values.
+- This example demonstrates boolean composition with `and(...)`, `or(...)`, and `greaterThan(...)`.
+
+IR example:
+
+```json
+{
+  "version": 2,
+  "workflowId": "wf_high_value_paid_or_shipped",
+  "name": "Keep high-value paid or shipped orders",
+  "steps": [
+    {
+      "id": "step_keep_high_value_paid_or_shipped",
+      "type": "filterRows",
+      "mode": "keep",
+      "condition": {
+        "kind": "call",
+        "name": "and",
+        "args": [
+          {
+            "kind": "call",
+            "name": "greaterThan",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_order_total"
+              },
+              {
+                "kind": "literal",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "or",
+            "args": [
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_order_status"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "paid"
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_order_status"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "shipped"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     }
   ]
@@ -1223,25 +1358,25 @@ IR example:
 
 Workflow IR v2 validation has two layers:
 
-1. Structural validation against `schemas/workflow-ir-v2.schema.json`.
-2. Semantic validation against the active table schema as it exists at each workflow step.
+1. Structural validation against `schemas/workflow-ir-v2.schema.json`
+2. Semantic validation against the active table schema as it exists at each workflow step
 
 Rules:
 
 - Validation runs in step order.
 - A valid step may change the schema seen by later steps.
 - An invalid step does not contribute schema changes to later validation.
-- The validator continues after an error to collect more concrete issues.
-- Missing columns are always validation errors, never silent no-ops.
+- The validator continues after an error to collect more issues.
+- Missing columns are always validation errors.
 
 ## Global Rules
 
 ### Workflow-Level Rules
 
-- `version` must equal `2`.
-- `workflowId` must be present.
-- `name` must be present.
-- Step `id` values must be unique within the workflow.
+- `version` must equal `2`
+- `workflowId` must be present
+- `name` must be present
+- step `id` values must be unique
 
 ### Column Reference Rules
 
@@ -1263,9 +1398,9 @@ Display name conflict checks use the same normalization as import:
 
 Rules:
 
-- `renameColumn`, `deriveColumn`, `splitColumn`, and `combineColumns` must not create a conflicting display name.
-- Workflow-authored naming conflicts are validation errors.
-- V1 does not auto-suffix workflow-authored names.
+- `renameColumn`, `deriveColumn`, `splitColumn`, and `combineColumns` must not create a conflicting display name
+- workflow-authored naming conflicts are validation errors
+- workflow-authored names are not auto-suffixed
 
 Error code:
 
@@ -1273,7 +1408,7 @@ Error code:
 
 ### Created Column ID Rules
 
-- Any new `columnId` must be unique within the schema visible at that step.
+- Any new `columnId` must be unique within the visible schema.
 - `splitColumn` output column IDs must be distinct from one another.
 - A new `columnId` must not reuse an existing imported or previously created column ID.
 
@@ -1287,9 +1422,9 @@ Validation uses the column `logicalType` visible at that step.
 
 Rules:
 
-- `unknown` is treated as compatible when the active table provides no contradictory non-null values.
-- `mixed` is incompatible with operations that require a single ordering or comparison model.
-- String functions do not silently coerce number or boolean columns in place.
+- `unknown` is treated as compatible when the active table provides no contradictory non-null values
+- `mixed` is incompatible with operations that require a single comparison or ordering model
+- string functions do not silently coerce number or boolean columns in place
 
 Error code:
 
@@ -1297,7 +1432,7 @@ Error code:
 
 ## Expression Rules
 
-Workflow IR v2 uses the shared expression AST:
+Workflow IR v2 uses one shared expression AST:
 
 - `value`
 - `literal`
@@ -1306,29 +1441,44 @@ Workflow IR v2 uses the shared expression AST:
 
 Rules:
 
-- `value` is valid only inside `scopedTransform`.
-- `column` is valid inside both `deriveColumn` and `scopedTransform`.
-- `literal` is always structurally valid.
-- `call` must use one supported built-in function name and the correct arity.
-- Existing condition objects remain valid in condition fields.
-- Any expression that resolves to a boolean logical type is now also valid in condition fields such as `filterRows.condition` and `scopedTransform.rowCondition`.
+- `value` is valid only inside `scopedTransform.expression`
+- `column` is valid anywhere row-scoped expressions are evaluated
+- `literal` is always structurally valid
+- `call` must use one supported built-in function name and the correct arity
+- logical checks in `filterRows.condition` and `scopedTransform.rowCondition` are ordinary expressions and must resolve to boolean
 
 Function rules:
 
-- `trim`, `lower`, `upper`, `collapseWhitespace` require exactly 1 string-like argument
+- `trim`, `lower`, `upper`, `collapseWhitespace`, `first`, `last`, `isEmpty`, and `not` require exactly 1 argument
 - `substring` requires 3 arguments: string input, numeric start, numeric length
 - `replace` requires 3 arguments: string input, string `from`, string `to`
-- `split` requires 2 scalar arguments: string input and string delimiter, and returns an intermediate list value
-- `first` and `last` require exactly 1 argument and accept either a string or a list value
-- `coalesce` requires exactly 2 arguments with compatible logical types
-- `concat` requires at least 2 arguments and returns a string
-- Final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values; list values are only valid as intermediate results
+- `split`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, and `lessThan` require exactly 2 arguments
+- `and`, `or`, and `concat` require at least 2 arguments
+- `split` returns an intermediate list value
+- final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values
+
+Type rules:
+
+- `trim`, `lower`, `upper`, `collapseWhitespace` require string-like inputs
+- `substring` requires string, number, number
+- `replace` requires string, string, string
+- `split` requires string, string
+- `first` and `last` accept a string or intermediate list
+- `coalesce` requires scalar inputs with compatible logical types
+- `concat` accepts scalar inputs and returns `string`
+- `isEmpty` requires a scalar input and returns `boolean`
+- `not` requires a boolean-like input and returns `boolean`
+- `and` and `or` require boolean-like inputs and return `boolean`
+- `equals` requires comparable scalar inputs and returns `boolean`
+- `greaterThan` and `lessThan` require ordered comparable scalar inputs and return `boolean`
+- `contains`, `startsWith`, `endsWith`, and `matchesRegex` require string-like inputs and return `boolean`
 
 Errors:
 
 - `invalidExpression`
 - `incompatibleType`
 - `missingColumn`
+- `invalidRegex`
 
 ## Step Rules
 
@@ -1339,7 +1489,7 @@ Valid when:
 - every targeted column exists
 - at least one target column is provided
 - target column references are unique
-- `rowCondition`, if present, is valid
+- `rowCondition`, if present, is a valid boolean expression
 - the expression is valid for every targeted column type
 
 Rules:
@@ -1347,14 +1497,13 @@ Rules:
 - `value` is evaluated as the current selected cell
 - `column` may read any existing column from the current row
 - `rowCondition` is evaluated against the current row before applying the expression
-- `treatWhitespaceAsEmpty` affects `coalesce(...)` empty matching only
-- authoring defaults `treatWhitespaceAsEmpty` to `true`; workflows may still explicitly set it to `false`
-- `treatWhitespaceAsEmpty: true` is only valid when a `coalesce` call may inspect string or unknown cells
+- if whitespace-sensitive emptiness is needed, express it explicitly with calls such as `trim(...)` and `isEmpty(...)`
 
 Common capability mappings:
 
 - fill empty cells: `coalesce(value, <literal>)`
-- normalize text: nested string functions such as `lower(trim(value))`
+- fill empty trimmed text: `coalesce(trim(value), <literal>)`
+- normalize text: nested string calls such as `lower(trim(value))`
 
 Errors:
 
@@ -1372,11 +1521,6 @@ Valid when:
 - `newDisplayName` is non-empty after trimming
 - the normalized new display name does not conflict with any other visible display name
 
-Rules:
-
-- Renaming does not change `columnId`.
-- Renaming a column to its current display name is valid.
-
 Errors:
 
 - `missingColumn`
@@ -1391,11 +1535,6 @@ Valid when:
 - at least one column is provided
 - column references are unique
 - at least one column remains after the drop
-
-Rules:
-
-- dropped columns are removed from the visible schema for later steps
-- later steps validate against the reduced schema after the drop step has applied
 
 Errors:
 
@@ -1413,12 +1552,6 @@ Valid when:
 - every referenced column in the expression exists at that step
 - the expression does not use `value`
 
-Rules:
-
-- `column` references are valid here
-- `concat` may combine mixed literal and column inputs because it stringifies values
-- `coalesce` inputs must still resolve to compatible logical types or `unknown`
-
 Errors:
 
 - `duplicateColumnId`
@@ -1432,22 +1565,12 @@ Errors:
 Valid when:
 
 - every referenced column in the condition exists
-- each condition uses a comparator compatible with the referenced column type
-
-Comparator rules:
-
-- `isEmpty` is valid for any column type
-- `equals` is valid for any non-mixed column if the literal value matches the column type
-- `contains`, `startsWith`, `endsWith`, and `matchesRegex` require `string` or `unknown`
-- `matchesRegex` also requires a syntactically valid regular expression pattern
-- `greaterThan` and `lessThan` require `number`, `date`, `datetime`, or `unknown`
-- `and` and `or` require at least two child conditions
-- `not` requires exactly one child condition
+- the condition resolves to a boolean logical type
 
 Errors:
 
 - `missingColumn`
-- `invalidCondition`
+- `invalidExpression`
 - `invalidRegex`
 - `incompatibleType`
 
@@ -1461,13 +1584,6 @@ Valid when:
 - `outputColumns` contains at least two entries
 - every output `columnId` is unique
 - every output `displayName` is unique and does not conflict with existing display names
-
-Execution edge cases:
-
-- null input produces null in every output column
-- fewer parts than outputs produces trailing nulls
-- more parts than outputs merges the remainder into the last output column
-- the source column remains in the schema
 
 Errors:
 
@@ -1486,12 +1602,6 @@ Valid when:
 - source column references are unique
 - the new column ID and display name are unique
 
-Rules:
-
-- source column order is the order listed in `columnIds`
-- the result column logical type is `string`
-- source columns remain in the schema
-
 Errors:
 
 - `missingColumn`
@@ -1508,12 +1618,6 @@ Valid when:
 - at least one key column is provided
 - key column references are unique
 
-Edge cases:
-
-- duplicate rows are detected using exact canonical value equality on the current table state
-- if all key values are equal, the first row in current `rowOrder` survives
-- if `sortRows` appears earlier in the workflow, its order determines which row is kept
-
 Errors:
 
 - `missingColumn`
@@ -1529,15 +1633,6 @@ Valid when:
 - each sort key is unique within the step
 - every sort key column is not `mixed`
 
-Edge cases:
-
-- nulls sort last in both ascending and descending order
-- rows equal on all sort keys preserve prior relative order
-- string sort is case-sensitive code-point order
-- number sort is numeric
-- boolean sort is `false < true`
-- date/datetime sort uses ISO chronological order
-
 Errors:
 
 - `missingColumn`
@@ -1547,60 +1642,46 @@ Errors:
 
 ## Missing-Column Behavior
 
-Missing-column behavior is fixed:
-
 - A referenced missing `columnId` is a validation error.
 - Preview and run are blocked until the error is resolved.
-- The system must not silently skip the step.
-- The system must not fall back to matching on display name.
+- The system does not silently skip the step.
+- The system does not fall back to matching on display name.
 
 ## Incompatible-Type Behavior
 
-Incompatible-type behavior is also fixed:
-
 - Semantic incompatibility is a validation error, not a warning.
 - V1 does not silently cast target columns for in-place operations.
-- The intentional stringification operations are `concat` and `combineColumns`.
-
-## Error Reporting
-
-Every semantic error should include:
-
-- error code
-- human-readable message
-- step ID
-- JSON path
-- enough detail to explain the failing `columnId`, comparator, function, or proposed display name
+- Intentional stringification operations are `concat` and `combineColumns`.
 
 ===== docs\workflow-ir-v2.md =====
 # Workflow IR v2
 
 ## Design Rules
 
-Workflow IR v2 remains intentionally small.
+Workflow IR v2 is the single current workflow format.
 
 Rules:
 
-- `version` is required from day one and is now `2`.
+- `version` is required and always `2`.
 - A workflow is an ordered list of explicit tabular operations.
 - Steps execute top to bottom.
 - Later steps see schema changes made by earlier valid steps.
-- Persisted workflows never refer to transient UI state such as â€œcurrently selected columnsâ€.
-- The IR is editor-agnostic. Blockly is an authoring view over this JSON, not the source of truth.
-- The IR does not contain loops, arbitrary variables, user-defined functions, or general control flow.
+- Persisted workflows never refer to transient UI state.
+- The IR is editor-agnostic. Blockly is only an authoring view.
+- The IR does not contain loops, arbitrary variables, or user-defined functions.
 
 ## Workflow Object
 
 Required fields:
 
-- `version`: integer, always `2`
-- `workflowId`: stable workflow identifier
-- `name`: human-readable workflow name
-- `steps`: ordered list of workflow steps
+- `version`
+- `workflowId`
+- `name`
+- `steps`
 
 Optional fields:
 
-- `description`: human-readable workflow description
+- `description`
 
 Example:
 
@@ -1616,12 +1697,12 @@ Example:
 
 ## Step Object
 
-Every workflow step has:
+Every step has:
 
-- `id`: stable step identifier unique within the workflow
-- `type`: one of the v2 step types below
+- `id`
+- `type`
 
-Workflow IR v2 step types:
+Step types:
 
 - `scopedTransform`
 - `dropColumns`
@@ -1636,7 +1717,7 @@ Workflow IR v2 step types:
 V1 capability mapping:
 
 - fill empty cells: `scopedTransform` with `coalesce(value, <literal>)`
-- trim / normalize text: `scopedTransform` with built-in function composition such as `lower(trim(value))`
+- trim / normalize text: `scopedTransform` with built-in string calls such as `lower(trim(value))`
 - drop columns: `dropColumns`
 - rename columns: `renameColumn`
 - create a derived column: `deriveColumn`
@@ -1648,7 +1729,7 @@ V1 capability mapping:
 
 ## Expression Object
 
-`scopedTransform` and `deriveColumn` use the same expression AST.
+Workflow IR v2 uses one shared expression AST for both cell transforms and logical checks.
 
 Expression kinds:
 
@@ -1659,24 +1740,16 @@ Expression kinds:
 
 Rules:
 
-- `value` means the current selected cell value and is only valid inside `scopedTransform`.
+- `value` means the current selected cell and is valid only inside `scopedTransform.expression`.
 - `literal` returns a scalar value.
-- `column` reads one existing column by `columnId` from the current row and is valid inside both `deriveColumn` and `scopedTransform`.
+- `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
 
-Built-in function names:
+Built-in call names:
 
-- `trim`
-- `lower`
-- `upper`
-- `collapseWhitespace`
-- `substring`
-- `replace`
-- `split`
-- `first`
-- `last`
-- `coalesce`
-- `concat`
+- string / text: `trim`, `lower`, `upper`, `collapseWhitespace`, `substring`, `replace`
+- list / utility: `split`, `first`, `last`, `coalesce`, `concat`
+- logic: `isEmpty`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `and`, `or`, `not`
 
 Examples:
 
@@ -1718,50 +1791,38 @@ Examples:
 }
 ```
 
-## Condition Object
-
-`filterRows` and `scopedTransform.rowCondition` use the same recursive condition tree.
-
-Leaf conditions:
-
-- `isEmpty`
-- `equals`
-- `contains`
-- `startsWith`
-- `endsWith`
-- `matchesRegex`
-- `greaterThan`
-- `lessThan`
-
-Boolean combinators:
-
-- `and`
-- `or`
-- `not`
-
-Examples:
-
 ```json
 {
-  "kind": "isEmpty",
-  "columnId": "col_email",
-  "treatWhitespaceAsEmpty": true
-}
-```
-
-```json
-{
-  "kind": "and",
-  "conditions": [
+  "kind": "call",
+  "name": "and",
+  "args": [
     {
-      "kind": "startsWith",
-      "columnId": "col_first_name",
-      "value": "A"
+      "kind": "call",
+      "name": "startsWith",
+      "args": [
+        {
+          "kind": "column",
+          "columnId": "col_first_name"
+        },
+        {
+          "kind": "literal",
+          "value": "A"
+        }
+      ]
     },
     {
-      "kind": "startsWith",
-      "columnId": "col_last_name",
-      "value": "A"
+      "kind": "call",
+      "name": "startsWith",
+      "args": [
+        {
+          "kind": "column",
+          "columnId": "col_last_name"
+        },
+        {
+          "kind": "literal",
+          "value": "A"
+        }
+      ]
     }
   ]
 }
@@ -1769,42 +1830,41 @@ Examples:
 
 ## Validation Error Object
 
-Semantic validation returns structured errors; this object is not part of the persisted workflow itself.
+Semantic validation returns structured errors; this object is not persisted in the workflow itself.
 
 Required fields:
 
-- `code`: stable machine-readable code such as `missingColumn` or `incompatibleType`
-- `severity`: `error` or `warning`
-- `message`: human-readable explanation
-- `path`: JSON-style location such as `steps[2].expression.args[0]`
-- `phase`: `structural` or `semantic`
+- `code`
+- `severity`
+- `message`
+- `path`
+- `phase`
 
 Optional fields:
 
-- `stepId`: the offending workflow step
-- `details`: machine-readable context payload
+- `stepId`
+- `details`
 
 ## Step Definitions
 
 ### `scopedTransform`
 
-Applies one expression to one or more selected columns, optionally only on rows matching a condition.
+Applies one expression to one or more selected columns, optionally only on rows matching a boolean expression.
 
 Fields:
 
 - `columnIds`
 - `rowCondition` optional
 - `expression`
-- `treatWhitespaceAsEmpty`
 
 Rules:
 
 - the expression is evaluated once per selected cell
-- `value` means the current cell value
-- `column` may read another column from the current row while the step is being applied
+- `value` means the current selected cell value
+- `column` may read another column from the current row
 - if `rowCondition` is omitted, all rows are eligible
-- `treatWhitespaceAsEmpty` affects `coalesce` emptiness checks inside the step
-- authoring defaults `treatWhitespaceAsEmpty` to `true`; workflows may still explicitly disable it
+- `rowCondition` must resolve to a boolean value
+- whitespace-sensitive logic is expressed explicitly with functions such as `trim(...)`
 
 Example:
 
@@ -1830,12 +1890,19 @@ Example:
             "value": "unknown"
           }
         ]
-      },
-      "treatWhitespaceAsEmpty": true
+      }
     }
   ]
 }
 ```
+
+### `dropColumns`
+
+Drops one or more existing columns from the active table.
+
+Fields:
+
+- `columnIds`
 
 ### `renameColumn`
 
@@ -1846,37 +1913,6 @@ Fields:
 - `columnId`
 - `newDisplayName`
 
-### `dropColumns`
-
-Drops one or more existing columns from the active table.
-
-Fields:
-
-- `columnIds`
-
-Rules:
-
-- every referenced `columnId` must exist at that step
-- at least one column must be selected
-- the step must leave at least one column in the table
-
-Example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_drop_internal_columns",
-  "name": "Drop internal columns",
-  "steps": [
-    {
-      "id": "step_drop_internal_columns",
-      "type": "dropColumns",
-      "columnIds": ["col_notes", "col_internal_flag"]
-    }
-  ]
-}
-```
-
 ### `deriveColumn`
 
 Creates one new column from an expression.
@@ -1884,8 +1920,6 @@ Creates one new column from an expression.
 Fields:
 
 - `newColumn`
-  - `columnId`
-  - `displayName`
 - `expression`
 
 Rules:
@@ -1893,55 +1927,22 @@ Rules:
 - `column` references are valid here
 - `value` is not valid here
 - the authoring UI may present this as `create new column`
-- authoring may initialize the new column as blank by compiling to `{"kind":"literal","value":null}`
-- authoring may initialize the new column by copying another column by compiling to `{"kind":"column","columnId":"..."}` 
-
-Example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_derive_full_name",
-  "name": "Create full name",
-  "steps": [
-    {
-      "id": "step_derive_full_name",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_full_name",
-        "displayName": "full_name"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
-            "kind": "column",
-            "columnId": "col_first_name"
-          },
-          {
-            "kind": "literal",
-            "value": " "
-          },
-          {
-            "kind": "column",
-            "columnId": "col_last_name"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
+- blank initialization compiles to `{"kind":"literal","value":null}`
+- copy-column initialization compiles to `{"kind":"column","columnId":"..."}`
 
 ### `filterRows`
 
-Keeps or drops rows based on a condition.
+Keeps or drops rows based on a boolean expression.
 
 Fields:
 
-- `mode`: `keep` or `drop`
+- `mode`
 - `condition`
+
+Rules:
+
+- `condition` uses the same expression AST as every other logical check
+- `condition` must resolve to a boolean value
 
 ### `splitColumn`
 
@@ -1952,8 +1953,6 @@ Fields:
 - `columnId`
 - `delimiter`
 - `outputColumns`
-  - `columnId`
-  - `displayName`
 
 ### `combineColumns`
 
@@ -1964,8 +1963,6 @@ Fields:
 - `columnIds`
 - `separator`
 - `newColumn`
-  - `columnId`
-  - `displayName`
 
 ### `deduplicateRows`
 
@@ -1982,8 +1979,6 @@ Sorts rows using one or more sort keys.
 Fields:
 
 - `sorts`
-  - `columnId`
-  - `direction`: `asc` or `desc`
 
 ===== fixtures\messy-customers.csv =====
 customer_id,full_name,email,phone,city,state,status,signup_date
@@ -2199,12 +2194,12 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
             },
             "name": {
               "type": "string",
-              "const": "substring"
+              "enum": ["isEmpty", "not"]
             },
             "args": {
               "type": "array",
-              "minItems": 3,
-              "maxItems": 3,
+              "minItems": 1,
+              "maxItems": 1,
               "items": {
                 "$ref": "#/$defs/expression"
               }
@@ -2222,12 +2217,57 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
             },
             "name": {
               "type": "string",
-              "const": "split"
+              "enum": ["split", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan"]
             },
             "args": {
               "type": "array",
               "minItems": 2,
               "maxItems": 2,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
+              "enum": ["and", "or", "concat"]
+            },
+            "args": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
+              "const": "substring"
+            },
+            "args": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
               "items": {
                 "$ref": "#/$defs/expression"
               }
@@ -2256,244 +2296,6 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
               }
             }
           }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "name", "args"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "call"
-            },
-            "name": {
-              "type": "string",
-              "const": "coalesce"
-            },
-            "args": {
-              "type": "array",
-              "minItems": 2,
-              "maxItems": 2,
-              "items": {
-                "$ref": "#/$defs/expression"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "name", "args"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "call"
-            },
-            "name": {
-              "type": "string",
-              "const": "concat"
-            },
-            "args": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "$ref": "#/$defs/expression"
-              }
-            }
-          }
-        }
-      ]
-    },
-    "condition": {
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "treatWhitespaceAsEmpty"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "isEmpty"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "treatWhitespaceAsEmpty": {
-              "type": "boolean"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "equals"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "pattern"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "matchesRegex"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "pattern": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "contains"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "startsWith"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "endsWith"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "greaterThan"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "columnId", "value"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "lessThan"
-            },
-            "columnId": {
-              "$ref": "#/$defs/id"
-            },
-            "value": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "conditions"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "and"
-            },
-            "conditions": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "$ref": "#/$defs/condition"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "conditions"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "or"
-            },
-            "conditions": {
-              "type": "array",
-              "minItems": 2,
-              "items": {
-                "$ref": "#/$defs/condition"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "condition"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "not"
-            },
-            "condition": {
-              "$ref": "#/$defs/condition"
-            }
-          }
-        },
-        {
-          "$ref": "#/$defs/expression"
         }
       ]
     },
@@ -2516,7 +2318,7 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "type", "columnIds", "expression", "treatWhitespaceAsEmpty"],
+          "required": ["id", "type", "columnIds", "expression"],
           "properties": {
             "id": {
               "$ref": "#/$defs/id"
@@ -2529,13 +2331,10 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
               "$ref": "#/$defs/columnIds"
             },
             "rowCondition": {
-              "$ref": "#/$defs/condition"
+              "$ref": "#/$defs/expression"
             },
             "expression": {
               "$ref": "#/$defs/expression"
-            },
-            "treatWhitespaceAsEmpty": {
-              "type": "boolean"
             }
           }
         },
@@ -2613,7 +2412,7 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
               "enum": ["keep", "drop"]
             },
             "condition": {
-              "$ref": "#/$defs/condition"
+              "$ref": "#/$defs/expression"
             }
           }
         },
@@ -4852,7 +4651,7 @@ interface ParsedExcelDate {
 
 ===== src\editor\authoring.ts =====
 import { slugify } from '../domain/normalize';
-import type { Workflow, WorkflowCondition, WorkflowExpression, WorkflowStep } from '../workflow';
+import type { Workflow, WorkflowExpression, WorkflowStep } from '../workflow';
 
 import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
@@ -4876,9 +4675,8 @@ interface AuthoringStepBase {
 export interface AuthoringScopedTransformStep extends AuthoringStepBase {
   kind: 'scopedTransform';
   columnIds: string[];
-  rowCondition?: WorkflowCondition;
+  rowCondition?: WorkflowExpression;
   expression: WorkflowExpression;
-  treatWhitespaceAsEmpty: boolean;
 }
 
 export interface AuthoringRenameColumnStep extends AuthoringStepBase {
@@ -4904,7 +4702,7 @@ export interface AuthoringDeriveColumnStep extends AuthoringStepBase {
 export interface AuthoringFilterRowsStep extends AuthoringStepBase {
   kind: 'filterRows';
   mode: 'keep' | 'drop';
-  condition: WorkflowCondition;
+  condition: WorkflowExpression;
 }
 
 export interface AuthoringSplitColumnStep extends AuthoringStepBase {
@@ -5002,7 +4800,6 @@ function compileStep(step: AuthoringStep, index: number, usedStepIds: Set<string
         columnIds: step.columnIds,
         rowCondition: step.rowCondition,
         expression: step.expression,
-        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
       };
     case 'renameColumn':
       return {
@@ -5071,7 +4868,6 @@ function workflowStepToAuthoringStep(step: WorkflowStep): AuthoringStep {
         columnIds: [...step.columnIds],
         rowCondition: step.rowCondition,
         expression: step.expression,
-        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
       };
     case 'renameColumn':
       return {
@@ -5198,6 +4994,7 @@ function assertNever(step: never): never {
 import * as Blockly from 'blockly';
 
 import { FieldColumnMultiSelect } from './FieldColumnMultiSelect';
+import { FieldSearchDropdown } from './FieldSearchDropdown';
 import { getSchemaColumnOptions } from './schemaOptions';
 
 const TRANSFORM_COLOR = '#b04a1f';
@@ -5205,7 +5002,8 @@ const TABLE_OPERATION_COLOR = '#8c3a18';
 const SUPPORT_COLOR = '#6b6a5c';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
-const CONDITION_COLOR = '#355070';
+const LOGIC_COLOR = '#355070';
+const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
 const CREATE_COLUMN_INPUT_NAMES = {
   mode: 'CREATE_MODE',
   copySource: 'COPY_COLUMN_ID',
@@ -5220,6 +5018,30 @@ export const CREATE_COLUMN_MODES = {
   expression: 'expression',
 } as const;
 export type CreateColumnMode = typeof CREATE_COLUMN_MODES[keyof typeof CREATE_COLUMN_MODES];
+type LogicalGroupBlock = Blockly.Block & {
+  itemCount_?: number;
+  updateShape_?: () => void;
+};
+type PredicateFunctionBlock = Blockly.Block & {
+  updateShape_?: (operator?: PredicateFunctionOperator) => void;
+};
+type ComparatorOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+type PredicateFunctionOperator = 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
+const COMPARATOR_OPTIONS: Array<[string, ComparatorOperator]> = [
+  ['=', 'eq'],
+  ['â‰ ', 'ne'],
+  ['<', 'lt'],
+  ['â‰¤', 'lte'],
+  ['>', 'gt'],
+  ['â‰¥', 'gte'],
+];
+const PREDICATE_FUNCTION_OPTIONS: Array<{ label: string; value: PredicateFunctionOperator; searchText: string }> = [
+  { label: 'contains', value: 'contains', searchText: 'contains includes has text substring' },
+  { label: 'starts with', value: 'startsWith', searchText: 'starts with begins prefix' },
+  { label: 'ends with', value: 'endsWith', searchText: 'ends with suffix' },
+  { label: 'matches regex', value: 'matchesRegex', searchText: 'matches regex pattern regular expression' },
+  { label: 'is empty', value: 'isEmpty', searchText: 'is empty blank null missing' },
+];
 
 function createSchemaColumnDropdown() {
   return new Blockly.FieldDropdown(function (this: Blockly.FieldDropdown) {
@@ -5239,7 +5061,6 @@ export const BLOCK_TYPES = {
   sortRowsStep: 'sort_rows_step',
   outputColumnItem: 'output_column_item',
   sortItem: 'sort_item',
-  conditionItem: 'condition_item',
   currentValueExpression: 'current_value_expression',
   literalString: 'literal_string',
   literalNumber: 'literal_number',
@@ -5257,17 +5078,10 @@ export const BLOCK_TYPES = {
   lastFunction: 'last_function',
   coalesceFunction: 'coalesce_function',
   concatFunction: 'concat_function',
-  isEmptyCondition: 'is_empty_condition',
-  equalsCondition: 'equals_condition',
-  containsCondition: 'contains_condition',
-  startsWithCondition: 'starts_with_condition',
-  endsWithCondition: 'ends_with_condition',
-  matchesRegexCondition: 'matches_regex_condition',
-  greaterThanCondition: 'greater_than_condition',
-  lessThanCondition: 'less_than_condition',
-  andCondition: 'and_condition',
-  orCondition: 'or_condition',
-  notCondition: 'not_condition',
+  comparisonFunction: 'comparison_function',
+  predicateFunction: 'predicate_function',
+  logicalBinaryFunction: 'logical_binary_function',
+  notFunction: 'not_function',
 } as const;
 
 export function registerWorkflowBlocks() {
@@ -5281,11 +5095,8 @@ export function registerWorkflowBlocks() {
     block.appendDummyInput()
       .appendField('on columns')
       .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
-    block.appendValueInput('ROW_CONDITION').setCheck(['CONDITION', 'EXPRESSION']).appendField('for rows where');
+    block.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
     block.appendValueInput('EXPRESSION').setCheck('EXPRESSION').appendField('apply');
-    block.appendDummyInput()
-      .appendField('treat whitespace as empty')
-      .appendField(new Blockly.FieldCheckbox('TRUE'), 'TREAT_WHITESPACE_AS_EMPTY');
   });
 
   createStepBlock(BLOCK_TYPES.renameColumnStep, TABLE_OPERATION_COLOR, (block) => {
@@ -5330,7 +5141,7 @@ export function registerWorkflowBlocks() {
         ['keep', 'keep'],
         ['drop', 'drop'],
       ]), 'MODE');
-    block.appendValueInput('CONDITION').setCheck(['CONDITION', 'EXPRESSION']).appendField('where');
+    block.appendValueInput('CONDITION').setCheck('EXPRESSION').appendField('where');
   });
 
   createStepBlock(BLOCK_TYPES.splitColumnStep, TABLE_OPERATION_COLOR, (block) => {
@@ -5394,15 +5205,6 @@ export function registerWorkflowBlocks() {
     },
   };
 
-  Blockly.Blocks[BLOCK_TYPES.conditionItem] = {
-    init() {
-      this.appendValueInput('CONDITION').setCheck(['CONDITION', 'EXPRESSION']).appendField('condition');
-      this.setPreviousStatement(true, 'CONDITION_ITEM');
-      this.setNextStatement(true, 'CONDITION_ITEM');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-
   Blockly.Blocks[BLOCK_TYPES.currentValueExpression] = {
     init() {
       this.appendDummyInput().appendField('current value');
@@ -5462,12 +5264,12 @@ export function registerWorkflowBlocks() {
     },
   };
 
-  createUnaryFunctionBlock(BLOCK_TYPES.trimFunction, 'trim');
-  createUnaryFunctionBlock(BLOCK_TYPES.lowerFunction, 'lower');
-  createUnaryFunctionBlock(BLOCK_TYPES.upperFunction, 'upper');
-  createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace');
-  createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first');
-  createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last');
+  createUnaryFunctionBlock(BLOCK_TYPES.trimFunction, 'trim', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.lowerFunction, 'lower', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.upperFunction, 'upper', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last', FUNCTION_COLOR);
 
   Blockly.Blocks[BLOCK_TYPES.substringFunction] = {
     init() {
@@ -5498,54 +5300,38 @@ export function registerWorkflowBlocks() {
     },
   };
 
-  Blockly.Blocks[BLOCK_TYPES.coalesceFunction] = {
-    init() {
-      this.appendValueInput('FIRST').setCheck('EXPRESSION').appendField('coalesce');
-      this.appendValueInput('SECOND').setCheck('EXPRESSION').appendField('fallback');
+  createBinaryFunctionBlock(BLOCK_TYPES.coalesceFunction, 'coalesce', 'FIRST', 'fallback', 'SECOND', FUNCTION_COLOR);
+  createBinaryFunctionBlock(BLOCK_TYPES.concatFunction, 'concat', 'FIRST', 'with', 'SECOND', FUNCTION_COLOR);
+  createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
+  Blockly.Blocks[BLOCK_TYPES.predicateFunction] = {
+    init(this: PredicateFunctionBlock) {
       this.setOutput(true, 'EXPRESSION');
-      this.setColour(FUNCTION_COLOR);
+      this.setInputsInline(true);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = (operator?: PredicateFunctionOperator) => updatePredicateFunctionShape(this, operator);
+      this.updateShape_('contains');
     },
   };
-
-  Blockly.Blocks[BLOCK_TYPES.concatFunction] = {
-    init() {
-      this.appendValueInput('FIRST').setCheck('EXPRESSION').appendField('concat');
-      this.appendValueInput('SECOND').setCheck('EXPRESSION').appendField('with');
+  Blockly.Blocks[BLOCK_TYPES.logicalBinaryFunction] = {
+    init(this: LogicalGroupBlock) {
+      this.itemCount_ = 2;
       this.setOutput(true, 'EXPRESSION');
-      this.setColour(FUNCTION_COLOR);
+      this.setInputsInline(false);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = () => updateLogicalGroupShape(this);
+      this.updateShape_();
+    },
+    saveExtraState(this: LogicalGroupBlock) {
+      return {
+        itemCount: Math.max(2, this.itemCount_ ?? 2),
+      };
+    },
+    loadExtraState(this: LogicalGroupBlock, state: { itemCount?: number }) {
+      this.itemCount_ = Math.max(2, Number(state.itemCount) || 2);
+      this.updateShape_?.();
     },
   };
-
-  Blockly.Blocks[BLOCK_TYPES.isEmptyCondition] = {
-    init() {
-      this.appendDummyInput()
-        .appendField('is empty')
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
-        .appendField('treat whitespace as empty')
-        .appendField(new Blockly.FieldCheckbox('TRUE'), 'TREAT_WHITESPACE_AS_EMPTY');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
-
-  createLiteralConditionBlock(BLOCK_TYPES.equalsCondition, 'equals');
-  createStringConditionBlock(BLOCK_TYPES.containsCondition, 'contains');
-  createStringConditionBlock(BLOCK_TYPES.startsWithCondition, 'starts with');
-  createStringConditionBlock(BLOCK_TYPES.endsWithCondition, 'ends with');
-  createRegexConditionBlock(BLOCK_TYPES.matchesRegexCondition, 'matches regex');
-  createLiteralConditionBlock(BLOCK_TYPES.greaterThanCondition, 'greater than');
-  createLiteralConditionBlock(BLOCK_TYPES.lessThanCondition, 'less than');
-
-  createConditionGroupBlock(BLOCK_TYPES.andCondition, 'and', 'CONDITIONS');
-  createConditionGroupBlock(BLOCK_TYPES.orCondition, 'or', 'CONDITIONS');
-
-  Blockly.Blocks[BLOCK_TYPES.notCondition] = {
-    init() {
-      this.appendValueInput('CONDITION').setCheck(['CONDITION', 'EXPRESSION']).appendField('not');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
+  createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
 }
 
 export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInfo {
@@ -5605,30 +5391,22 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
       },
       {
         kind: 'category',
+        name: 'Logic',
+        colour: LOGIC_COLOR,
+        contents: [
+          { kind: 'block', type: BLOCK_TYPES.comparisonFunction },
+          { kind: 'block', type: BLOCK_TYPES.predicateFunction },
+          { kind: 'block', type: BLOCK_TYPES.logicalBinaryFunction },
+          { kind: 'block', type: BLOCK_TYPES.notFunction },
+        ],
+      },
+      {
+        kind: 'category',
         name: 'Lists',
         colour: SUPPORT_COLOR,
         contents: [
           { kind: 'block', type: BLOCK_TYPES.outputColumnItem },
           { kind: 'block', type: BLOCK_TYPES.sortItem },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Conditions',
-        colour: CONDITION_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.isEmptyCondition },
-          { kind: 'block', type: BLOCK_TYPES.equalsCondition },
-          { kind: 'block', type: BLOCK_TYPES.containsCondition },
-          { kind: 'block', type: BLOCK_TYPES.startsWithCondition },
-          { kind: 'block', type: BLOCK_TYPES.endsWithCondition },
-          { kind: 'block', type: BLOCK_TYPES.matchesRegexCondition },
-          { kind: 'block', type: BLOCK_TYPES.greaterThanCondition },
-          { kind: 'block', type: BLOCK_TYPES.lessThanCondition },
-          { kind: 'block', type: BLOCK_TYPES.andCondition },
-          { kind: 'block', type: BLOCK_TYPES.orCondition },
-          { kind: 'block', type: BLOCK_TYPES.notCondition },
-          { kind: 'block', type: BLOCK_TYPES.conditionItem },
         ],
       },
     ],
@@ -5646,66 +5424,229 @@ function createStepBlock(type: string, colour: string, buildFields: (block: Bloc
   };
 }
 
-function createUnaryFunctionBlock(type: string, label: string) {
+function createUnaryFunctionBlock(type: string, label: string, colour: string) {
   Blockly.Blocks[type] = {
     init() {
       this.appendValueInput('INPUT').setCheck('EXPRESSION').appendField(label);
       this.setOutput(true, 'EXPRESSION');
-      this.setColour(FUNCTION_COLOR);
+      this.setColour(colour);
     },
   };
 }
 
-function createLiteralConditionBlock(type: string, label: string) {
+function createBinaryFunctionBlock(
+  type: string,
+  label: string,
+  firstInput: string,
+  secondLabel: string,
+  secondInput: string,
+  colour: string,
+) {
   Blockly.Blocks[type] = {
     init() {
-      this.appendDummyInput()
-        .appendField(label)
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID');
-      this.appendValueInput('VALUE').setCheck('NON_NULL_LITERAL').appendField('value');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
+      this.appendValueInput(firstInput).setCheck('EXPRESSION').appendField(label);
+      this.appendValueInput(secondInput).setCheck('EXPRESSION').appendField(secondLabel);
+      this.setInputsInline(true);
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(colour);
     },
   };
 }
 
-function createStringConditionBlock(type: string, label: string) {
+function createDropdownBinaryFunctionBlock(
+  type: string,
+  options: [string, string][],
+  fieldName: string,
+  colour: string,
+) {
   Blockly.Blocks[type] = {
     init() {
-      this.appendDummyInput()
-        .appendField(label)
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
-        .appendField('text')
-        .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
+      this.appendValueInput('FIRST').setCheck('EXPRESSION');
+      this.appendValueInput('SECOND')
+        .setCheck('EXPRESSION')
+        .appendField(new Blockly.FieldDropdown(options), fieldName);
+      this.setInputsInline(true);
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(colour);
     },
   };
 }
 
-function createRegexConditionBlock(type: string, label: string) {
-  Blockly.Blocks[type] = {
-    init() {
-      this.appendDummyInput()
-        .appendField(label)
-        .appendField(createSchemaColumnDropdown(), 'COLUMN_ID')
-        .appendField('pattern')
-        .appendField(new Blockly.FieldTextInput('.*'), 'PATTERN');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
-    },
-  };
+function updateLogicalGroupShape(block: LogicalGroupBlock) {
+  const currentOperator = normalizeLogicalGroupOperator(block.getFieldValue('OPERATOR'));
+  if (block.getInput('HEADER')) {
+    block.removeInput('HEADER');
+  }
+
+  let index = 0;
+
+  while (block.getInput(`ITEM${index}`)) {
+    block.removeInput(`ITEM${index}`);
+    index += 1;
+  }
+
+  block.appendDummyInput('HEADER')
+    .appendField('conditions')
+    .appendField(createLogicalGroupOperatorField(block), 'OPERATOR')
+    .appendField(createLogicalGroupActionField('add', 'Add condition', (field) => {
+      const sourceBlock = field.getSourceBlock() as LogicalGroupBlock | null;
+
+      if (!sourceBlock) {
+        return;
+      }
+
+      resizeLogicalGroup(sourceBlock, Math.max(2, sourceBlock.itemCount_ ?? 2) + 1);
+    }), 'ADD_ITEM')
+    .appendField(createLogicalGroupActionField('remove', 'Remove condition', (field) => {
+      const sourceBlock = field.getSourceBlock() as LogicalGroupBlock | null;
+
+      if (!sourceBlock) {
+        return;
+      }
+
+      resizeLogicalGroup(sourceBlock, Math.max(2, sourceBlock.itemCount_ ?? 2) - 1);
+    }), 'REMOVE_ITEM');
+  block.setFieldValue(currentOperator, 'OPERATOR');
+
+  const itemCount = Math.max(2, block.itemCount_ ?? 2);
+
+  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
+    block.appendValueInput(`ITEM${itemIndex}`)
+      .setCheck('EXPRESSION')
+      .appendField(`condition ${itemIndex + 1}`);
+  }
+
+  block.setInputsInline(false);
 }
 
-function createConditionGroupBlock(type: string, label: string, inputName: string) {
-  Blockly.Blocks[type] = {
-    init() {
-      this.appendDummyInput().appendField(label);
-      this.appendStatementInput(inputName).setCheck(['CONDITION_ITEM', 'EXPRESSION']).appendField('conditions');
-      this.setOutput(true, 'CONDITION');
-      this.setColour(CONDITION_COLOR);
+function updatePredicateFunctionShape(block: PredicateFunctionBlock, operator = normalizePredicateFunctionOperator(block.getFieldValue('OPERATOR'))) {
+  const primaryConnection =
+    block.getInput('FIRST')?.connection?.targetConnection
+    ?? block.getInput('INPUT')?.connection?.targetConnection
+    ?? null;
+  const secondaryConnection = block.getInput('SECOND')?.connection?.targetConnection ?? null;
+
+  ['FIRST', 'SECOND', 'INPUT'].forEach((inputName) => {
+    if (block.getInput(inputName)) {
+      block.removeInput(inputName);
+    }
+  });
+
+  if (isUnaryPredicateFunctionOperator(operator)) {
+    block.appendValueInput('INPUT')
+      .setCheck('EXPRESSION')
+      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
+    primaryConnection?.reconnect(block, 'INPUT');
+  } else {
+    block.appendValueInput('FIRST').setCheck('EXPRESSION');
+    block.appendValueInput('SECOND')
+      .setCheck('EXPRESSION')
+      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
+    primaryConnection?.reconnect(block, 'FIRST');
+    secondaryConnection?.reconnect(block, 'SECOND');
+  }
+
+  block.setInputsInline(true);
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
+}
+
+function createPredicateFunctionOperatorField(block: PredicateFunctionBlock, operator: PredicateFunctionOperator) {
+  return new FieldSearchDropdown(
+    operator,
+    PREDICATE_FUNCTION_OPTIONS,
+    (newValue) => {
+      const normalizedValue = normalizePredicateFunctionOperator(newValue);
+      block.updateShape_?.(normalizedValue);
+      return normalizedValue;
     },
-  };
+  );
+}
+
+function createLogicalGroupActionField(
+  kind: 'add' | 'remove',
+  alt: string,
+  onClick: (field: Blockly.FieldImage) => void,
+) {
+  return new Blockly.FieldImage(
+    createLogicalGroupActionIcon(kind),
+    LOGICAL_GROUP_ACTION_ICON_SIZE,
+    LOGICAL_GROUP_ACTION_ICON_SIZE,
+    alt,
+    onClick,
+  );
+}
+
+function createLogicalGroupActionIcon(kind: 'add' | 'remove') {
+  const glyph = kind === 'add'
+    ? '<line x1="9" y1="4" x2="9" y2="14" stroke="#355070" stroke-width="1.6" stroke-linecap="round"/><line x1="4" y1="9" x2="14" y2="9" stroke="#355070" stroke-width="1.6" stroke-linecap="round"/>'
+    : '<line x1="4" y1="9" x2="14" y2="9" stroke="#355070" stroke-width="1.6" stroke-linecap="round"/>';
+
+  return `data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${LOGICAL_GROUP_ACTION_ICON_SIZE}" height="${LOGICAL_GROUP_ACTION_ICON_SIZE}" viewBox="0 0 18 18"><rect x="0.75" y="0.75" width="16.5" height="16.5" rx="4" fill="#f6efe6" stroke="#355070" stroke-width="1.5"/>${glyph}</svg>`,
+  )}`;
+}
+
+function createLogicalGroupOperatorField(block: LogicalGroupBlock) {
+  return new Blockly.FieldDropdown([
+    ['and', 'and'],
+    ['or', 'or'],
+  ], (newValue) => {
+    return normalizeLogicalGroupOperator(newValue);
+  });
+}
+
+function normalizeLogicalGroupOperator(value: unknown) {
+  return value === 'or' ? 'or' : 'and';
+}
+
+function normalizePredicateFunctionOperator(value: unknown): PredicateFunctionOperator {
+  switch (value) {
+    case 'startsWith':
+    case 'endsWith':
+    case 'matchesRegex':
+    case 'isEmpty':
+    case 'contains':
+      return value;
+    default:
+      return 'contains';
+  }
+}
+
+function isUnaryPredicateFunctionOperator(operator: PredicateFunctionOperator) {
+  return operator === 'isEmpty';
+}
+
+function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
+  const nextCount = Math.max(2, itemCount);
+  const currentCount = Math.max(2, block.itemCount_ ?? 2);
+
+  if (nextCount === currentCount) {
+    return;
+  }
+
+  const connections = Array.from({ length: currentCount }, (_, index) => (
+    block.getInput(`ITEM${index}`)?.connection?.targetConnection ?? null
+  ));
+
+  for (let index = nextCount; index < currentCount; index += 1) {
+    connections[index]?.disconnect();
+  }
+
+  block.itemCount_ = nextCount;
+  block.updateShape_?.();
+
+  const reconnectCount = Math.min(nextCount, connections.length);
+
+  for (let index = 0; index < reconnectCount; index += 1) {
+    connections[index]?.reconnect(block, `ITEM${index}`);
+  }
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
 }
 
 function appendNewColumnFields(block: Blockly.Block) {
@@ -6044,6 +5985,136 @@ function haveSameColumnIds(left: string[], right: string[]) {
   return right.every((columnId) => leftSet.has(columnId));
 }
 
+===== src\editor\FieldSearchDropdown.ts =====
+import * as Blockly from 'blockly';
+
+type SearchDropdownOption = {
+  label: string;
+  value: string;
+  searchText?: string;
+};
+
+export class FieldSearchDropdown extends Blockly.Field<string | undefined> {
+  override EDITABLE = true;
+  override SERIALIZABLE = true;
+
+  private options: SearchDropdownOption[] = [];
+
+  constructor(value: string, options: SearchDropdownOption[], validator?: Blockly.FieldValidator<string | undefined> | null) {
+    super(Blockly.Field.SKIP_SETUP);
+    this.options = options.map((option) => ({
+      ...option,
+      searchText: (option.searchText ?? `${option.label} ${option.value}`).toLocaleLowerCase(),
+    }));
+    this.setValue(value, false);
+
+    if (validator) {
+      this.setValidator(validator);
+    }
+  }
+
+  protected override initView() {
+    super.initView();
+
+    if (!this.clickTarget_) {
+      this.clickTarget_ = this.getSvgRoot();
+    }
+  }
+
+  protected override doClassValidation_(newValue?: string) {
+    if (!this.options || this.options.length === 0) {
+      return typeof newValue === 'string' ? newValue : null;
+    }
+
+    if (typeof newValue !== 'string') {
+      return this.options[0]?.value ?? null;
+    }
+
+    return this.options.some((option) => option.value === newValue)
+      ? newValue
+      : this.options[0]?.value ?? null;
+  }
+
+  protected override getText_() {
+    return this.getOption(this.getValue() ?? '')?.label ?? '';
+  }
+
+  protected override showEditor_() {
+    if (!this.isCurrentlyEditable() || typeof document === 'undefined') {
+      return;
+    }
+
+    Blockly.DropDownDiv.hideIfOwner(this, true);
+    Blockly.DropDownDiv.clearContent();
+    const contentDiv = Blockly.DropDownDiv.getContentDiv();
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'blockly-search-dropdown';
+    const stopPropagation = (event: Event) => event.stopPropagation();
+    wrapper.addEventListener('mousedown', stopPropagation);
+    wrapper.addEventListener('pointerdown', stopPropagation);
+    wrapper.addEventListener('click', stopPropagation);
+
+    const searchInput = document.createElement('input');
+    searchInput.className = 'blockly-search-dropdown__search';
+    searchInput.placeholder = 'Search predicates';
+    searchInput.type = 'search';
+    wrapper.append(searchInput);
+
+    const list = document.createElement('div');
+    list.className = 'blockly-search-dropdown__list';
+    wrapper.append(list);
+    contentDiv.append(wrapper);
+
+    const renderList = (query: string) => {
+      list.replaceChildren();
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      const visibleOptions = this.options.filter((option) => option.searchText?.includes(normalizedQuery));
+
+      if (visibleOptions.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'blockly-search-dropdown__empty';
+        emptyState.textContent = 'No matching predicates';
+        list.append(emptyState);
+        return;
+      }
+
+      visibleOptions.forEach((option) => {
+        const button = document.createElement('button');
+        button.className = 'blockly-search-dropdown__option';
+        button.type = 'button';
+
+        if (option.value === this.getValue()) {
+          button.classList.add('blockly-search-dropdown__option--selected');
+        }
+
+        button.textContent = option.label;
+        button.addEventListener('click', () => {
+          this.setValue(option.value);
+          Blockly.DropDownDiv.hideIfOwner(this, true);
+        });
+        list.append(button);
+      });
+    };
+
+    searchInput.addEventListener('input', () => {
+      renderList(searchInput.value);
+    });
+
+    Blockly.DropDownDiv.setColour('#fffaf3', '#d7b98c');
+    Blockly.DropDownDiv.showPositionedByField(this, () => {
+      wrapper.remove();
+    });
+
+    renderList('');
+    setTimeout(() => searchInput.focus(), 0);
+  }
+
+  private getOption(value: string) {
+    return this.options.find((option) => option.value === value);
+  }
+}
+
 ===== src\editor\index.ts =====
 export { WorkflowEditor } from './WorkflowEditor';
 export { registerWorkflowBlocks } from './blocks';
@@ -6178,7 +6249,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: call('lower', call('trim', value())),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -6219,23 +6289,12 @@ describe('block-based workflow authoring', () => {
         {
           kind: 'scopedTransform',
           columnIds: ['col_first_name', 'col_last_name'],
-          rowCondition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'startsWith',
-                columnId: 'col_first_name',
-                value: 'A',
-              },
-              {
-                kind: 'startsWith',
-                columnId: 'col_last_name',
-                value: 'A',
-              },
-            ],
-          },
+          rowCondition: call(
+            'and',
+            call('startsWith', column('col_first_name'), literal('A')),
+            call('startsWith', column('col_last_name'), literal('A')),
+          ),
           expression: call('substring', value(), literal(0), literal(3)),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -6253,23 +6312,12 @@ describe('block-based workflow authoring', () => {
           id: 'step_scoped_transform_1',
           type: 'scopedTransform',
           columnIds: ['col_first_name', 'col_last_name'],
-          rowCondition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'startsWith',
-                columnId: 'col_first_name',
-                value: 'A',
-              },
-              {
-                kind: 'startsWith',
-                columnId: 'col_last_name',
-                value: 'A',
-              },
-            ],
-          },
+          rowCondition: call(
+            'and',
+            call('startsWith', column('col_first_name'), literal('A')),
+            call('startsWith', column('col_last_name'), literal('A')),
+          ),
           expression: call('substring', value(), literal(0), literal(3)),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     });
@@ -6286,7 +6334,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_derive_display_name',
@@ -6358,7 +6405,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: coalesce(value(), column('col_customer_id')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -6443,7 +6489,7 @@ describe('block-based workflow authoring', () => {
     expect(roundtrip.workflow).toEqual(workflow);
   });
 
-  it('roundtrips matchesRegex conditions through Blockly blocks without semantic loss', () => {
+  it('roundtrips matchesRegex logic expressions through Blockly blocks without semantic loss', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_regex_roundtrip',
@@ -6453,11 +6499,7 @@ describe('block-based workflow authoring', () => {
           id: 'step_filter_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')),
         },
       ],
     };
@@ -6467,7 +6509,71 @@ describe('block-based workflow authoring', () => {
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
-    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.matchesRegexCondition);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.predicateFunction);
+  });
+
+  it('roundtrips symbolic comparator operators without semantic loss', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_symbolic_comparators',
+      name: 'Symbolic comparators',
+      steps: [
+        {
+          id: 'step_filter_orders',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call(
+            'and',
+            call('or',
+              call('lessThan', column('col_order_total'), literal(100)),
+              call('equals', column('col_order_total'), literal(100)),
+            ),
+            call('not', call('equals', column('col_order_status'), literal('cancelled'))),
+          ),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_order_total', 'col_order_status'], workflow);
+    const comparisonBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.comparisonFunction);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(comparisonBlocks.map((block) => block.getFieldValue('OPERATOR')).sort()).toEqual(['lte', 'ne']);
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('reconstructs flat multi-argument logical groups as one horizontal block', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_flat_logic_group',
+      name: 'Flat logic group',
+      steps: [
+        {
+          id: 'step_filter_orders',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call(
+            'and',
+            call('greaterThan', column('col_order_total'), literal(100)),
+            call('equals', column('col_order_status'), literal('paid')),
+            call('not', call('isEmpty', column('col_customer_id'))),
+          ),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_order_total', 'col_order_status', 'col_customer_id'], workflow);
+    const logicalBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.logicalBinaryFunction);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(logicalBlocks).toHaveLength(1);
+    expect(logicalBlocks[0]?.getFieldValue('OPERATOR')).toBe('and');
+    expect(logicalBlocks[0]?.getInput('ITEM0')).toBeTruthy();
+    expect(logicalBlocks[0]?.getInput('ITEM1')).toBeTruthy();
+    expect(logicalBlocks[0]?.getInput('ITEM2')).toBeTruthy();
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
   });
 
   it('reconstructs drop-columns steps as a dedicated multi-select table-operation block', () => {
@@ -6525,17 +6631,12 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_drop_missing_email',
           type: 'filterRows',
           mode: 'drop',
-          condition: {
-            kind: 'isEmpty',
-            columnId: 'col_email',
-            treatWhitespaceAsEmpty: false,
-          },
+          condition: call('isEmpty', column('col_email')),
         },
       ],
     };
@@ -6614,13 +6715,28 @@ describe('block-based workflow authoring', () => {
     expect(json).not.toContain('sourceBlockId');
   });
 
-  it('defaults whitespace-empty handling to true in new editor blocks', () => {
+  it('uses expression-based logic blocks instead of legacy condition blocks', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
-    const isEmptyBlock = workspace.newBlock(BLOCK_TYPES.isEmptyCondition);
+    const comparisonBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
+    const predicateBlock = workspace.newBlock(BLOCK_TYPES.predicateFunction);
+    const logicalBlock = workspace.newBlock(BLOCK_TYPES.logicalBinaryFunction);
 
-    expect(transformBlock.getFieldValue('TREAT_WHITESPACE_AS_EMPTY')).toBe('TRUE');
-    expect(isEmptyBlock.getFieldValue('TREAT_WHITESPACE_AS_EMPTY')).toBe('TRUE');
+    expect(transformBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(predicateBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(comparisonBlock.getFieldValue('OPERATOR')).toBe('eq');
+    expect(predicateBlock.getFieldValue('OPERATOR')).toBe('contains');
+    expect(logicalBlock.getFieldValue('OPERATOR')).toBe('and');
+    expect(comparisonBlock.inputsInline).toBe(true);
+    expect(predicateBlock.inputsInline).toBe(true);
+    expect(logicalBlock.inputsInline).toBe(false);
+    expect(logicalBlock.getInput('HEADER')).toBeTruthy();
+    expect(logicalBlock.getField('ADD_ITEM')).toBeTruthy();
+    expect(logicalBlock.getField('REMOVE_ITEM')).toBeTruthy();
+    expect(predicateBlock.getInput('FIRST')).toBeTruthy();
+    expect(predicateBlock.getInput('SECOND')).toBeTruthy();
+    expect(logicalBlock.getInput('ITEM0')).toBeTruthy();
+    expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
   });
 
   it('exposes schema-aware explicit column IDs for multi-select fields', async () => {
@@ -6652,7 +6768,6 @@ describe('block-based workflow authoring', () => {
           type: 'scopedTransform',
           columnIds: ['email_safe'],
           expression: coalesce(value(), literal('NA')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -6745,14 +6860,12 @@ function buildAllStepsWorkflow(): Workflow {
         type: 'scopedTransform',
         columnIds: ['col_status'],
         expression: coalesce(value(), literal('unknown')),
-        treatWhitespaceAsEmpty: true,
       },
       {
         id: 'step_normalize_text',
         type: 'scopedTransform',
         columnIds: ['col_email', 'col_city'],
         expression: call('lower', call('collapseWhitespace', call('trim', value()))),
-        treatWhitespaceAsEmpty: false,
       },
       {
         id: 'step_drop_columns',
@@ -6782,24 +6895,11 @@ function buildAllStepsWorkflow(): Workflow {
         id: 'step_filter_rows',
         type: 'filterRows',
         mode: 'keep',
-        condition: {
-          kind: 'and',
-          conditions: [
-            {
-              kind: 'not',
-              condition: {
-                kind: 'isEmpty',
-                columnId: 'col_email',
-                treatWhitespaceAsEmpty: false,
-              },
-            },
-            {
-              kind: 'contains',
-              columnId: 'col_email',
-              value: '@',
-            },
-          ],
-        },
+        condition: call(
+          'and',
+          call('not', call('isEmpty', column('col_email'))),
+          call('contains', column('col_email'), literal('@')),
+        ),
       },
       {
         id: 'step_split_name',
@@ -6881,7 +6981,29 @@ function column(columnId: string): WorkflowExpression {
 }
 
 function call(
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'substring' | 'replace' | 'split' | 'first' | 'last' | 'coalesce' | 'concat',
+  name:
+    | 'trim'
+    | 'lower'
+    | 'upper'
+    | 'collapseWhitespace'
+    | 'substring'
+    | 'replace'
+    | 'split'
+    | 'first'
+    | 'last'
+    | 'coalesce'
+    | 'concat'
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'matchesRegex'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'and'
+    | 'or'
+    | 'not'
+    | 'isEmpty',
   ...args: WorkflowExpression[]
 ): WorkflowExpression {
   return {
@@ -6915,7 +7037,7 @@ import * as Blockly from 'blockly';
 
 import { type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
-import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowCondition, type WorkflowExpression } from '../workflow';
+import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from '../workflow';
 
 import {
   authoringWorkflowToWorkflow,
@@ -7227,7 +7349,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
     case BLOCK_TYPES.scopedTransformStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
       const expression = readRequiredExpression(block, 'EXPRESSION');
-      const rowCondition = readOptionalCondition(block, 'ROW_CONDITION');
+      const rowCondition = readOptionalExpression(block, 'ROW_CONDITION');
 
       if ('issue' in columnIds) {
         return { step: undefined as never, issue: columnIds.issue };
@@ -7248,9 +7370,8 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockId: block.id,
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
-          rowCondition: rowCondition.condition,
+          rowCondition: rowCondition.expression,
           expression: expression.expression,
-          treatWhitespaceAsEmpty: getFieldBoolean(block, 'TREAT_WHITESPACE_AS_EMPTY'),
         },
       };
     }
@@ -7301,7 +7422,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
       };
     }
     case BLOCK_TYPES.filterRowsStep: {
-      const condition = readRequiredCondition(block, 'CONDITION');
+      const condition = readRequiredExpression(block, 'CONDITION');
 
       if ('issue' in condition) {
         return { step: undefined as never, issue: condition.issue };
@@ -7314,7 +7435,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockId: block.id,
           sourceBlockType: block.type,
           mode: getFieldString(block, 'MODE') as 'keep' | 'drop',
-          condition: condition.condition,
+          condition: condition.expression,
         },
       };
     }
@@ -7438,14 +7559,14 @@ function readRequiredSorts(block: Blockly.Block, inputName: string) {
   return 'issue' in items ? items : { sorts: items.values };
 }
 
-function readOptionalCondition(block: Blockly.Block, inputName: string): { condition?: WorkflowCondition } | { issue: EditorIssue } {
-  const conditionBlock = block.getInputTargetBlock(inputName);
+function readOptionalExpression(block: Blockly.Block, inputName: string): { expression?: WorkflowExpression } | { issue: EditorIssue } {
+  const expressionBlock = block.getInputTargetBlock(inputName);
 
-  if (!conditionBlock) {
-    return { condition: undefined };
+  if (!expressionBlock) {
+    return { expression: undefined };
   }
 
-  return readCondition(conditionBlock);
+  return readExpression(expressionBlock);
 }
 
 function readRequiredExpression(block: Blockly.Block, inputName: string): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -7496,6 +7617,14 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
+    case BLOCK_TYPES.notFunction:
+      return readUnaryCall(block, 'not');
+    case BLOCK_TYPES.comparisonFunction:
+      return readComparisonExpression(block);
+    case BLOCK_TYPES.predicateFunction:
+      return readPredicateExpression(block);
+    case BLOCK_TYPES.logicalBinaryFunction:
+      return readLogicalBinaryExpression(block);
     default:
       return {
         issue: {
@@ -7510,14 +7639,36 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
 
 function readUnaryCall(
   block: Blockly.Block,
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last',
+  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'isEmpty' | 'not',
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   return readFixedArityCall(block, name, ['INPUT']);
 }
 
 function readFixedArityCall(
   block: Blockly.Block,
-  name: 'substring' | 'replace' | 'split' | 'coalesce' | 'concat' | 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last',
+  name:
+    | 'substring'
+    | 'replace'
+    | 'split'
+    | 'coalesce'
+    | 'concat'
+    | 'trim'
+    | 'lower'
+    | 'upper'
+    | 'collapseWhitespace'
+    | 'first'
+    | 'last'
+    | 'isEmpty'
+    | 'not'
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'matchesRegex'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'and'
+    | 'or',
   inputNames: string[],
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   const args: WorkflowExpression[] = [];
@@ -7542,170 +7693,306 @@ function readFixedArityCall(
 }
 
 function readConcatCall(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
-  const result = readFixedArityCall(block, 'concat', ['FIRST', 'SECOND']);
+  return readFlattenedBinaryCall(block, 'concat', ['FIRST', 'SECOND']);
+}
+
+function readFlattenedBinaryCall(
+  block: Blockly.Block,
+  name: 'concat' | 'and' | 'or',
+  inputNames: [string, string],
+): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const result = readFixedArityCall(block, name, inputNames);
 
   if ('issue' in result) {
     return result;
   }
 
   return {
-    expression: flattenConcatExpression(result.expression),
+    expression: flattenCallExpression(result.expression, name),
   };
 }
 
-function flattenConcatExpression(expression: WorkflowExpression): WorkflowExpression {
-  if (expression.kind !== 'call' || expression.name !== 'concat') {
+function readComparisonExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const first = readRequiredExpression(block, 'FIRST');
+  const second = readRequiredExpression(block, 'SECOND');
+
+  if ('issue' in first) {
+    return first;
+  }
+
+  if ('issue' in second) {
+    return second;
+  }
+
+  return {
+    expression: createComparatorExpression(
+      getFieldString(block, 'OPERATOR') as 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte',
+      first.expression,
+      second.expression,
+    ),
+  };
+}
+
+function readPredicateExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const operator = getFieldString(block, 'OPERATOR') as 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
+
+  if (operator === 'isEmpty') {
+    return readFixedArityCall(block, operator, ['INPUT']);
+  }
+
+  return readFixedArityCall(block, operator, ['FIRST', 'SECOND']);
+}
+
+function readLogicalBinaryExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const operator = getFieldString(block, 'OPERATOR') as 'and' | 'or';
+  const inputNames = getLogicalGroupInputNames(block);
+
+  if (inputNames.length < 2) {
+    return {
+      issue: missingInputIssue(block, `ITEM${inputNames.length}`),
+    };
+  }
+
+  const args: WorkflowExpression[] = [];
+
+  for (const inputName of inputNames) {
+    const expression = readRequiredExpression(block, inputName);
+
+    if ('issue' in expression) {
+      return expression;
+    }
+
+    args.push(expression.expression);
+  }
+
+  return {
+    expression: flattenCallExpression(
+      {
+        kind: 'call',
+        name: operator,
+        args,
+      },
+      operator,
+    ),
+  };
+}
+
+function flattenCallExpression(expression: WorkflowExpression, name: 'concat' | 'and' | 'or'): WorkflowExpression {
+  if (expression.kind !== 'call' || expression.name !== name) {
     return expression;
   }
 
   return {
     kind: 'call',
-    name: 'concat',
+    name,
     args: expression.args.flatMap((argument) => {
-      const flattened = flattenConcatExpression(argument);
-      return flattened.kind === 'call' && flattened.name === 'concat' ? flattened.args : [flattened];
+      const flattened = flattenCallExpression(argument, name);
+      return flattened.kind === 'call' && flattened.name === name ? flattened.args : [flattened];
     }),
   };
 }
 
-function readRequiredCondition(block: Blockly.Block, inputName: string): { condition: WorkflowCondition } | { issue: EditorIssue } {
-  const conditionBlock = block.getInputTargetBlock(inputName);
-
-  if (!conditionBlock) {
-    return {
-      issue: missingInputIssue(block, inputName),
-    };
-  }
-
-  return readCondition(conditionBlock);
-}
-
-function readCondition(block: Blockly.Block): { condition: WorkflowCondition } | { issue: EditorIssue } {
-  switch (block.type) {
-    case BLOCK_TYPES.isEmptyCondition:
+function createComparatorExpression(
+  operator: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte',
+  first: WorkflowExpression,
+  second: WorkflowExpression,
+): WorkflowExpression {
+  switch (operator) {
+    case 'eq':
       return {
-        condition: {
-          kind: 'isEmpty',
-          columnId: getFieldString(block, 'COLUMN_ID'),
-          treatWhitespaceAsEmpty: getFieldBoolean(block, 'TREAT_WHITESPACE_AS_EMPTY'),
-        },
+        kind: 'call',
+        name: 'equals',
+        args: [first, second],
       };
-    case BLOCK_TYPES.equalsCondition: {
-      const value = readRequiredLiteral(block, 'VALUE');
-
-      return 'issue' in value
-        ? value
-        : {
-            condition: {
-              kind: 'equals',
-              columnId: getFieldString(block, 'COLUMN_ID'),
-              value: value.value,
-            },
-          };
-    }
-    case BLOCK_TYPES.containsCondition:
-      return { condition: { kind: 'contains', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
-    case BLOCK_TYPES.startsWithCondition:
-      return { condition: { kind: 'startsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
-    case BLOCK_TYPES.endsWithCondition:
-      return { condition: { kind: 'endsWith', columnId: getFieldString(block, 'COLUMN_ID'), value: getFieldString(block, 'VALUE') } };
-    case BLOCK_TYPES.matchesRegexCondition:
-      return { condition: { kind: 'matchesRegex', columnId: getFieldString(block, 'COLUMN_ID'), pattern: getFieldString(block, 'PATTERN') } };
-    case BLOCK_TYPES.greaterThanCondition: {
-      const value = readRequiredLiteral(block, 'VALUE');
-
-      return 'issue' in value
-        ? value
-        : {
-            condition: {
-              kind: 'greaterThan',
-              columnId: getFieldString(block, 'COLUMN_ID'),
-              value: value.value,
-            },
-          };
-    }
-    case BLOCK_TYPES.lessThanCondition: {
-      const value = readRequiredLiteral(block, 'VALUE');
-
-      return 'issue' in value
-        ? value
-        : {
-            condition: {
-              kind: 'lessThan',
-              columnId: getFieldString(block, 'COLUMN_ID'),
-              value: value.value,
-            },
-          };
-    }
-    case BLOCK_TYPES.andCondition: {
-      const items = readStatementItems(block.getInputTargetBlock('CONDITIONS'), BLOCK_TYPES.conditionItem, 'missingConditionItems', (item) => {
-        const condition = readRequiredCondition(item, 'CONDITION');
-
-        if ('issue' in condition) {
-          throw condition.issue;
-        }
-
-        return condition.condition;
-      });
-
-      return 'issue' in items ? items : { condition: { kind: 'and', conditions: items.values } };
-    }
-    case BLOCK_TYPES.orCondition: {
-      const items = readStatementItems(block.getInputTargetBlock('CONDITIONS'), BLOCK_TYPES.conditionItem, 'missingConditionItems', (item) => {
-        const condition = readRequiredCondition(item, 'CONDITION');
-
-        if ('issue' in condition) {
-          throw condition.issue;
-        }
-
-        return condition.condition;
-      });
-
-      return 'issue' in items ? items : { condition: { kind: 'or', conditions: items.values } };
-    }
-    case BLOCK_TYPES.notCondition: {
-      const condition = readRequiredCondition(block, 'CONDITION');
-
-      return 'issue' in condition ? condition : { condition: { kind: 'not', condition: condition.condition } };
-    }
+    case 'ne':
+      return {
+        kind: 'call',
+        name: 'not',
+        args: [{
+          kind: 'call',
+          name: 'equals',
+          args: [first, second],
+        }],
+      };
+    case 'lt':
+      return {
+        kind: 'call',
+        name: 'lessThan',
+        args: [first, second],
+      };
+    case 'lte':
+      return {
+        kind: 'call',
+        name: 'or',
+        args: [
+          {
+            kind: 'call',
+            name: 'lessThan',
+            args: [first, second],
+          },
+          {
+            kind: 'call',
+            name: 'equals',
+            args: [first, second],
+          },
+        ],
+      };
+    case 'gt':
+      return {
+        kind: 'call',
+        name: 'greaterThan',
+        args: [first, second],
+      };
+    case 'gte':
+      return {
+        kind: 'call',
+        name: 'or',
+        args: [
+          {
+            kind: 'call',
+            name: 'greaterThan',
+            args: [first, second],
+          },
+          {
+            kind: 'call',
+            name: 'equals',
+            args: [first, second],
+          },
+        ],
+      };
     default:
       return {
-        issue: {
-          code: 'invalidConditionBlock',
-          message: `Block '${block.type}' is not a supported condition block.`,
-          blockId: block.id,
-          blockType: block.type,
-        },
+        kind: 'call',
+        name: 'equals',
+        args: [first, second],
       };
   }
 }
 
-function readRequiredLiteral(block: Blockly.Block, inputName: string): { value: string | number | boolean } | { issue: EditorIssue } {
-  const literalBlock = block.getInputTargetBlock(inputName);
+function detectComparatorExpression(expression: Extract<WorkflowExpression, { kind: 'call' }>) {
+  switch (expression.name) {
+    case 'equals':
+      return {
+        operator: 'eq' as const,
+        first: expression.args[0],
+        second: expression.args[1],
+      };
+    case 'lessThan':
+      return {
+        operator: 'lt' as const,
+        first: expression.args[0],
+        second: expression.args[1],
+      };
+    case 'greaterThan':
+      return {
+        operator: 'gt' as const,
+        first: expression.args[0],
+        second: expression.args[1],
+      };
+    case 'not': {
+      const candidate = expression.args[0];
 
-  if (!literalBlock) {
+      if (candidate?.kind === 'call' && candidate.name === 'equals') {
+        return {
+          operator: 'ne' as const,
+          first: candidate.args[0],
+          second: candidate.args[1],
+        };
+      }
+
+      return null;
+    }
+    case 'or':
+      return detectRangeComparatorExpression(expression);
+    default:
+      return null;
+  }
+}
+
+function detectRangeComparatorExpression(expression: Extract<WorkflowExpression, { kind: 'call' }>) {
+  if (expression.args.length !== 2) {
+    return null;
+  }
+
+  const [left, right] = expression.args;
+
+  const lessThanMatch = matchComparatorPair(left, right, 'lessThan');
+
+  if (lessThanMatch) {
     return {
-      issue: missingInputIssue(block, inputName),
+      operator: 'lte' as const,
+      first: lessThanMatch.first,
+      second: lessThanMatch.second,
     };
   }
 
-  switch (literalBlock.type) {
-    case BLOCK_TYPES.literalString:
-      return { value: getFieldString(literalBlock, 'VALUE') };
-    case BLOCK_TYPES.literalNumber:
-      return { value: Number(literalBlock.getFieldValue('VALUE') ?? 0) };
-    case BLOCK_TYPES.literalBoolean:
-      return { value: getFieldString(literalBlock, 'VALUE') === 'true' };
-    default:
-      return {
-        issue: {
-          code: 'invalidLiteralBlock',
-          message: `Block '${literalBlock.type}' is not a supported non-null literal block.`,
-          blockId: literalBlock.id,
-          blockType: literalBlock.type,
-        },
-      };
+  const greaterThanMatch = matchComparatorPair(left, right, 'greaterThan');
+
+  if (greaterThanMatch) {
+    return {
+      operator: 'gte' as const,
+      first: greaterThanMatch.first,
+      second: greaterThanMatch.second,
+    };
   }
+
+  return null;
+}
+
+function matchComparatorPair(
+  left: WorkflowExpression,
+  right: WorkflowExpression,
+  comparisonName: 'lessThan' | 'greaterThan',
+) {
+  const direct = matchComparatorPairOrder(left, right, comparisonName);
+
+  if (direct) {
+    return direct;
+  }
+
+  return matchComparatorPairOrder(right, left, comparisonName);
+}
+
+function matchComparatorPairOrder(
+  comparisonExpression: WorkflowExpression,
+  equalsExpression: WorkflowExpression,
+  comparisonName: 'lessThan' | 'greaterThan',
+) {
+  if (comparisonExpression.kind !== 'call' || comparisonExpression.name !== comparisonName) {
+    return null;
+  }
+
+  if (equalsExpression.kind !== 'call' || equalsExpression.name !== 'equals') {
+    return null;
+  }
+
+  if (
+    sameExpression(comparisonExpression.args[0], equalsExpression.args[0])
+    && sameExpression(comparisonExpression.args[1], equalsExpression.args[1])
+  ) {
+    return {
+      first: comparisonExpression.args[0],
+      second: comparisonExpression.args[1],
+    };
+  }
+
+  return null;
+}
+
+function sameExpression(left: WorkflowExpression, right: WorkflowExpression) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function getLogicalGroupInputNames(block: Blockly.Block) {
+  const inputNames: string[] = [];
+  let index = 0;
+
+  while (block.getInput(`ITEM${index}`)) {
+    inputNames.push(`ITEM${index}`);
+    index += 1;
+  }
+
+  return inputNames;
 }
 
 function readStatementItems<T>(
@@ -7782,10 +8069,9 @@ function createScopedTransformBlock(workspace: Blockly.Workspace, step: Authorin
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(serializeColumnSelectionValue(step.columnIds), 'COLUMN_IDS');
-  block.setFieldValue(step.treatWhitespaceAsEmpty ? 'TRUE' : 'FALSE', 'TREAT_WHITESPACE_AS_EMPTY');
 
   if (step.rowCondition) {
-    connectValueBlock(block, 'ROW_CONDITION', createConditionBlock(workspace, step.rowCondition));
+    connectValueBlock(block, 'ROW_CONDITION', createExpressionBlock(workspace, step.rowCondition));
   }
 
   connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
@@ -7834,7 +8120,7 @@ function createFilterRowsBlock(workspace: Blockly.Workspace, step: AuthoringFilt
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(step.mode, 'MODE');
-  connectValueBlock(block, 'CONDITION', createConditionBlock(workspace, step.condition));
+  connectValueBlock(block, 'CONDITION', createExpressionBlock(workspace, step.condition));
   return block;
 }
 
@@ -7941,13 +8227,25 @@ function createExpressionBlock(workspace: Blockly.Workspace, expression: Workflo
 }
 
 function createCallBlock(workspace: Blockly.Workspace, expression: Extract<WorkflowExpression, { kind: 'call' }>) {
+  const comparatorExpression = detectComparatorExpression(expression);
+
+  if (comparatorExpression) {
+    const block = createBlock(workspace, BLOCK_TYPES.comparisonFunction);
+
+    block.setFieldValue(comparatorExpression.operator, 'OPERATOR');
+    connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, comparatorExpression.first));
+    connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, comparatorExpression.second));
+    return block;
+  }
+
   switch (expression.name) {
     case 'trim':
     case 'lower':
     case 'upper':
     case 'collapseWhitespace':
     case 'first':
-    case 'last': {
+    case 'last':
+    case 'not': {
       const blockType = {
         trim: BLOCK_TYPES.trimFunction,
         lower: BLOCK_TYPES.lowerFunction,
@@ -7955,6 +8253,7 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
         collapseWhitespace: BLOCK_TYPES.collapseWhitespaceFunction,
         first: BLOCK_TYPES.firstFunction,
         last: BLOCK_TYPES.lastFunction,
+        not: BLOCK_TYPES.notFunction,
       }[expression.name];
       const block = createBlock(workspace, blockType);
 
@@ -7991,12 +8290,55 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
       return block;
     }
+    case 'contains':
+    case 'startsWith':
+    case 'endsWith':
+    case 'matchesRegex':
+    case 'isEmpty': {
+      const block = createBlock(workspace, BLOCK_TYPES.predicateFunction);
+
+      block.setFieldValue(expression.name, 'OPERATOR');
+
+      if (expression.name === 'isEmpty') {
+        connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+        return block;
+      }
+
+      connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'and':
+    case 'or': {
+      const flattenedExpression = flattenCallExpression(expression, expression.name) as Extract<WorkflowExpression, { kind: 'call' }>;
+      const block = createBlock(workspace, BLOCK_TYPES.logicalBinaryFunction);
+      const logicalBlock = block as Blockly.Block & {
+        loadExtraState?: (state: { itemCount?: number }) => void;
+        itemCount_?: number;
+        updateShape_?: () => void;
+      };
+
+      logicalBlock.loadExtraState?.({ itemCount: Math.max(2, flattenedExpression.args.length) });
+
+      if (!logicalBlock.loadExtraState) {
+        logicalBlock.itemCount_ = Math.max(2, flattenedExpression.args.length);
+        logicalBlock.updateShape_?.();
+      }
+
+      block.setFieldValue(flattenedExpression.name, 'OPERATOR');
+
+      flattenedExpression.args.forEach((argument: WorkflowExpression, index: number) => {
+        connectValueBlock(block, `ITEM${index}`, createExpressionBlock(workspace, argument));
+      });
+
+      return block;
+    }
     case 'concat': {
       if (expression.args.length > 2) {
         return createCallBlock(workspace, {
           kind: 'call',
-          name: 'concat',
-          args: [expression.args[0], { kind: 'call', name: 'concat', args: expression.args.slice(1) }],
+          name: expression.name,
+          args: [expression.args[0], { kind: 'call', name: expression.name, args: expression.args.slice(1) }],
         });
       }
 
@@ -8008,99 +8350,6 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     }
     default:
       throw new Error(`Unsupported expression call '${expression.name}'.`);
-  }
-}
-
-function createConditionBlock(workspace: Blockly.Workspace, condition: WorkflowCondition): Blockly.Block {
-  switch (condition.kind) {
-    case 'isEmpty': {
-      const block = createBlock(workspace, BLOCK_TYPES.isEmptyCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.treatWhitespaceAsEmpty ? 'TRUE' : 'FALSE', 'TREAT_WHITESPACE_AS_EMPTY');
-      return block;
-    }
-    case 'equals': {
-      const block = createBlock(workspace, BLOCK_TYPES.equalsCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, condition.value));
-      return block;
-    }
-    case 'contains': {
-      const block = createBlock(workspace, BLOCK_TYPES.containsCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.value, 'VALUE');
-      return block;
-    }
-    case 'startsWith': {
-      const block = createBlock(workspace, BLOCK_TYPES.startsWithCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.value, 'VALUE');
-      return block;
-    }
-    case 'endsWith': {
-      const block = createBlock(workspace, BLOCK_TYPES.endsWithCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.value, 'VALUE');
-      return block;
-    }
-    case 'matchesRegex': {
-      const block = createBlock(workspace, BLOCK_TYPES.matchesRegexCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      block.setFieldValue(condition.pattern, 'PATTERN');
-      return block;
-    }
-    case 'greaterThan': {
-      const block = createBlock(workspace, BLOCK_TYPES.greaterThanCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, condition.value));
-      return block;
-    }
-    case 'lessThan': {
-      const block = createBlock(workspace, BLOCK_TYPES.lessThanCondition);
-
-      block.setFieldValue(condition.columnId, 'COLUMN_ID');
-      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, condition.value));
-      return block;
-    }
-    case 'and': {
-      const block = createBlock(workspace, BLOCK_TYPES.andCondition);
-      const items = condition.conditions.map((child) => {
-        const itemBlock = createBlock(workspace, BLOCK_TYPES.conditionItem);
-
-        connectValueBlock(itemBlock, 'CONDITION', createConditionBlock(workspace, child));
-        return itemBlock;
-      });
-
-      connectStatementChain(block, 'CONDITIONS', items);
-      return block;
-    }
-    case 'or': {
-      const block = createBlock(workspace, BLOCK_TYPES.orCondition);
-      const items = condition.conditions.map((child) => {
-        const itemBlock = createBlock(workspace, BLOCK_TYPES.conditionItem);
-
-        connectValueBlock(itemBlock, 'CONDITION', createConditionBlock(workspace, child));
-        return itemBlock;
-      });
-
-      connectStatementChain(block, 'CONDITIONS', items);
-      return block;
-    }
-    case 'not': {
-      const block = createBlock(workspace, BLOCK_TYPES.notCondition);
-
-      connectValueBlock(block, 'CONDITION', createConditionBlock(workspace, condition.condition));
-      return block;
-    }
-    default:
-      throw new Error(`Unsupported condition kind '${(condition as WorkflowCondition).kind}'.`);
   }
 }
 
@@ -8164,10 +8413,6 @@ function connectValueBlock(parent: Blockly.Block, inputName: string, child: Bloc
 
 function getFieldString(block: Blockly.Block, fieldName: string) {
   return String(block.getFieldValue(fieldName) ?? '');
-}
-
-function getFieldBoolean(block: Blockly.Block, fieldName: string) {
-  return getFieldString(block, fieldName) === 'TRUE';
 }
 
 function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -8300,7 +8545,7 @@ function toTitleCase(value: string) {
 
 ===== src\editor\schemaOptions.ts =====
 import type { Column } from '../domain/model';
-import type { Workflow, WorkflowCondition, WorkflowExpression, WorkflowStep } from '../workflow';
+import type { Workflow, WorkflowExpression, WorkflowStep } from '../workflow';
 
 let currentColumns: Column[] = [];
 let extraColumnIds = new Set<string>();
@@ -8351,7 +8596,7 @@ function collectStepColumnIds(step: WorkflowStep, columnIds: Set<string>) {
     case 'scopedTransform':
       step.columnIds.forEach((columnId) => columnIds.add(columnId));
       if (step.rowCondition) {
-        collectConditionColumnIds(step.rowCondition, columnIds);
+        collectExpressionColumnIds(step.rowCondition, columnIds);
       }
       collectExpressionColumnIds(step.expression, columnIds);
       return;
@@ -8371,7 +8616,7 @@ function collectStepColumnIds(step: WorkflowStep, columnIds: Set<string>) {
       collectExpressionColumnIds(step.expression, columnIds);
       return;
     case 'filterRows':
-      collectConditionColumnIds(step.condition, columnIds);
+      collectExpressionColumnIds(step.condition, columnIds);
       return;
     default:
       return;
@@ -8391,29 +8636,6 @@ function collectExpressionColumnIds(expression: WorkflowExpression, columnIds: S
   }
 }
 
-function collectConditionColumnIds(condition: WorkflowCondition, columnIds: Set<string>) {
-  switch (condition.kind) {
-    case 'isEmpty':
-    case 'equals':
-    case 'contains':
-    case 'startsWith':
-    case 'endsWith':
-    case 'matchesRegex':
-    case 'greaterThan':
-    case 'lessThan':
-      columnIds.add(condition.columnId);
-      return;
-    case 'and':
-    case 'or':
-      condition.conditions.forEach((child) => collectConditionColumnIds(child, columnIds));
-      return;
-    case 'not':
-      collectConditionColumnIds(condition.condition, columnIds);
-      return;
-    default:
-      return;
-  }
-}
 
 ===== src\editor\types.ts =====
 import type { Workflow } from '../workflow';
@@ -9261,7 +9483,22 @@ code {
   padding: 0.3rem;
 }
 
+.blockly-search-dropdown {
+  width: min(18rem, 72vw);
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.3rem;
+}
+
 .blockly-column-multiselect__search {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  background: #fffdf9;
+}
+
+.blockly-search-dropdown__search {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.75rem;
@@ -9295,6 +9532,14 @@ code {
   background: #fff;
 }
 
+.blockly-search-dropdown__list {
+  max-height: 14rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: #fff;
+}
+
 .blockly-column-multiselect__option,
 .blockly-column-multiselect__empty {
   display: flex;
@@ -9303,12 +9548,40 @@ code {
   padding: 0.65rem 0.8rem;
 }
 
+.blockly-search-dropdown__option,
+.blockly-search-dropdown__empty {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  padding: 0.65rem 0.8rem;
+}
+
 .blockly-column-multiselect__option + .blockly-column-multiselect__option {
+  border-top: 1px solid #efe4d6;
+}
+
+.blockly-search-dropdown__option + .blockly-search-dropdown__option {
   border-top: 1px solid #efe4d6;
 }
 
 .blockly-column-multiselect__empty {
   color: var(--muted);
+}
+
+.blockly-search-dropdown__empty {
+  color: var(--muted);
+}
+
+.blockly-search-dropdown__option {
+  cursor: pointer;
+}
+
+.blockly-search-dropdown__option:hover,
+.blockly-search-dropdown__option--selected {
+  background: #fff2e8;
 }
 
 .blocklyDropDownDiv {
@@ -9610,7 +9883,6 @@ export { cloneTable, executeValidatedWorkflow, summarizeWorkflowChanges, validat
 export { validateWorkflowStructure } from './structural';
 export type {
   Workflow,
-  WorkflowCondition,
   WorkflowExecutionResult,
   WorkflowExecutionWarning,
   WorkflowExpression,
@@ -9636,7 +9908,6 @@ import type {
   Workflow,
   WorkflowCallExpression,
   WorkflowCombineColumnsStep,
-  WorkflowCondition,
   WorkflowDeduplicateRowsStep,
   WorkflowExecutionWarning,
   WorkflowExpression,
@@ -9664,15 +9935,14 @@ interface WorkflowChangeSummary {
 }
 
 interface ExpressionContext {
-  scope: 'scopedTransform' | 'deriveColumn';
+  scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
   valueLogicalType?: LogicalType;
 }
 
 interface ExpressionExecutionContext {
-  scope: 'scopedTransform' | 'deriveColumn';
+  scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
   row: TableRow;
   currentValue: CellValue;
-  treatWhitespaceAsEmpty: boolean;
 }
 
 type ExpressionRuntimeValue = CellValue | string[];
@@ -9840,7 +10110,7 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
   validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
 
   if (step.rowCondition) {
-    issues.push(...validateCondition(step.rowCondition, table, `${basePath}.rowCondition`, step.id));
+    issues.push(...validateBooleanExpression(step.rowCondition, table, `${basePath}.rowCondition`, step.id));
   }
 
   columns.forEach((column, columnIndex) => {
@@ -9877,18 +10147,6 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
           `Scoped transform expression in step '${step.id}' must resolve to a scalar cell value.`,
           `${basePath}.expression`,
           step.id,
-        ),
-      );
-    }
-
-    if (step.treatWhitespaceAsEmpty && !isStringLikeType(column.logicalType) && expressionUsesCoalesce(step.expression)) {
-      issues.push(
-        makeIssue(
-          'incompatibleType',
-          `Whitespace-only empty matching is only valid for string or unknown columns, but '${column.columnId}' is '${column.logicalType}'.`,
-          `${basePath}.treatWhitespaceAsEmpty`,
-          step.id,
-          { columnId: column.columnId, logicalType: column.logicalType },
         ),
       );
     }
@@ -9983,7 +10241,7 @@ function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveCol
 }
 
 function validateFilterRowsStep(step: Extract<WorkflowStep, { type: 'filterRows' }>, table: Table, basePath: string) {
-  return validateCondition(step.condition, table, `${basePath}.condition`, step.id);
+  return validateBooleanExpression(step.condition, table, `${basePath}.condition`, step.id);
 }
 
 function validateSplitColumnStep(step: Extract<WorkflowStep, { type: 'splitColumn' }>, table: Table, basePath: string) {
@@ -10152,6 +10410,23 @@ function validateExpression(
         issues: [makeIssue('invalidExpression', `Unsupported expression kind in step '${stepId}'.`, path, stepId)],
       };
   }
+}
+
+function validateBooleanExpression(expression: WorkflowExpression, table: Table, path: string, stepId: string) {
+  const result = validateExpression(expression, table, path, stepId, {
+    scope: 'predicate',
+  });
+  const issues = [...result.issues];
+
+  if (result.valueKind !== 'scalar') {
+    issues.push(makeIssue('invalidExpression', 'Logical expression must resolve to a scalar boolean value.', path, stepId));
+  }
+
+  if (result.logicalType !== 'boolean' && result.logicalType !== 'unknown') {
+    issues.push(makeIssue('incompatibleType', 'Logical expression must resolve to a boolean.', path, stepId));
+  }
+
+  return issues;
 }
 
 function validateCallExpression(
@@ -10343,6 +10618,122 @@ function validateCallExpression(
         valueKind: 'scalar',
         issues,
       };
+    case 'isEmpty': {
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function 'isEmpty' requires exactly one argument.`, path, stepId));
+      }
+
+      if (results[0]?.valueKind !== 'scalar') {
+        issues.push(makeIssue('invalidExpression', `Function 'isEmpty' only accepts scalar inputs.`, `${path}.args[0]`, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'not': {
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function 'not' requires exactly one argument.`, path, stepId));
+      }
+
+      if (results[0]?.valueKind !== 'scalar' || !isBooleanLikeType(results[0]?.logicalType ?? 'unknown')) {
+        issues.push(makeIssue('incompatibleType', `Function 'not' requires a boolean input.`, `${path}.args[0]`, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'and':
+    case 'or': {
+      if (results.length < 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires at least two arguments.`, path, stepId));
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isBooleanLikeType(result.logicalType)) {
+          issues.push(makeIssue('incompatibleType', `Function '${expression.name}' requires boolean inputs.`, `${path}.args[${index}]`, stepId));
+        }
+      });
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'equals': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'equals' requires exactly two arguments.`, path, stepId));
+      }
+
+      if (results.some((result) => result.valueKind !== 'scalar')) {
+        issues.push(makeIssue('invalidExpression', `Function 'equals' only accepts scalar inputs.`, path, stepId));
+      }
+
+      if (!areComparableEqualityTypes(results[0]?.logicalType ?? 'unknown', results[1]?.logicalType ?? 'unknown')) {
+        issues.push(makeIssue('incompatibleType', `Function 'equals' requires comparable scalar inputs.`, path, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'greaterThan':
+    case 'lessThan': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly two arguments.`, path, stepId));
+      }
+
+      if (results.some((result) => result.valueKind !== 'scalar')) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' only accepts scalar inputs.`, path, stepId));
+      }
+
+      if (!areComparableOrderingTypes(results[0]?.logicalType ?? 'unknown', results[1]?.logicalType ?? 'unknown')) {
+        issues.push(makeIssue('incompatibleType', `Function '${expression.name}' requires comparable ordered inputs.`, path, stepId));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'contains':
+    case 'startsWith':
+    case 'endsWith':
+    case 'matchesRegex': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly two arguments.`, path, stepId));
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isStringLikeType(result.logicalType)) {
+          issues.push(makeIssue('incompatibleType', `Function '${expression.name}' requires string inputs.`, `${path}.args[${index}]`, stepId));
+        }
+      });
+
+      if (
+        expression.name === 'matchesRegex'
+        && expression.args[1]?.kind === 'literal'
+        && typeof expression.args[1].value === 'string'
+        && !isValidRegexPattern(expression.args[1].value)
+      ) {
+        issues.push(makeIssue('invalidRegex', `Regular expression '${expression.args[1].value}' is invalid.`, `${path}.args[1]`, stepId, { pattern: expression.args[1].value }));
+      }
+
+      return {
+        logicalType: 'boolean',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
     default:
       return {
         logicalType: 'unknown',
@@ -10350,162 +10741,6 @@ function validateCallExpression(
         issues: [...issues, makeIssue('invalidExpression', `Unsupported function '${expression.name}' in step '${stepId}'.`, path, stepId)],
       };
   }
-}
-
-function validateCondition(condition: WorkflowCondition, table: Table, path: string, stepId: string): WorkflowValidationIssue[] {
-  switch (condition.kind) {
-    case 'isEmpty':
-      return validateColumnCondition(condition.columnId, table, `${path}.columnId`, stepId);
-    case 'equals': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (column.logicalType === 'mixed') {
-        return [makeIssue('incompatibleType', `Column '${condition.columnId}' has type 'mixed' and cannot be compared with equals.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isEqualsLiteralCompatible(condition.value, column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Literal value is incompatible with column '${condition.columnId}' of type '${column.logicalType}'.`,
-            `${path}.value`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, value: condition.value },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'contains':
-    case 'startsWith':
-    case 'endsWith': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isStringLikeType(column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use string comparator '${condition.kind}'.`,
-            `${path}.columnId`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'matchesRegex': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isStringLikeType(column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use regex matching.`,
-            `${path}.columnId`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
-          ),
-        ];
-      }
-
-      if (!isValidRegexPattern(condition.pattern)) {
-        return [
-          makeIssue(
-            'invalidRegex',
-            `Regular expression '${condition.pattern}' is invalid.`,
-            `${path}.pattern`,
-            stepId,
-            { pattern: condition.pattern },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'greaterThan':
-    case 'lessThan': {
-      const column = findColumn(table, condition.columnId);
-
-      if (!column) {
-        return [makeIssue('missingColumn', `Column '${condition.columnId}' does not exist at step '${stepId}'.`, `${path}.columnId`, stepId, { columnId: condition.columnId })];
-      }
-
-      if (!isOrderingType(column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Column '${condition.columnId}' has type '${column.logicalType}' and cannot use comparator '${condition.kind}'.`,
-            `${path}.columnId`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, comparator: condition.kind },
-          ),
-        ];
-      }
-
-      if (!isOrderingLiteralCompatible(condition.value, column.logicalType)) {
-        return [
-          makeIssue(
-            'incompatibleType',
-            `Literal value is incompatible with ordering comparator '${condition.kind}' on column '${condition.columnId}'.`,
-            `${path}.value`,
-            stepId,
-            { columnId: condition.columnId, logicalType: column.logicalType, value: condition.value },
-          ),
-        ];
-      }
-
-      return [];
-    }
-    case 'and':
-    case 'or':
-      if (condition.conditions.length < 2) {
-        return [makeIssue('invalidCondition', `Condition '${condition.kind}' in step '${stepId}' requires at least two child conditions.`, path, stepId)];
-      }
-
-      return condition.conditions.flatMap((child, index) => validateCondition(child, table, `${path}.conditions[${index}]`, stepId));
-    case 'not':
-      return validateCondition(condition.condition, table, `${path}.condition`, stepId);
-    default:
-      if (isExpressionCondition(condition)) {
-        const result = validateExpression(condition, table, path, stepId, {
-          scope: 'scopedTransform',
-        });
-        const issues = [...result.issues];
-
-        if (result.logicalType !== 'boolean' && result.logicalType !== 'unknown') {
-          issues.push(makeIssue('incompatibleType', 'Logical expression must resolve to a boolean.', path, stepId));
-        }
-
-        return issues;
-      }
-
-      return [makeIssue('invalidCondition', `Unsupported condition kind in step '${stepId}'.`, path, stepId)];
-  }
-}
-
-function validateColumnCondition(columnId: string, table: Table, path: string, stepId: string) {
-  const column = findColumn(table, columnId);
-
-  if (!column) {
-    return [makeIssue('missingColumn', `Column '${columnId}' does not exist at step '${stepId}'.`, path, stepId, { columnId })];
-  }
-
-  return [];
 }
 
 function resolveColumnIds(
@@ -10648,7 +10883,14 @@ function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep): WorkflowS
 
 function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformStep): WorkflowStepApplyResult {
   const rowsById = mapRows(table, (row) => {
-    if (step.rowCondition && !evaluateCondition(step.rowCondition, row)) {
+    if (
+      step.rowCondition
+      && !Boolean(evaluateExpression(step.rowCondition, {
+        scope: 'predicate',
+        row,
+        currentValue: null,
+      }))
+    ) {
       return {
         rowId: row.rowId,
         cellsByColumnId: { ...row.cellsByColumnId },
@@ -10663,7 +10905,6 @@ function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformSte
         scope: 'scopedTransform',
         row,
         currentValue,
-        treatWhitespaceAsEmpty: step.treatWhitespaceAsEmpty,
       }));
 
       cellsByColumnId[columnId] = nextValue;
@@ -10748,7 +10989,6 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
         scope: 'deriveColumn',
         row,
         currentValue: null,
-        treatWhitespaceAsEmpty: false,
       })),
     },
   }));
@@ -10770,7 +11010,11 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
 function applyFilterRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'filterRows' }>): WorkflowStepApplyResult {
   const keptRowIds = table.rowOrder.filter((rowId) => {
     const row = table.rowsById[rowId];
-    const matches = evaluateCondition(step.condition, row);
+    const matches = Boolean(evaluateExpression(step.condition, {
+      scope: 'predicate',
+      row,
+      currentValue: null,
+    }));
 
     return step.mode === 'keep' ? matches : !matches;
   });
@@ -11035,7 +11279,7 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
     case 'coalesce': {
       const first = evaluateExpression(expression.args[0], context);
 
-      if (Array.isArray(first) || !shouldTreatAsEmptyForCoalesce(first, context.treatWhitespaceAsEmpty)) {
+      if (Array.isArray(first) || !isEmptyValue(first)) {
         return first;
       }
 
@@ -11046,63 +11290,62 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
         .map((argument) => evaluateExpression(argument, context))
         .map((value) => (Array.isArray(value) || value === null ? '' : String(value)))
         .join('');
-    default:
-      return null;
-  }
-}
-
-function evaluateCondition(condition: WorkflowCondition, row: TableRow): boolean {
-  switch (condition.kind) {
-    case 'isEmpty':
-      return shouldTreatAsEmpty(row.cellsByColumnId[condition.columnId] ?? null, condition.treatWhitespaceAsEmpty);
-    case 'equals':
-      return Object.is(row.cellsByColumnId[condition.columnId] ?? null, condition.value);
+    case 'isEmpty': {
+      const value = evaluateExpression(expression.args[0], context);
+      return !Array.isArray(value) && isEmptyValue(value);
+    }
+    case 'not':
+      return !Boolean(evaluateExpression(expression.args[0], context));
+    case 'and':
+      return expression.args.every((argument) => Boolean(evaluateExpression(argument, context)));
+    case 'or':
+      return expression.args.some((argument) => Boolean(evaluateExpression(argument, context)));
+    case 'equals': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return !Array.isArray(left) && !Array.isArray(right) && Object.is(left, right);
+    }
+    case 'greaterThan': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return !Array.isArray(left) && !Array.isArray(right) && compareExpressionValues(left, right) > 0;
+    }
+    case 'lessThan': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return !Array.isArray(left) && !Array.isArray(right) && compareExpressionValues(left, right) < 0;
+    }
     case 'contains': {
-      const value = row.cellsByColumnId[condition.columnId];
-      return typeof value === 'string' ? value.includes(condition.value) : false;
+      const value = evaluateExpression(expression.args[0], context);
+      const search = evaluateExpression(expression.args[1], context);
+      return typeof value === 'string' && typeof search === 'string' ? value.includes(search) : false;
     }
     case 'startsWith': {
-      const value = row.cellsByColumnId[condition.columnId];
-      return typeof value === 'string' ? value.startsWith(condition.value) : false;
+      const value = evaluateExpression(expression.args[0], context);
+      const search = evaluateExpression(expression.args[1], context);
+      return typeof value === 'string' && typeof search === 'string' ? value.startsWith(search) : false;
     }
     case 'endsWith': {
-      const value = row.cellsByColumnId[condition.columnId];
-      return typeof value === 'string' ? value.endsWith(condition.value) : false;
+      const value = evaluateExpression(expression.args[0], context);
+      const search = evaluateExpression(expression.args[1], context);
+      return typeof value === 'string' && typeof search === 'string' ? value.endsWith(search) : false;
     }
     case 'matchesRegex': {
-      const value = row.cellsByColumnId[condition.columnId];
+      const value = evaluateExpression(expression.args[0], context);
+      const pattern = evaluateExpression(expression.args[1], context);
 
-      if (typeof value !== 'string') {
+      if (typeof value !== 'string' || typeof pattern !== 'string') {
         return false;
       }
 
       try {
-        return new RegExp(condition.pattern).test(value);
+        return new RegExp(pattern).test(value);
       } catch {
         return false;
       }
     }
-    case 'greaterThan':
-      return compareConditionValues(row.cellsByColumnId[condition.columnId] ?? null, condition.value) > 0;
-    case 'lessThan':
-      return compareConditionValues(row.cellsByColumnId[condition.columnId] ?? null, condition.value) < 0;
-    case 'and':
-      return condition.conditions.every((child) => evaluateCondition(child, row));
-    case 'or':
-      return condition.conditions.some((child) => evaluateCondition(child, row));
-    case 'not':
-      return !evaluateCondition(condition.condition, row);
     default:
-      if (isExpressionCondition(condition)) {
-        return Boolean(evaluateExpression(condition, {
-          scope: 'scopedTransform',
-          row,
-          currentValue: null,
-          treatWhitespaceAsEmpty: false,
-        }));
-      }
-
-      return false;
+      return null;
   }
 }
 
@@ -11176,16 +11419,8 @@ function getDisplayNameKey(displayName: string) {
   return normalizeWorkflowDisplayName(displayName).toLocaleLowerCase();
 }
 
-function shouldTreatAsEmpty(value: CellValue, treatWhitespaceAsEmpty: boolean) {
-  if (value === null || value === '') {
-    return true;
-  }
-
-  return treatWhitespaceAsEmpty && typeof value === 'string' && value.trim() === '';
-}
-
-function shouldTreatAsEmptyForCoalesce(value: CellValue, treatWhitespaceAsEmpty: boolean) {
-  return shouldTreatAsEmpty(value, treatWhitespaceAsEmpty);
+function isEmptyValue(value: CellValue) {
+  return value === null || value === '';
 }
 
 function isValidRegexPattern(pattern: string) {
@@ -11237,43 +11472,7 @@ function inferLiteralLogicalType(value: CellValue): LogicalType {
   return 'string';
 }
 
-function isEqualsLiteralCompatible(value: CellValue, logicalType: LogicalType) {
-  switch (logicalType) {
-    case 'unknown':
-      return value !== null;
-    case 'string':
-      return typeof value === 'string';
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'boolean':
-      return typeof value === 'boolean';
-    case 'date':
-      return typeof value === 'string' && isIsoDate(value);
-    case 'datetime':
-      return typeof value === 'string' && isIsoDateTime(value);
-    case 'mixed':
-      return false;
-    default:
-      return false;
-  }
-}
-
-function isOrderingLiteralCompatible(value: CellValue, logicalType: LogicalType) {
-  switch (logicalType) {
-    case 'unknown':
-      return (typeof value === 'number' && Number.isFinite(value)) || (typeof value === 'string' && (isIsoDate(value) || isIsoDateTime(value)));
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value);
-    case 'date':
-      return typeof value === 'string' && isIsoDate(value);
-    case 'datetime':
-      return typeof value === 'string' && isIsoDateTime(value);
-    default:
-      return false;
-  }
-}
-
-function compareConditionValues(left: CellValue, right: CellValue) {
+function compareExpressionValues(left: CellValue, right: CellValue) {
   if (left === null) {
     return -1;
   }
@@ -11317,23 +11516,36 @@ function compareSortValues(left: CellValue, right: CellValue, logicalType: Logic
   }
 }
 
-function expressionUsesCoalesce(expression: WorkflowExpression): boolean {
-  if (expression.kind === 'call' && expression.name === 'coalesce') {
-    return true;
-  }
+function isBooleanLikeType(logicalType: LogicalType) {
+  return logicalType === 'boolean' || logicalType === 'unknown';
+}
 
-  if (expression.kind !== 'call') {
+function areComparableEqualityTypes(left: LogicalType, right: LogicalType) {
+  if (left === 'mixed' || right === 'mixed') {
     return false;
   }
 
-  return expression.args.some((argument) => expressionUsesCoalesce(argument));
+  const concreteTypes = new Set([left, right].filter((logicalType) => logicalType !== 'unknown'));
+  return concreteTypes.size <= 1;
 }
 
-function isExpressionCondition(condition: WorkflowCondition): condition is WorkflowExpression {
-  return condition.kind === 'call'
-    || condition.kind === 'value'
-    || condition.kind === 'column'
-    || condition.kind === 'literal';
+function areComparableOrderingTypes(left: LogicalType, right: LogicalType) {
+  if (!isOrderingType(left) || !isOrderingType(right)) {
+    return false;
+  }
+
+  const concreteTypes = new Set([left, right].filter((logicalType) => logicalType !== 'unknown'));
+
+  if (concreteTypes.size === 0) {
+    return true;
+  }
+
+  if (concreteTypes.size > 1) {
+    return false;
+  }
+
+  const [logicalType] = [...concreteTypes];
+  return logicalType === 'number' || logicalType === 'date' || logicalType === 'datetime';
 }
 
 function makeIssue(
@@ -11559,7 +11771,18 @@ export type WorkflowExpressionFunctionName =
   | 'first'
   | 'last'
   | 'coalesce'
-  | 'concat';
+  | 'concat'
+  | 'equals'
+  | 'contains'
+  | 'startsWith'
+  | 'endsWith'
+  | 'matchesRegex'
+  | 'greaterThan'
+  | 'lessThan'
+  | 'and'
+  | 'or'
+  | 'not'
+  | 'isEmpty';
 
 export type WorkflowExpression =
   | WorkflowValueExpression
@@ -11587,90 +11810,12 @@ export interface WorkflowCallExpression {
   args: WorkflowExpression[];
 }
 
-export type WorkflowCondition =
-  | WorkflowIsEmptyCondition
-  | WorkflowEqualsCondition
-  | WorkflowContainsCondition
-  | WorkflowStartsWithCondition
-  | WorkflowEndsWithCondition
-  | WorkflowMatchesRegexCondition
-  | WorkflowGreaterThanCondition
-  | WorkflowLessThanCondition
-  | WorkflowAndCondition
-  | WorkflowOrCondition
-  | WorkflowNotCondition
-  | WorkflowExpression;
-
-export interface WorkflowIsEmptyCondition {
-  kind: 'isEmpty';
-  columnId: string;
-  treatWhitespaceAsEmpty: boolean;
-}
-
-export interface WorkflowEqualsCondition {
-  kind: 'equals';
-  columnId: string;
-  value: WorkflowNonNullScalar;
-}
-
-export interface WorkflowContainsCondition {
-  kind: 'contains';
-  columnId: string;
-  value: string;
-}
-
-export interface WorkflowStartsWithCondition {
-  kind: 'startsWith';
-  columnId: string;
-  value: string;
-}
-
-export interface WorkflowEndsWithCondition {
-  kind: 'endsWith';
-  columnId: string;
-  value: string;
-}
-
-export interface WorkflowMatchesRegexCondition {
-  kind: 'matchesRegex';
-  columnId: string;
-  pattern: string;
-}
-
-export interface WorkflowGreaterThanCondition {
-  kind: 'greaterThan';
-  columnId: string;
-  value: WorkflowNonNullScalar;
-}
-
-export interface WorkflowLessThanCondition {
-  kind: 'lessThan';
-  columnId: string;
-  value: WorkflowNonNullScalar;
-}
-
-export interface WorkflowAndCondition {
-  kind: 'and';
-  conditions: WorkflowCondition[];
-}
-
-export interface WorkflowOrCondition {
-  kind: 'or';
-  conditions: WorkflowCondition[];
-}
-
-export interface WorkflowNotCondition {
-  kind: 'not';
-  condition: WorkflowCondition;
-}
-
 export interface WorkflowScopedTransformStep {
   id: string;
   type: 'scopedTransform';
   columnIds: string[];
-  rowCondition?: WorkflowCondition;
+  rowCondition?: WorkflowExpression;
   expression: WorkflowExpression;
-  treatWhitespaceAsEmpty: boolean;
 }
 
 export interface WorkflowRenameColumnStep {
@@ -11697,7 +11842,7 @@ export interface WorkflowFilterRowsStep {
   id: string;
   type: 'filterRows';
   mode: 'keep' | 'drop';
-  condition: WorkflowCondition;
+  condition: WorkflowExpression;
 }
 
 export interface WorkflowSplitColumnStep {
@@ -11824,7 +11969,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -11877,7 +12021,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: false,
         },
         {
           id: 'step_repeat',
@@ -11907,7 +12050,6 @@ describe('workflow validation and execution', () => {
             name: 'lower',
             args: [value(), literal('extra')],
           },
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -11918,7 +12060,7 @@ describe('workflow validation and execution', () => {
     expect(invalidValidation.issues.some((issue) => issue.code === 'schema.maxItems')).toBe(true);
   });
 
-  it('structurally validates matchesRegex conditions', () => {
+  it('structurally validates boolean expression filters', () => {
     const workflow = {
       version: 2,
       workflowId: 'wf_regex_structure',
@@ -11928,11 +12070,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_email',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')),
         },
       ],
     };
@@ -12007,7 +12145,7 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'missingColumn' && issue.stepId === 'step_rename_missing')).toBe(true);
   });
 
-  it('executes scoped transforms with row conditions, multi-column targets, and coalesce semantics', () => {
+  it('executes scoped transforms with row conditions, multi-column targets, and explicit coalesce emptiness semantics', () => {
     const table = loadCsvTable('first_name,last_name,status,region\r\nAlice,Ng,,west\r\nAmy,Adams,  ,west\r\nBen,Ortiz,,east\r\n');
     const workflow: Workflow = {
       version: 2,
@@ -12018,13 +12156,8 @@ describe('workflow validation and execution', () => {
           id: 'step_fill_unknown',
           type: 'scopedTransform',
           columnIds: ['col_first_name', 'col_last_name', 'col_status'],
-          rowCondition: {
-            kind: 'equals',
-            columnId: 'col_region',
-            value: 'west',
-          },
+          rowCondition: call('equals', column('col_region'), literal('west')),
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -12034,9 +12167,9 @@ describe('workflow validation and execution', () => {
     expect(execution.validationErrors).toEqual([]);
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_first_name).toBe('Alice');
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status).toBe('unknown');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status).toBe('unknown');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status).toBe('  ');
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status).toBe(null);
-    expect(execution.changedCellCount).toBe(2);
+    expect(execution.changedCellCount).toBe(1);
   });
 
   it('allows scoped transforms to read another column from the same row', () => {
@@ -12051,7 +12184,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: coalesce(value(), column('col_customer_id')),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -12064,7 +12196,7 @@ describe('workflow validation and execution', () => {
     expect(execution.validationErrors).toEqual([]);
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('C001');
     expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_email).toBe('bob@example.com');
-    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('C003');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('   ');
   });
 
   it('executes nested built-in scoped-transform functions deterministically', async () => {
@@ -12079,29 +12211,19 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_email'],
           expression: call('lower', call('trim', value())),
-          treatWhitespaceAsEmpty: false,
         },
         {
           id: 'step_clean_full_name',
           type: 'scopedTransform',
           columnIds: ['col_full_name'],
           expression: call('replace', call('collapseWhitespace', call('trim', value())), literal('Ng'), literal('NG')),
-          treatWhitespaceAsEmpty: false,
         },
         {
           id: 'step_abbreviate_status',
           type: 'scopedTransform',
           columnIds: ['col_status'],
-          rowCondition: {
-            kind: 'not',
-            condition: {
-              kind: 'isEmpty',
-              columnId: 'col_status',
-              treatWhitespaceAsEmpty: true,
-            },
-          },
+          rowCondition: call('not', call('isEmpty', call('trim', column('col_status')))),
           expression: call('substring', call('upper', call('trim', value())), literal(0), literal(3)),
-          treatWhitespaceAsEmpty: true,
         },
       ],
     };
@@ -12127,7 +12249,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_signup_date'],
           expression: call('lower', value()),
-          treatWhitespaceAsEmpty: false,
         },
       ],
     };
@@ -12282,7 +12403,7 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_initials).toBe('DL');
   });
 
-  it('filters rows with recursive conditions and rejects incompatible comparators', async () => {
+  it('filters rows with boolean call expressions and rejects incompatible comparators', async () => {
     const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
       version: 2,
@@ -12293,21 +12414,11 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_paid_orders',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'and',
-            conditions: [
-              {
-                kind: 'greaterThan',
-                columnId: 'col_order_total',
-                value: 100,
-              },
-              {
-                kind: 'equals',
-                columnId: 'col_order_status',
-                value: 'paid',
-              },
-            ],
-          },
+          condition: call(
+            'and',
+            call('greaterThan', column('col_order_total'), literal(100)),
+            call('equals', column('col_order_status'), literal('paid')),
+          ),
         },
       ],
     };
@@ -12326,11 +12437,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_bad_compare',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'greaterThan',
-            columnId: 'col_customer_email',
-            value: 100,
-          },
+          condition: call('greaterThan', column('col_customer_email'), literal(100)),
         },
       ],
     };
@@ -12340,7 +12447,7 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'incompatibleType')).toBe(true);
   });
 
-  it('filters rows with matchesRegex and rejects invalid or incompatible regex conditions', () => {
+  it('filters rows with matchesRegex expressions and rejects invalid or incompatible regex inputs', () => {
     const table = loadCsvTable('email,order_total\r\nalice@example.com,100\r\nbob,200\r\ncarol@example.com,300\r\n');
     const workflow: Workflow = {
       version: 2,
@@ -12351,11 +12458,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')),
         },
       ],
     };
@@ -12374,11 +12477,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_invalid_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_email',
-            pattern: '[a-z',
-          },
+          condition: call('matchesRegex', column('col_email'), literal('[a-z')),
         },
       ],
     };
@@ -12389,7 +12488,7 @@ describe('workflow validation and execution', () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: 'invalidRegex',
-          path: 'steps[0].condition.pattern',
+          path: 'steps[0].condition.args[1]',
           stepId: 'step_filter_invalid_regex',
         }),
       ]),
@@ -12404,11 +12503,7 @@ describe('workflow validation and execution', () => {
           id: 'step_filter_numeric_regex',
           type: 'filterRows',
           mode: 'keep',
-          condition: {
-            kind: 'matchesRegex',
-            columnId: 'col_order_total',
-            pattern: '^\\d+$',
-          },
+          condition: call('matchesRegex', column('col_order_total'), literal('^\\d+$')),
         },
       ],
     };
@@ -12419,7 +12514,7 @@ describe('workflow validation and execution', () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: 'incompatibleType',
-          path: 'steps[0].condition.columnId',
+          path: 'steps[0].condition.args[0]',
           stepId: 'step_filter_numeric_regex',
         }),
       ]),
@@ -12599,7 +12694,6 @@ describe('workflow validation and execution', () => {
           type: 'scopedTransform',
           columnIds: ['col_status'],
           expression: coalesce(value(), literal('unknown')),
-          treatWhitespaceAsEmpty: true,
         },
         {
           id: 'step_make_location',
@@ -12615,11 +12709,7 @@ describe('workflow validation and execution', () => {
           id: 'step_drop_missing_email',
           type: 'filterRows',
           mode: 'drop',
-          condition: {
-            kind: 'isEmpty',
-            columnId: 'col_email',
-            treatWhitespaceAsEmpty: false,
-          },
+          condition: call('isEmpty', column('col_email')),
         },
         {
           id: 'step_sort_signup',
@@ -12689,7 +12779,29 @@ function column(columnId: string): WorkflowExpression {
 }
 
 function call(
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'substring' | 'replace' | 'split' | 'first' | 'last' | 'coalesce' | 'concat',
+  name:
+    | 'trim'
+    | 'lower'
+    | 'upper'
+    | 'collapseWhitespace'
+    | 'substring'
+    | 'replace'
+    | 'split'
+    | 'first'
+    | 'last'
+    | 'coalesce'
+    | 'concat'
+    | 'equals'
+    | 'contains'
+    | 'startsWith'
+    | 'endsWith'
+    | 'matchesRegex'
+    | 'greaterThan'
+    | 'lessThan'
+    | 'and'
+    | 'or'
+    | 'not'
+    | 'isEmpty',
   ...args: WorkflowExpression[]
 ): WorkflowExpression {
   return {

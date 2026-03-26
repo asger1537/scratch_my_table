@@ -50,7 +50,10 @@ Built-in function semantics:
 - `collapseWhitespace(x)`: replaces one or more whitespace runs with one ASCII space
 - `substring(x, start, length)`: returns the selected string slice
 - `replace(x, from, to)`: replaces all exact `from` matches with `to`
+- `extractRegex(x, pattern)`: returns the first match of the regular expression `pattern` in string `x`, or `null` if no match is found.
+- `replaceRegex(x, pattern, replacement)`: replaces all matches of the regular expression `pattern` in string `x` with `replacement`.
 - `split(x, delimiter)`: splits a string into a list of string parts
+- `atIndex(x, index)`: returns the element at the zero-based `index` of a list, or the character at `index` of a string. Out-of-bounds or invalid indices return `null`.
 - `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
 - `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`

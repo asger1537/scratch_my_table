@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "workflowId": "wf_extract_customer_number",
+  "name": "Extract customer number",
+  "steps": [
+    {
+      "id": "step_extract_customer_number",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_customer_number",
+        "displayName": "customer_number"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "extractRegex",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_customer_id"
+          },
+          {
+            "kind": "literal",
+            "value": "\\d+"
+          }
+        ]
+      }
+    }
+  ]
+}

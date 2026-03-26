@@ -162,7 +162,7 @@
             },
             "name": {
               "type": "string",
-              "enum": ["split", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan"]
+              "enum": ["split", "atIndex", "extractRegex", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan"]
             },
             "args": {
               "type": "array",
@@ -230,7 +230,7 @@
             },
             "name": {
               "type": "string",
-              "const": "replace"
+              "enum": ["replace", "replaceRegex"]
             },
             "args": {
               "type": "array",

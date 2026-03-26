@@ -24,8 +24,14 @@
                 "name": "first",
                 "args": [
                   {
-                    "kind": "column",
-                    "columnId": "col_first_name"
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_first_name"
+                      }
+                    ]
                   }
                 ]
               }
@@ -48,8 +54,14 @@
                         "name": "split",
                         "args": [
                           {
-                            "kind": "column",
-                            "columnId": "col_last_name"
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_last_name"
+                              }
+                            ]
                           },
                           {
                             "kind": "literal",

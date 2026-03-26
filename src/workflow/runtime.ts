@@ -621,6 +621,32 @@ function validateCallExpression(
         issues,
       };
     }
+    case 'replaceRegex': {
+      if (results.length !== 3) {
+        issues.push(makeIssue('invalidExpression', `Function 'replaceRegex' requires exactly three arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isStringLikeType(result.logicalType)) {
+          issues.push(makeIssue('incompatibleType', `Function 'replaceRegex' requires string inputs.`, `${path}.args[${index}]`, stepId));
+        }
+      });
+
+      if (
+        expression.args[1]?.kind === 'literal'
+        && typeof expression.args[1].value === 'string'
+        && !isValidRegexPattern(expression.args[1].value)
+      ) {
+        issues.push(makeIssue('invalidRegex', `Regular expression '${expression.args[1].value}' is invalid.`, `${path}.args[1]`, stepId, { pattern: expression.args[1].value }));
+      }
+
+      return {
+        logicalType: 'string',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
     case 'split': {
       if (results.length !== 2) {
         issues.push(makeIssue('invalidExpression', `Function 'split' requires exactly two arguments.`, path, stepId));
@@ -638,6 +664,70 @@ function validateCallExpression(
       return {
         logicalType: results[0].logicalType === 'string' ? 'string' : 'unknown',
         valueKind: 'list',
+        issues,
+      };
+    }
+    case 'extractRegex': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'extractRegex' requires exactly two arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isStringLikeType(result.logicalType)) {
+          issues.push(makeIssue('incompatibleType', `Function 'extractRegex' requires string inputs.`, `${path}.args[${index}]`, stepId));
+        }
+      });
+
+      if (
+        expression.args[1]?.kind === 'literal'
+        && typeof expression.args[1].value === 'string'
+        && !isValidRegexPattern(expression.args[1].value)
+      ) {
+        issues.push(makeIssue('invalidRegex', `Regular expression '${expression.args[1].value}' is invalid.`, `${path}.args[1]`, stepId, { pattern: expression.args[1].value }));
+      }
+
+      return {
+        logicalType: 'string',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'atIndex': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'atIndex' requires exactly two arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      const [input, index] = results;
+
+      if (input.valueKind !== 'list' && (input.valueKind !== 'scalar' || !isStringLikeType(input.logicalType))) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function 'atIndex' requires a string or list input.`,
+            `${path}.args[0]`,
+            stepId,
+            { logicalType: input.logicalType, valueKind: input.valueKind },
+          ),
+        );
+      }
+
+      if (index.valueKind !== 'scalar' || !isNumberLikeType(index.logicalType)) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function 'atIndex' requires a numeric index.`,
+            `${path}.args[1]`,
+            stepId,
+            { logicalType: index.logicalType, valueKind: index.valueKind },
+          ),
+        );
+      }
+
+      return {
+        logicalType: input.logicalType === 'string' || input.valueKind === 'list' ? 'string' : 'unknown',
+        valueKind: 'scalar',
         issues,
       };
     }
@@ -1340,6 +1430,21 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
 
       return value.split(from).join(to);
     }
+    case 'replaceRegex': {
+      const value = evaluateExpression(expression.args[0], context);
+      const pattern = evaluateExpression(expression.args[1], context);
+      const replacement = evaluateExpression(expression.args[2], context);
+
+      if (typeof value !== 'string' || typeof pattern !== 'string' || typeof replacement !== 'string') {
+        return value;
+      }
+
+      try {
+        return value.replace(new RegExp(pattern, 'g'), replacement);
+      } catch {
+        return value;
+      }
+    }
     case 'split': {
       const value = evaluateExpression(expression.args[0], context);
       const delimiter = evaluateExpression(expression.args[1], context);
@@ -1353,6 +1458,41 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       }
 
       return value.split(delimiter);
+    }
+    case 'extractRegex': {
+      const value = evaluateExpression(expression.args[0], context);
+      const pattern = evaluateExpression(expression.args[1], context);
+
+      if (typeof value !== 'string' || typeof pattern !== 'string') {
+        return null;
+      }
+
+      try {
+        const match = value.match(new RegExp(pattern));
+        return match ? match[0] : null;
+      } catch {
+        return null;
+      }
+    }
+    case 'atIndex': {
+      const value = evaluateExpression(expression.args[0], context);
+      const indexVal = evaluateExpression(expression.args[1], context);
+
+      if (typeof indexVal !== 'number') {
+        return null;
+      }
+
+      const idx = Math.trunc(indexVal);
+
+      if (Array.isArray(value)) {
+        return value[idx] ?? null;
+      }
+
+      if (typeof value === 'string') {
+        return value[idx] ?? null;
+      }
+
+      return null;
     }
     case 'first': {
       const value = evaluateExpression(expression.args[0], context);

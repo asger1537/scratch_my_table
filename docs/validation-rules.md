@@ -97,8 +97,8 @@ Function rules:
 
 - `trim`, `lower`, `upper`, `collapseWhitespace`, `first`, `last`, `isEmpty`, and `not` require exactly 1 argument
 - `substring` requires 3 arguments: string input, numeric start, numeric length
-- `replace` requires 3 arguments: string input, string `from`, string `to`
-- `split`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, and `lessThan` require exactly 2 arguments
+- `replace` and `replaceRegex` require 3 arguments: string input, string pattern, string replacement
+- `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, and `lessThan` require exactly 2 arguments
 - `and`, `or`, and `concat` require at least 2 arguments
 - `split` returns an intermediate list value
 - final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values
@@ -108,7 +108,10 @@ Type rules:
 - `trim`, `lower`, `upper`, `collapseWhitespace` require string-like inputs
 - `substring` requires string, number, number
 - `replace` requires string, string, string
+- `extractRegex` requires string-like inputs and returns `string`
+- `replaceRegex` requires three string-like inputs and returns `string`
 - `split` requires string, string
+- `atIndex` requires a string or intermediate list as the first input, and a number as the second input
 - `first` and `last` accept a string or intermediate list
 - `coalesce` requires scalar inputs with compatible logical types
 - `concat` accepts scalar inputs and returns `string`

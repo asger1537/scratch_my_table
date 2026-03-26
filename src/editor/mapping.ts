@@ -576,8 +576,14 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, 'substring', ['INPUT', 'START', 'LENGTH']);
     case BLOCK_TYPES.replaceFunction:
       return readFixedArityCall(block, 'replace', ['INPUT', 'FROM', 'TO']);
+    case BLOCK_TYPES.extractRegexFunction:
+      return readFixedArityCall(block, 'extractRegex', ['INPUT', 'PATTERN']);
+    case BLOCK_TYPES.replaceRegexFunction:
+      return readFixedArityCall(block, 'replaceRegex', ['INPUT', 'PATTERN', 'REPLACEMENT']);
     case BLOCK_TYPES.splitFunction:
       return readFixedArityCall(block, 'split', ['INPUT', 'DELIMITER']);
+    case BLOCK_TYPES.atIndexFunction:
+      return readFixedArityCall(block, 'atIndex', ['INPUT', 'INDEX']);
     case BLOCK_TYPES.coalesceFunction:
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
     case BLOCK_TYPES.concatFunction:
@@ -614,7 +620,10 @@ function readFixedArityCall(
   name:
     | 'substring'
     | 'replace'
+    | 'extractRegex'
+    | 'replaceRegex'
     | 'split'
+    | 'atIndex'
     | 'coalesce'
     | 'concat'
     | 'trim'
@@ -1241,11 +1250,33 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
       connectValueBlock(block, 'TO', createExpressionBlock(workspace, expression.args[2]));
       return block;
     }
+    case 'extractRegex': {
+      const block = createBlock(workspace, BLOCK_TYPES.extractRegexFunction);
+
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'PATTERN', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'replaceRegex': {
+      const block = createBlock(workspace, BLOCK_TYPES.replaceRegexFunction);
+
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'PATTERN', createExpressionBlock(workspace, expression.args[1]));
+      connectValueBlock(block, 'REPLACEMENT', createExpressionBlock(workspace, expression.args[2]));
+      return block;
+    }
     case 'split': {
       const block = createBlock(workspace, BLOCK_TYPES.splitFunction);
 
       connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'DELIMITER', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'atIndex': {
+      const block = createBlock(workspace, BLOCK_TYPES.atIndexFunction);
+
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'INDEX', createExpressionBlock(workspace, expression.args[1]));
       return block;
     }
     case 'coalesce': {

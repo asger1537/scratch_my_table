@@ -15,16 +15,48 @@
         "name": "concat",
         "args": [
           {
-            "kind": "column",
-            "columnId": "col_first_name"
+            "kind": "call",
+            "name": "coalesce",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_first_name"
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": ""
+              }
+            ]
           },
           {
             "kind": "literal",
             "value": " "
           },
           {
-            "kind": "column",
-            "columnId": "col_last_name"
+            "kind": "call",
+            "name": "coalesce",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_last_name"
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": ""
+              }
+            ]
           }
         ]
       }

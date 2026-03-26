@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "workflowId": "wf_extract_second_last_name_part",
+  "name": "Extract second last-name part",
+  "steps": [
+    {
+      "id": "step_extract_second_last_name_part",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_last_name_part_2",
+        "displayName": "last_name_part_2"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "atIndex",
+        "args": [
+          {
+            "kind": "call",
+            "name": "split",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_last_name"
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": " "
+              }
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": 1
+          }
+        ]
+      }
+    }
+  ]
+}

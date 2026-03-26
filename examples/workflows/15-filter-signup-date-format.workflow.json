@@ -14,7 +14,7 @@
         "args": [
           {
             "kind": "column",
-            "columnId": "col_signup_date"
+            "columnId": "col_sign_up_date"
           },
           {
             "kind": "literal",

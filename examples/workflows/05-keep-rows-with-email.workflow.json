@@ -17,11 +17,27 @@
             "args": [
               {
                 "kind": "call",
-                "name": "trim",
+                "name": "coalesce",
                 "args": [
                   {
-                    "kind": "column",
-                    "columnId": "col_email"
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_email"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_email_2"
+                      }
+                    ]
                   }
                 ]
               }

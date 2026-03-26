@@ -7,7 +7,8 @@
       "id": "step_normalize_email",
       "type": "scopedTransform",
       "columnIds": [
-        "col_email"
+        "col_email",
+        "col_email_2"
       ],
       "expression": {
         "kind": "call",

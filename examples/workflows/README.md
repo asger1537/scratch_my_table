@@ -13,7 +13,10 @@ Rules:
 
 Notes:
 
-- the `columnId` values are illustrative and assume compatible imported schemas
+- all examples are now runnable against the root workbook `Customers_Messy.xlsx`
+- the canonical imported column IDs for that workbook are:
+  `col_customer_id`, `col_first_name`, `col_last_name`, `col_email`, `col_email_2`, `col_column`, `col_status`, `col_sign_up_date`, `col_notes`, `col_balance`, and `col_vip`
+- some numbered filenames are historical slots; the workflow `name` field inside each JSON is the canonical title
 - the examples correspond to the workflows documented in `docs/example-workflows.md`
 
 Files:
@@ -34,3 +37,6 @@ Files:
 - `14-coalesce_email.workflow.json`
 - `15-filter-signup-date-format.workflow.json`
 - `16-high-value-paid-or-shipped.workflow.json`
+- `17-extract-middle-name.workflow.json`
+- `18-extract-order-code-regex.workflow.json`
+- `19-normalize-phone-digits-regex.workflow.json`

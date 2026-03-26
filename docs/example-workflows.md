@@ -1,819 +1,114 @@
 # Example Workflows
 
-Examples below use illustrative internal `columnId` values such as `col_email` and `col_status`. In real data these IDs are stable internal identifiers, not user-facing names.
-
-## 1. Fill Missing Status Values
-
-Description:
-
-- Fill empty values in the status column with `unknown`.
-
-Intended effect:
-
-- Rows with `null` or `""` status become `unknown`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_fill_status",
-  "name": "Fill missing status",
-  "steps": [
-    {
-      "id": "step_fill_status",
-      "type": "scopedTransform",
-      "columnIds": ["col_status"],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "value"
-          },
-          {
-            "kind": "literal",
-            "value": "unknown"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 2. Trim and Lowercase Email Addresses
-
-Description:
-
-- Normalize email formatting in a messy import.
-
-Intended effect:
-
-- Leading/trailing spaces are removed and all email text becomes lowercase.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_normalize_email",
-  "name": "Normalize email addresses",
-  "steps": [
-    {
-      "id": "step_normalize_email",
-      "type": "scopedTransform",
-      "columnIds": ["col_email"],
-      "expression": {
-        "kind": "call",
-        "name": "lower",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 3. Rename a Column for Export
-
-Description:
-
-- Rename the customer ID header without changing the stable internal column reference.
-
-Intended effect:
-
-- The exported header becomes `external_customer_id`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_rename_customer_id",
-  "name": "Rename customer ID",
-  "steps": [
-    {
-      "id": "step_rename_customer_id",
-      "type": "renameColumn",
-      "columnId": "col_customer_id",
-      "newDisplayName": "external_customer_id"
-    }
-  ]
-}
-```
-
-## 4. Create a Full Name Column
-
-Description:
-
-- Derive a new `full_name` column from first and last name.
-
-Intended effect:
-
-- The output table gains a new `full_name` column while keeping the original source columns.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_derive_full_name",
-  "name": "Create full name",
-  "steps": [
-    {
-      "id": "step_derive_full_name",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_full_name",
-        "displayName": "full_name"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
-            "kind": "column",
-            "columnId": "col_first_name"
-          },
-          {
-            "kind": "literal",
-            "value": " "
-          },
-          {
-            "kind": "column",
-            "columnId": "col_last_name"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 5. Keep Only Rows With an Email Address
-
-Description:
-
-- Remove rows that do not have a usable email value.
-
-Intended effect:
-
-- Any row whose trimmed `email` cell is empty is dropped from the output table.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_keep_rows_with_email",
-  "name": "Keep rows with email",
-  "steps": [
-    {
-      "id": "step_keep_rows_with_email",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "not",
-        "args": [
-          {
-            "kind": "call",
-            "name": "isEmpty",
-            "args": [
-              {
-                "kind": "call",
-                "name": "trim",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_email"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 6. Keep Only Paid Orders Above 100
-
-Description:
-
-- Filter orders to a smaller export set.
-
-Intended effect:
-
-- Only rows where `order_total > 100` and `order_status == "paid"` remain.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_paid_orders_over_100",
-  "name": "Paid orders over 100",
-  "steps": [
-    {
-      "id": "step_paid_orders_over_100",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "and",
-        "args": [
-          {
-            "kind": "call",
-            "name": "greaterThan",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_order_total"
-              },
-              {
-                "kind": "literal",
-                "value": 100
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "equals",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_order_status"
-              },
-              {
-                "kind": "literal",
-                "value": "paid"
-              }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 7. Split Full Name Into First and Last Name
-
-Description:
-
-- Split a single text column into two explicit output columns.
-
-Intended effect:
-
-- The table gains `first_name` and `last_name` columns derived from `full_name`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_split_full_name",
-  "name": "Split full name",
-  "steps": [
-    {
-      "id": "step_split_full_name",
-      "type": "splitColumn",
-      "columnId": "col_full_name",
-      "delimiter": " ",
-      "outputColumns": [
-        {
-          "columnId": "col_first_name",
-          "displayName": "first_name"
-        },
-        {
-          "columnId": "col_last_name",
-          "displayName": "last_name"
-        }
-      ]
-    }
-  ]
-}
-```
-
-## 8. Combine City and State Into One Location Column
-
-Description:
-
-- Create a display-friendly location string from two existing columns.
-
-Intended effect:
-
-- The table gains `location`, for example `Seattle, WA`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_combine_location",
-  "name": "Create location column",
-  "steps": [
-    {
-      "id": "step_combine_location",
-      "type": "combineColumns",
-      "columnIds": ["col_city", "col_state"],
-      "separator": ", ",
-      "newColumn": {
-        "columnId": "col_location",
-        "displayName": "location"
-      }
-    }
-  ]
-}
-```
-
-## 9. Deduplicate Customers by Email
-
-Description:
-
-- Remove duplicate customer rows using email as the uniqueness key.
-
-Intended effect:
-
-- Only the first row for each exact email value survives.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_deduplicate_email",
-  "name": "Deduplicate by email",
-  "steps": [
-    {
-      "id": "step_deduplicate_email",
-      "type": "deduplicateRows",
-      "columnIds": ["col_email"]
-    }
-  ]
-}
-```
-
-## 10. Sort Orders by Date Then Total
-
-Description:
-
-- Order exported rows so the newest and highest-value records appear first.
-
-Intended effect:
-
-- Orders sort by `ordered_at` descending, then by `order_total` descending.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_sort_orders",
-  "name": "Sort orders",
-  "steps": [
-    {
-      "id": "step_sort_orders",
-      "type": "sortRows",
-      "sorts": [
-        {
-          "columnId": "col_ordered_at",
-          "direction": "desc"
-        },
-        {
-          "columnId": "col_order_total",
-          "direction": "desc"
-        }
-      ]
-    }
-  ]
-}
-```
-
-## 11. Clean Up a Messy Customer Export
-
-Description:
-
-- Run a realistic multi-step workflow on `messy-customers.csv`.
-
-Intended effect:
-
-- Normalize text, fill missing status values, derive a location column, remove rows without usable email, deduplicate by email, and sort the final export.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_messy_customer_cleanup",
-  "name": "Messy customer cleanup",
-  "description": "Normalize text, fill defaults, remove incomplete rows, and sort for export.",
-  "steps": [
-    {
-      "id": "step_normalize_email",
-      "type": "scopedTransform",
-      "columnIds": ["col_email"],
-      "expression": {
-        "kind": "call",
-        "name": "lower",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "step_normalize_name",
-      "type": "scopedTransform",
-      "columnIds": ["col_full_name", "col_city"],
-      "expression": {
-        "kind": "call",
-        "name": "collapseWhitespace",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "step_fill_status",
-      "type": "scopedTransform",
-      "columnIds": ["col_status"],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "value"
-          },
-          {
-            "kind": "literal",
-            "value": "unknown"
-          }
-        ]
-      }
-    },
-    {
-      "id": "step_location",
-      "type": "combineColumns",
-      "columnIds": ["col_city", "col_state"],
-      "separator": ", ",
-      "newColumn": {
-        "columnId": "col_location",
-        "displayName": "location"
-      }
-    },
-    {
-      "id": "step_drop_missing_email",
-      "type": "filterRows",
-      "mode": "drop",
-      "condition": {
-        "kind": "call",
-        "name": "isEmpty",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_email"
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "step_dedupe_email",
-      "type": "deduplicateRows",
-      "columnIds": ["col_email"]
-    },
-    {
-      "id": "step_sort_signup",
-      "type": "sortRows",
-      "sorts": [
-        {
-          "columnId": "col_signup_date",
-          "direction": "desc"
-        },
-        {
-          "columnId": "col_full_name",
-          "direction": "asc"
-        }
-      ]
-    }
-  ]
-}
-```
-
-## 12. Derive Initials From First Name and Final Surname Segment
-
-Description:
-
-- Create an `initials` column using the first character of `first_name` and the first character of the final space-delimited part of `last_name`.
-
-Intended effect:
-
-- `Alice Ng` becomes `AN`.
-- `Cara Patel Singh` becomes `CS`.
-- `Diego Ramirez Lopez` becomes `DL`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_derive_initials",
-  "name": "Derive initials",
-  "steps": [
-    {
-      "id": "step_derive_initials",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_initials",
-        "displayName": "initials"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
-            "kind": "call",
-            "name": "upper",
-            "args": [
-              {
-                "kind": "call",
-                "name": "first",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_first_name"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "upper",
-            "args": [
-              {
-                "kind": "call",
-                "name": "first",
-                "args": [
-                  {
-                    "kind": "call",
-                    "name": "last",
-                    "args": [
-                      {
-                        "kind": "call",
-                        "name": "split",
-                        "args": [
-                          {
-                            "kind": "column",
-                            "columnId": "col_last_name"
-                          },
-                          {
-                            "kind": "literal",
-                            "value": " "
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 13. Drop Internal Export Columns
-
-Description:
-
-- Remove columns that should not appear in the final export.
-
-Intended effect:
-
-- The output table no longer includes `notes` or `internal_flag`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_drop_internal_columns",
-  "name": "Drop internal columns",
-  "steps": [
-    {
-      "id": "step_drop_internal_columns",
-      "type": "dropColumns",
-      "columnIds": ["col_notes", "col_internal_flag"]
-    }
-  ]
-}
-```
-
-## 14. Fill Missing Email From Customer ID
-
-Description:
-
-- Fill missing `email` cells from `customer_id` in the same row before dropping rows that still have no usable email.
-
-Intended effect:
-
-- Existing email values are preserved.
-- Empty or whitespace-only email values fall back to `customer_id`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_fill_email_from_customer_id",
-  "name": "Fill missing email from customer ID",
-  "steps": [
-    {
-      "id": "step_fill_email",
-      "type": "scopedTransform",
-      "columnIds": ["col_email"],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          },
-          {
-            "kind": "column",
-            "columnId": "col_customer_id"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 15. Keep Only Rows With a Sign Up Date Like 2026-12-08
-
-Description:
-
-- Keep only rows whose `sign up date` value exactly matches the `YYYY-MM-DD` format.
-
-Intended effect:
-
-- Rows with values such as `2026-12-08` remain.
-- Rows with timestamps, slashed dates, partial dates, or other text are dropped.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_filter_signup_date_format",
-  "name": "Keep rows with sign up date in YYYY-MM-DD format",
-  "steps": [
-    {
-      "id": "step_filter_signup_date_format",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "matchesRegex",
-        "args": [
-          {
-            "kind": "column",
-            "columnId": "col_signup_date"
-          },
-          {
-            "kind": "literal",
-            "value": "^\\d{4}-\\d{2}-\\d{2}$"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-## 16. Keep High-Value Orders That Are Paid or Shipped
-
-Description:
-
-- Keep only orders above a value threshold when the status is either `paid` or `shipped`.
-
-Intended effect:
-
-- Rows remain only when `order_total > 100` and `order_status` is one of two accepted values.
-- This example demonstrates boolean composition with `and(...)`, `or(...)`, and `greaterThan(...)`.
-
-IR example:
-
-```json
-{
-  "version": 2,
-  "workflowId": "wf_high_value_paid_or_shipped",
-  "name": "Keep high-value paid or shipped orders",
-  "steps": [
-    {
-      "id": "step_keep_high_value_paid_or_shipped",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "and",
-        "args": [
-          {
-            "kind": "call",
-            "name": "greaterThan",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_order_total"
-              },
-              {
-                "kind": "literal",
-                "value": 100
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "or",
-            "args": [
-              {
-                "kind": "call",
-                "name": "equals",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_order_status"
-                  },
-                  {
-                    "kind": "literal",
-                    "value": "paid"
-                  }
-                ]
-              },
-              {
-                "kind": "call",
-                "name": "equals",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_order_status"
-                  },
-                  {
-                    "kind": "literal",
-                    "value": "shipped"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-```
+All canonical examples under `examples/workflows/` are runnable against the root workbook `Customers_Messy.xlsx`.
+
+Imported `columnId` values for that workbook are:
+
+- `col_customer_id`
+- `col_first_name`
+- `col_last_name`
+- `col_email`
+- `col_email_2`
+- `col_column`
+- `col_status`
+- `col_sign_up_date`
+- `col_notes`
+- `col_balance`
+- `col_vip`
+
+Use the JSON files in `examples/workflows/` as the source of truth. This document is the compact catalog.
+
+## 1. Fill Missing Status
+
+- File: `01-fill-missing-status.workflow.json`
+- Fills empty or whitespace-only `status` cells with `unknown`.
+
+## 2. Normalize Email Addresses
+
+- File: `02-normalize-email.workflow.json`
+- Trims and lowercases both `email` columns.
+
+## 3. Rename Customer ID
+
+- File: `03-rename-customer-id.workflow.json`
+- Renames the `Customer ID` export header without changing `col_customer_id`.
+
+## 4. Create Full Name
+
+- File: `04-derive-full-name.workflow.json`
+- Derives `full_name` from trimmed `first_name` and `last_name`.
+
+## 5. Keep Rows With Any Usable Email
+
+- File: `05-keep-rows-with-email.workflow.json`
+- Keeps rows where either `email` or `Email (2)` contains a usable value.
+
+## 6. Keep Active Or Pending VIP Customers
+
+- File: `06-paid-orders-over-100.workflow.json`
+- Keeps rows where `VIP?` is `true` and `status` is `active` or `pending`.
+
+## 7. Split Last Name
+
+- File: `07-split-full-name.workflow.json`
+- Splits `last_name` on spaces into `last_name_part_1` and `last_name_part_2`.
+
+## 8. Combine Contact Emails
+
+- File: `08-combine-location.workflow.json`
+- Combines `email` and `Email (2)` into `contact_emails`.
+
+## 9. Deduplicate By Email
+
+- File: `09-deduplicate-by-email.workflow.json`
+- Keeps the first row for each exact primary email value.
+
+## 10. Sort Customers
+
+- File: `10-sort-orders.workflow.json`
+- Sorts by `sign_up_date` descending, then `last_name` ascending.
+
+## 11. Customers Messy Cleanup
+
+- File: `11-messy-customer-cleanup.workflow.json`
+- Normalizes text, fills `email` from `Email (2)`, fills status, derives `full_name`, removes rows without usable email, deduplicates, and sorts.
+
+## 12. Derive Initials
+
+- File: `12-derive-initials.workflow.json`
+- Creates initials from the first letter of `first_name` and the first letter of the final `last_name` segment.
+
+## 13. Drop Internal Columns
+
+- File: `13-drop-columns.workflow.json`
+- Drops `Email (2)` and `Notes`.
+
+## 14. Fill Missing Email From Email (2)
+
+- File: `14-coalesce_email.workflow.json`
+- Uses `Email (2)` as a fallback for empty primary `email`, then drops the alternate-email column.
+
+## 15. Keep Rows With Date-Only Sign Up Dates
+
+- File: `15-filter-signup-date-format.workflow.json`
+- Keeps rows whose `sign_up_date` matches `YYYY-MM-DD`.
+
+## 16. Keep North Or West Customers Who Are Active Or Pending
+
+- File: `16-high-value-paid-or-shipped.workflow.json`
+- Demonstrates stacked boolean logic over the imported `Column` and `Status` fields.
+
+## 17. Extract Second Last-Name Part
+
+- File: `17-extract-middle-name.workflow.json`
+- Uses `atIndex(split(...), 1)` to derive the second space-delimited part of `last_name`.
+
+## 18. Extract Customer Number
+
+- File: `18-extract-order-code-regex.workflow.json`
+- Uses `extractRegex(customer_id, "\\d+")` to derive the numeric customer suffix.
+
+## 19. Normalize Customer ID Digits
+
+- File: `19-normalize-phone-digits-regex.workflow.json`
+- Uses `replaceRegex(customer_id, "[^0-9]", "")` to keep digits only.
