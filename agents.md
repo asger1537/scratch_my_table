@@ -21,3 +21,19 @@ Rules:
 *   **Boolean logic is functional:** Predicates are represented with boolean-returning `call` nodes such as `and`, `or`, `not`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, and `isEmpty`.
 *   **Editor is not the source of truth:** Blockly is an authoring layer over canonical workflow JSON. Runtime validation and execution operate on canonical IR only.
 *   **Whitespace-sensitive logic is explicit:** Do not introduce special predicate flags for whitespace emptiness. Use function composition such as `isEmpty(trim(column("email")))`.
+
+## 3. Current Build And Dev Commands
+
+The repository now uses a standard Vite web build. Do not reintroduce the old single-file `file://` packaging flow.
+
+Commands:
+
+*   `npm run dev`: start the Vite development server.
+*   `npm run build`: create the production web build in `dist/`.
+*   `npm run preview`: serve the built `dist/` output locally.
+*   `npm test`: run the Vitest suite.
+
+Notes:
+
+*   The production build emits normal web assets, including the workflow validation worker bundle.
+*   Use `npm run dev` or `npm run preview` to run the app. Do not assume `dist/index.html` is meant to be opened directly via `file://`.

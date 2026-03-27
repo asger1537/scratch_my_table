@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 
 import { type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
-import { cloneTable, executeValidatedWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from '../workflow';
+import { projectWorkflowStepSchema, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from '../workflow';
 
 import {
   authoringWorkflowToWorkflow,
@@ -167,7 +167,7 @@ export function projectWorkspaceStepSchemas(workspace: Blockly.Workspace, table:
   registerWorkflowBlocks();
 
   const schemaByBlockId = new Map<string, Table['schema']['columns']>();
-  let workingTable = cloneTable(table);
+  let workingTable = createSchemaProjectionTable(table);
 
   getOrderedStepBlocks(workspace).forEach((block) => {
     const projectedColumns = workingTable.schema.columns.map((column) => ({ ...column }));
@@ -197,7 +197,7 @@ export function projectWorkspaceStepSchemas(workspace: Blockly.Workspace, table:
       return;
     }
 
-    workingTable = executeValidatedWorkflow(compiled.workflow, workingTable).transformedTable;
+    workingTable = projectWorkflowStepSchema(workingTable, compiled.workflow.steps[0]);
   });
 
   return schemaByBlockId;
@@ -1635,6 +1635,19 @@ function connectValueBlock(parent: Blockly.Block, inputName: string, child: Bloc
   }
 
   connection.connect(child.outputConnection);
+}
+
+function createSchemaProjectionTable(table: Table): Table {
+  return {
+    tableId: table.tableId,
+    sourceName: table.sourceName,
+    schema: {
+      columns: table.schema.columns.map((column) => ({ ...column })),
+    },
+    rowsById: {},
+    rowOrder: [],
+    importWarnings: [],
+  };
 }
 
 function getFieldString(block: Blockly.Block, fieldName: string) {

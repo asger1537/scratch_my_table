@@ -1,5 +1,5 @@
 export { executeWorkflow } from './execute';
-export { cloneTable, executeValidatedWorkflow, summarizeWorkflowChanges, validateWorkflowSemantics } from './runtime';
+export { cloneTable, executeValidatedWorkflow, projectWorkflowStepSchema, summarizeWorkflowChanges, validateWorkflowSemantics } from './runtime';
 export { validateWorkflowStructure } from './structural';
 export type {
   Workflow,

@@ -62,10 +62,11 @@ const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
 const MILLISECONDS_PER_MONTH = 30 * MILLISECONDS_PER_DAY;
 const MILLISECONDS_PER_YEAR = 365 * MILLISECONDS_PER_DAY;
+const SCHEMA_PROJECTION_RUN_TIMESTAMP = '2000-01-01T00:00:00.000Z';
 
 export function validateWorkflowSemantics(workflow: Workflow, table: Table): WorkflowSemanticValidationResult {
   const runTimestamp = new Date().toISOString();
-  let workingTable = cloneTable(table);
+  let workingTable = cloneTableWithSchema(table, cloneSchema(table.schema));
   const issues: WorkflowValidationIssue[] = [];
   const stepResults: WorkflowSemanticStepResult[] = [];
 
@@ -74,7 +75,7 @@ export function validateWorkflowSemantics(workflow: Workflow, table: Table): Wor
     const valid = stepIssues.length === 0;
 
     if (valid) {
-      workingTable = applyWorkflowStepUnchecked(workingTable, step, runTimestamp).table;
+      workingTable = projectValidatedWorkflowStep(workingTable, step, runTimestamp);
     }
 
     issues.push(...stepIssues);
@@ -1285,6 +1286,127 @@ function validateNewColumn(
   validateNewColumns(table, [{ columnId, displayName }], basePath, stepId, issues);
 }
 
+function projectValidatedWorkflowStep(table: Table, step: WorkflowStep, runTimestamp: string): Table {
+  switch (step.type) {
+    case 'scopedTransform':
+      return projectScopedTransformSchema(table, step, runTimestamp);
+    case 'dropColumns':
+      return projectDropColumnsSchema(table, step);
+    case 'renameColumn':
+      return projectRenameColumnSchema(table, step);
+    case 'deriveColumn':
+      return projectDeriveColumnSchema(table, step, runTimestamp);
+    case 'filterRows':
+    case 'deduplicateRows':
+    case 'sortRows':
+      return cloneTableWithSchema(table, cloneSchema(table.schema));
+    case 'splitColumn':
+      return projectSplitColumnSchema(table, step);
+    case 'combineColumns':
+      return projectCombineColumnsSchema(table, step);
+    default:
+      return cloneTableWithSchema(table, cloneSchema(table.schema));
+  }
+}
+
+function projectScopedTransformSchema(table: Table, step: WorkflowScopedTransformStep, runTimestamp: string): Table {
+  const projectedTypes = new Map<string, LogicalType>();
+
+  step.columnIds.forEach((columnId) => {
+    const column = findColumn(table, columnId);
+
+    if (!column) {
+      return;
+    }
+
+    const result = validateExpression(step.expression, table, '$projection.expression', step.id, {
+      scope: 'scopedTransform',
+      runTimestamp,
+      valueLogicalType: column.logicalType,
+    });
+
+    projectedTypes.set(columnId, result.valueKind === 'scalar' ? result.logicalType : 'unknown');
+  });
+
+  return cloneTableWithSchema(table, {
+    columns: table.schema.columns.map((column) =>
+      projectedTypes.has(column.columnId)
+        ? {
+            ...column,
+            logicalType: projectedTypes.get(column.columnId) ?? column.logicalType,
+            nullable: true,
+          }
+        : { ...column },
+    ),
+  });
+}
+
+function projectDropColumnsSchema(table: Table, step: Extract<WorkflowStep, { type: 'dropColumns' }>): Table {
+  const removedColumnIds = new Set(step.columnIds);
+
+  return cloneTableWithSchema(table, {
+    columns: table.schema.columns
+      .filter((column) => !removedColumnIds.has(column.columnId))
+      .map((column, index) => ({
+        ...column,
+        sourceIndex: index,
+      })),
+  });
+}
+
+function projectRenameColumnSchema(table: Table, step: Extract<WorkflowStep, { type: 'renameColumn' }>): Table {
+  return cloneTableWithSchema(table, {
+    columns: table.schema.columns.map((column) =>
+      column.columnId === step.columnId
+        ? {
+            ...column,
+            displayName: normalizeWorkflowDisplayName(step.newDisplayName),
+          }
+        : { ...column },
+    ),
+  });
+}
+
+function projectDeriveColumnSchema(
+  table: Table,
+  step: Extract<WorkflowStep, { type: 'deriveColumn' }>,
+  runTimestamp: string,
+): Table {
+  const result = validateExpression(step.expression, table, '$projection.expression', step.id, {
+    scope: 'deriveColumn',
+    runTimestamp,
+  });
+
+  const newColumn = buildCreatedColumn(step.newColumn.columnId, step.newColumn.displayName, table.schema.columns.length);
+
+  newColumn.logicalType = result.valueKind === 'scalar' ? result.logicalType : 'unknown';
+
+  return cloneTableWithSchema(table, {
+    columns: [...table.schema.columns.map((column) => ({ ...column })), newColumn],
+  });
+}
+
+function projectSplitColumnSchema(table: Table, step: Extract<WorkflowStep, { type: 'splitColumn' }>): Table {
+  const outputColumns = step.outputColumns.map((outputColumn, index) => ({
+    ...buildCreatedColumn(outputColumn.columnId, outputColumn.displayName, table.schema.columns.length + index),
+    logicalType: 'string' as const,
+  }));
+
+  return cloneTableWithSchema(table, {
+    columns: [...table.schema.columns.map((column) => ({ ...column })), ...outputColumns],
+  });
+}
+
+function projectCombineColumnsSchema(table: Table, step: WorkflowCombineColumnsStep): Table {
+  const newColumn = buildCreatedColumn(step.newColumn.columnId, step.newColumn.displayName, table.schema.columns.length);
+
+  newColumn.logicalType = 'string';
+
+  return cloneTableWithSchema(table, {
+    columns: [...table.schema.columns.map((column) => ({ ...column })), newColumn],
+  });
+}
+
 function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep, runTimestamp: string): WorkflowStepApplyResult {
   switch (step.type) {
     case 'scopedTransform':
@@ -2000,6 +2122,17 @@ function refreshTableSchema(table: Table): Table {
 function cloneSchema(schema: Table['schema']) {
   return {
     columns: schema.columns.map((column) => ({ ...column })),
+  };
+}
+
+export function projectWorkflowStepSchema(table: Table, step: WorkflowStep): Table {
+  return projectValidatedWorkflowStep(table, step, SCHEMA_PROJECTION_RUN_TIMESTAMP);
+}
+
+function cloneTableWithSchema(table: Table, schema: Table['schema']): Table {
+  return {
+    ...table,
+    schema,
   };
 }
 

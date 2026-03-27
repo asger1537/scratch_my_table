@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, startTransition, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ChangeEvent, DragEvent, startTransition, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import {
   WorkflowEditor,
@@ -9,6 +9,7 @@ import {
   workflowToJson,
 } from './editor';
 import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
+import type { ValidationWorkerResponse, ValidationWorkerTableSnapshot } from './workflow/validationWorker';
 import { getActiveTable, getOrderedRows, setActiveTable, type ImportWarning, type Table, type Workbook } from './domain/model';
 import {
   buildCsvExportFileName,
@@ -24,6 +25,9 @@ const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
 export default function App() {
   const workflowImportInputRef = useRef<HTMLInputElement | null>(null);
   const workflowImportDragDepthRef = useRef(0);
+  const validationDebounceTimerRef = useRef<number | null>(null);
+  const validationWorkerRef = useRef<Worker | null>(null);
+  const validationRequestIdRef = useRef(0);
   const [workbook, setWorkbookState] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,23 +47,78 @@ export default function App() {
   const previewRows = activeTable ? getOrderedRows(activeTable).slice(0, PREVIEW_ROW_LIMIT) : [];
   const resultTable = executionResult?.transformedTable ?? null;
   const resultPreviewRows = resultTable ? getOrderedRows(resultTable).slice(0, PREVIEW_ROW_LIMIT) : [];
-  const authoredWorkflowJson = authoredWorkflow ? workflowToJson(authoredWorkflow) : '';
+  const deferredAuthoredWorkflow = useDeferredValue(authoredWorkflow);
+  const authoredWorkflowJson = deferredAuthoredWorkflow ? workflowToJson(deferredAuthoredWorkflow) : '';
 
   useEffect(() => {
+    const cancelScheduledValidation = () => {
+      if (validationDebounceTimerRef.current !== null) {
+        window.clearTimeout(validationDebounceTimerRef.current);
+        validationDebounceTimerRef.current = null;
+      }
+
+      if (validationWorkerRef.current) {
+        validationWorkerRef.current.terminate();
+        validationWorkerRef.current = null;
+      }
+    };
+
+    cancelScheduledValidation();
+
     if (!activeTable || !authoredWorkflow || editorIssues.length > 0) {
       setValidationIssues([]);
-      return;
+      return cancelScheduledValidation;
     }
 
-    const structural = validateWorkflowStructure(authoredWorkflow);
+    const tableSnapshot: ValidationWorkerTableSnapshot = {
+      tableId: activeTable.tableId,
+      sourceName: activeTable.sourceName,
+      schema: {
+        columns: activeTable.schema.columns.map((column) => ({ ...column })),
+      },
+    };
+    const requestId = validationRequestIdRef.current + 1;
 
-    if (!structural.valid || !structural.workflow) {
-      setValidationIssues(structural.issues);
-      return;
-    }
+    validationRequestIdRef.current = requestId;
 
-    const semantic = validateWorkflowSemantics(structural.workflow, activeTable);
-    setValidationIssues(semantic.issues);
+    validationDebounceTimerRef.current = window.setTimeout(() => {
+      validationDebounceTimerRef.current = null;
+      const worker = new Worker(new URL('./workflow/validation.worker.ts', import.meta.url), { type: 'module' });
+
+      validationWorkerRef.current = worker;
+
+      worker.onmessage = (event: MessageEvent<ValidationWorkerResponse>) => {
+        if (event.data.requestId !== validationRequestIdRef.current) {
+          return;
+        }
+
+        startTransition(() => {
+          setValidationIssues(event.data.issues);
+        });
+
+        worker.terminate();
+
+        if (validationWorkerRef.current === worker) {
+          validationWorkerRef.current = null;
+        }
+      };
+
+      worker.onerror = () => {
+        worker.terminate();
+
+        if (validationWorkerRef.current === worker) {
+          validationWorkerRef.current = null;
+        }
+      };
+
+      worker.postMessage({
+        requestId,
+        workflow: authoredWorkflow,
+        table: tableSnapshot,
+      });
+    }, 150);
+
+    return cancelScheduledValidation;
   }, [activeTable, authoredWorkflow, editorIssues]);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -105,8 +164,10 @@ export default function App() {
   }
 
   function handleEditorWorkspaceChange(result: { workflow: Workflow | null; issues: EditorIssue[] }) {
-    setAuthoredWorkflow(result.workflow);
-    setEditorIssues(result.issues);
+    startTransition(() => {
+      setAuthoredWorkflow(result.workflow);
+      setEditorIssues(result.issues);
+    });
   }
 
   function handleExportTableCsv(table: Table | null) {
@@ -246,7 +307,7 @@ export default function App() {
 
   const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
   const allWorkflowIssues = mergeWorkflowIssues(editorIssues, validationIssues);
-  const workflowExtraColumnIds = authoredWorkflow ? collectWorkflowColumnIds(authoredWorkflow) : [];
+  const workflowExtraColumnIds = deferredAuthoredWorkflow ? collectWorkflowColumnIds(deferredAuthoredWorkflow) : [];
   const canRunWorkflow = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
 
   return (
