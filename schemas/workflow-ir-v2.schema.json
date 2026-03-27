@@ -116,7 +116,7 @@
             },
             "name": {
               "type": "string",
-              "enum": ["trim", "lower", "upper", "collapseWhitespace", "first", "last"]
+              "enum": ["trim", "lower", "upper", "collapseWhitespace", "first", "last", "round", "floor", "ceil", "abs"]
             },
             "args": {
               "type": "array",
@@ -125,6 +125,25 @@
               "items": {
                 "$ref": "#/$defs/expression"
               }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
+              "const": "now"
+            },
+            "args": {
+              "type": "array",
+              "maxItems": 0
             }
           }
         },
@@ -184,7 +203,7 @@
             },
             "name": {
               "type": "string",
-              "enum": ["split", "atIndex", "extractRegex", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan"]
+              "enum": ["split", "atIndex", "extractRegex", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan", "add", "subtract", "multiply", "divide", "modulo", "datePart"]
             },
             "args": {
               "type": "array",
@@ -253,6 +272,29 @@
             "name": {
               "type": "string",
               "enum": ["replace", "replaceRegex"]
+            },
+            "args": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
+              "enum": ["dateDiff", "dateAdd"]
             },
             "args": {
               "type": "array",

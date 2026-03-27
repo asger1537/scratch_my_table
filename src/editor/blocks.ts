@@ -9,6 +9,8 @@ const TABLE_OPERATION_COLOR = '#8c3a18';
 const SUPPORT_COLOR = '#6b6a5c';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
+const DATE_COLOR = '#2a9d8f';
+const MATH_COLOR = '#6b3a8c';
 const LOGIC_COLOR = '#355070';
 const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
 const CREATE_COLUMN_INPUT_NAMES = {
@@ -90,9 +92,15 @@ export const BLOCK_TYPES = {
   atIndexFunction: 'at_index_function',
   firstFunction: 'first_function',
   lastFunction: 'last_function',
+  nowFunction: 'now_function',
+  datePartFunction: 'date_part_function',
+  dateDiffFunction: 'date_diff_function',
+  dateAddFunction: 'date_add_function',
   coalesceFunction: 'coalesce_function',
   switchFunction: 'switch_function',
   concatFunction: 'concat_function',
+  arithmeticFunction: 'arithmetic_function',
+  mathRoundingFunction: 'math_rounding_function',
   comparisonFunction: 'comparison_function',
   predicateFunction: 'predicate_function',
   logicalBinaryFunction: 'logical_binary_function',
@@ -285,6 +293,68 @@ export function registerWorkflowBlocks() {
   createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last', FUNCTION_COLOR);
+  Blockly.Blocks[BLOCK_TYPES.nowFunction] = {
+    init() {
+      this.appendDummyInput().appendField('current date and time');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(DATE_COLOR);
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.datePartFunction] = {
+    init() {
+      this.appendValueInput('INPUT')
+        .setCheck('EXPRESSION')
+        .appendField('get')
+        .appendField(new Blockly.FieldDropdown([
+          ['year', 'year'],
+          ['month', 'month'],
+          ['day', 'day'],
+          ['day of week', 'dayOfWeek'],
+          ['hour', 'hour'],
+          ['minute', 'minute'],
+          ['second', 'second'],
+        ]), 'PART')
+        .appendField('from');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(DATE_COLOR);
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.dateDiffFunction] = {
+    init() {
+      this.appendValueInput('START').setCheck('EXPRESSION').appendField('difference between');
+      this.appendValueInput('END').setCheck('EXPRESSION').appendField('and');
+      this.appendDummyInput()
+        .appendField('in')
+        .appendField(new Blockly.FieldDropdown([
+          ['years', 'years'],
+          ['months', 'months'],
+          ['days', 'days'],
+          ['hours', 'hours'],
+          ['minutes', 'minutes'],
+          ['seconds', 'seconds'],
+        ]), 'UNIT');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(DATE_COLOR);
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.dateAddFunction] = {
+    init() {
+      this.appendValueInput('AMOUNT').setCheck('EXPRESSION').appendField('add');
+      this.appendValueInput('INPUT')
+        .setCheck('EXPRESSION')
+        .appendField(new Blockly.FieldDropdown([
+          ['years', 'years'],
+          ['months', 'months'],
+          ['days', 'days'],
+          ['hours', 'hours'],
+          ['minutes', 'minutes'],
+          ['seconds', 'seconds'],
+        ]), 'UNIT')
+        .appendField('to');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(DATE_COLOR);
+    },
+  };
 
   Blockly.Blocks[BLOCK_TYPES.substringFunction] = {
     init() {
@@ -328,6 +398,26 @@ export function registerWorkflowBlocks() {
   createBinaryFunctionBlock(BLOCK_TYPES.atIndexFunction, 'get item at', 'INPUT', 'index', 'INDEX', FUNCTION_COLOR);
   createBinaryFunctionBlock(BLOCK_TYPES.coalesceFunction, 'coalesce', 'FIRST', 'fallback', 'SECOND', FUNCTION_COLOR);
   createBinaryFunctionBlock(BLOCK_TYPES.concatFunction, 'concat', 'FIRST', 'with', 'SECOND', FUNCTION_COLOR);
+  createDropdownBinaryFunctionBlock(
+    BLOCK_TYPES.arithmeticFunction,
+    [['+', 'add'], ['-', 'subtract'], ['×', 'multiply'], ['÷', 'divide'], ['%', 'modulo']],
+    'OPERATOR',
+    MATH_COLOR,
+  );
+  Blockly.Blocks[BLOCK_TYPES.mathRoundingFunction] = {
+    init() {
+      this.appendValueInput('INPUT')
+        .setCheck('EXPRESSION')
+        .appendField(new Blockly.FieldDropdown([
+          ['round', 'round'],
+          ['floor', 'floor'],
+          ['ceil', 'ceil'],
+          ['abs', 'abs'],
+        ]), 'OPERATOR');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(MATH_COLOR);
+    },
+  };
   createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
   Blockly.Blocks[BLOCK_TYPES.predicateFunction] = {
     init(this: PredicateFunctionBlock) {
@@ -436,6 +526,26 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
           { kind: 'block', type: BLOCK_TYPES.atIndexFunction },
           { kind: 'block', type: BLOCK_TYPES.coalesceFunction },
           { kind: 'block', type: BLOCK_TYPES.concatFunction },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Date & time',
+        colour: DATE_COLOR,
+        contents: [
+          { kind: 'block', type: BLOCK_TYPES.nowFunction },
+          { kind: 'block', type: BLOCK_TYPES.datePartFunction },
+          { kind: 'block', type: BLOCK_TYPES.dateDiffFunction },
+          { kind: 'block', type: BLOCK_TYPES.dateAddFunction },
+        ],
+      },
+      {
+        kind: 'category',
+        name: 'Math',
+        colour: MATH_COLOR,
+        contents: [
+          { kind: 'block', type: BLOCK_TYPES.arithmeticFunction },
+          { kind: 'block', type: BLOCK_TYPES.mathRoundingFunction },
         ],
       },
       {

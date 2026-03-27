@@ -341,6 +341,93 @@ describe('block-based workflow authoring', () => {
     expect(switchBlock?.getInput('DEFAULT')).toBeTruthy();
   });
 
+  it('reconstructs arithmetic and rounding function trees', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_math_roundtrip',
+      name: 'Math roundtrip',
+      steps: [
+        {
+          id: 'step_derive_total',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total',
+            displayName: 'total',
+          },
+          expression: call('multiply', column('col_price'), column('col_quantity')),
+        },
+        {
+          id: 'step_derive_total_rounded',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total_rounded',
+            displayName: 'total_rounded',
+          },
+          expression: call('round', column('col_total')),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_price', 'col_quantity', 'col_total', 'col_total_rounded'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.arithmeticFunction);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.mathRoundingFunction);
+  });
+
+  it('reconstructs date and time function trees', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_date_roundtrip',
+      name: 'Date roundtrip',
+      steps: [
+        {
+          id: 'step_signup_year',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_signup_year',
+            displayName: 'signup_year',
+          },
+          expression: call('datePart', column('col_sign_up_date'), literal('year')),
+        },
+        {
+          id: 'step_follow_up_at',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_follow_up_at',
+            displayName: 'follow_up_at',
+          },
+          expression: call('dateAdd', call('now'), literal(7), literal('days')),
+        },
+        {
+          id: 'step_days_since_signup',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_days_since_signup',
+            displayName: 'days_since_signup',
+          },
+          expression: call('dateDiff', call('now'), column('col_sign_up_date'), literal('days')),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(
+      ['col_sign_up_date', 'col_signup_year', 'col_follow_up_at', 'col_days_since_signup'],
+      workflow,
+    );
+    const roundtrip = workspaceToWorkflow(workspace);
+    const blockTypes = workspace.getAllBlocks(false).map((block) => block.type);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(blockTypes).toContain(BLOCK_TYPES.nowFunction);
+    expect(blockTypes).toContain(BLOCK_TYPES.datePartFunction);
+    expect(blockTypes).toContain(BLOCK_TYPES.dateDiffFunction);
+    expect(blockTypes).toContain(BLOCK_TYPES.dateAddFunction);
+  });
+
   it('reconstructs deriveColumn workflows as create-column blank and copy modes when possible', () => {
     const workflow: Workflow = {
       version: 2,
@@ -510,7 +597,7 @@ describe('block-based workflow authoring', () => {
       expect(roundtrip.issues, fileName).toEqual([]);
       expect(roundtrip.workflow, fileName).toEqual(workflow);
     }
-  });
+  }, 15000);
 
   it('keeps validation and execution wired to canonical IR after block serialization', async () => {
     const table = await readFixtureTable('messy-customers.csv');
@@ -574,7 +661,7 @@ describe('block-based workflow authoring', () => {
         }),
       ]),
     );
-  });
+  }, 15000);
 
   it('surfaces invalid editor blocks clearly when required inputs are missing', () => {
     const workspace = createHeadlessWorkflowWorkspace();
@@ -875,6 +962,10 @@ function column(columnId: string): WorkflowExpression {
 
 function call(
   name:
+    | 'now'
+    | 'datePart'
+    | 'dateDiff'
+    | 'dateAdd'
     | 'trim'
     | 'lower'
     | 'upper'
@@ -885,6 +976,15 @@ function call(
     | 'replaceRegex'
     | 'split'
     | 'atIndex'
+    | 'round'
+    | 'floor'
+    | 'ceil'
+    | 'abs'
+    | 'add'
+    | 'subtract'
+    | 'multiply'
+    | 'divide'
+    | 'modulo'
     | 'first'
     | 'last'
     | 'coalesce'

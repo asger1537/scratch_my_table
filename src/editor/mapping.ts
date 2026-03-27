@@ -572,6 +572,82 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readUnaryCall(block, 'first');
     case BLOCK_TYPES.lastFunction:
       return readUnaryCall(block, 'last');
+    case BLOCK_TYPES.nowFunction:
+      return {
+        expression: {
+          kind: 'call',
+          name: 'now',
+          args: [],
+        },
+      };
+    case BLOCK_TYPES.datePartFunction: {
+      const input = readRequiredExpression(block, 'INPUT');
+
+      if ('issue' in input) {
+        return input;
+      }
+
+      return {
+        expression: {
+          kind: 'call',
+          name: 'datePart',
+          args: [
+            input.expression,
+            { kind: 'literal', value: getFieldString(block, 'PART') },
+          ],
+        },
+      };
+    }
+    case BLOCK_TYPES.dateDiffFunction: {
+      const start = readRequiredExpression(block, 'START');
+
+      if ('issue' in start) {
+        return start;
+      }
+
+      const end = readRequiredExpression(block, 'END');
+
+      if ('issue' in end) {
+        return end;
+      }
+
+      return {
+        expression: {
+          kind: 'call',
+          name: 'dateDiff',
+          args: [
+            start.expression,
+            end.expression,
+            { kind: 'literal', value: getFieldString(block, 'UNIT') },
+          ],
+        },
+      };
+    }
+    case BLOCK_TYPES.dateAddFunction: {
+      const input = readRequiredExpression(block, 'INPUT');
+
+      if ('issue' in input) {
+        return input;
+      }
+
+      const amount = readRequiredExpression(block, 'AMOUNT');
+
+      if ('issue' in amount) {
+        return amount;
+      }
+
+      return {
+        expression: {
+          kind: 'call',
+          name: 'dateAdd',
+          args: [
+            input.expression,
+            amount.expression,
+            { kind: 'literal', value: getFieldString(block, 'UNIT') },
+          ],
+        },
+      };
+    }
     case BLOCK_TYPES.substringFunction:
       return readFixedArityCall(block, 'substring', ['INPUT', 'START', 'LENGTH']);
     case BLOCK_TYPES.replaceFunction:
@@ -584,12 +660,20 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, 'split', ['INPUT', 'DELIMITER']);
     case BLOCK_TYPES.atIndexFunction:
       return readFixedArityCall(block, 'atIndex', ['INPUT', 'INDEX']);
+    case BLOCK_TYPES.mathRoundingFunction:
+      return readFixedArityCall(block, getFieldString(block, 'OPERATOR') as 'round' | 'floor' | 'ceil' | 'abs', ['INPUT']);
     case BLOCK_TYPES.coalesceFunction:
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
     case BLOCK_TYPES.switchFunction:
       return readSwitchExpression(block);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
+    case BLOCK_TYPES.arithmeticFunction:
+      return readFixedArityCall(
+        block,
+        getFieldString(block, 'OPERATOR') as 'add' | 'subtract' | 'multiply' | 'divide' | 'modulo',
+        ['FIRST', 'SECOND'],
+      );
     case BLOCK_TYPES.notFunction:
       return readUnaryCall(block, 'not');
     case BLOCK_TYPES.comparisonFunction:
@@ -620,12 +704,25 @@ function readUnaryCall(
 function readFixedArityCall(
   block: Blockly.Block,
   name:
+    | 'now'
+    | 'datePart'
+    | 'dateDiff'
+    | 'dateAdd'
     | 'substring'
     | 'replace'
     | 'extractRegex'
     | 'replaceRegex'
     | 'split'
     | 'atIndex'
+    | 'round'
+    | 'floor'
+    | 'ceil'
+    | 'abs'
+    | 'add'
+    | 'subtract'
+    | 'multiply'
+    | 'divide'
+    | 'modulo'
     | 'coalesce'
     | 'concat'
     | 'switch'
@@ -1260,6 +1357,41 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
   }
 
   switch (expression.name) {
+    case 'now':
+      return createBlock(workspace, BLOCK_TYPES.nowFunction);
+    case 'datePart': {
+      const block = createBlock(workspace, BLOCK_TYPES.datePartFunction);
+
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+      block.setFieldValue(getRequiredLiteralStringArgument(expression, 1), 'PART');
+      return block;
+    }
+    case 'dateDiff': {
+      const block = createBlock(workspace, BLOCK_TYPES.dateDiffFunction);
+
+      connectValueBlock(block, 'START', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'END', createExpressionBlock(workspace, expression.args[1]));
+      block.setFieldValue(getRequiredLiteralStringArgument(expression, 2), 'UNIT');
+      return block;
+    }
+    case 'dateAdd': {
+      const block = createBlock(workspace, BLOCK_TYPES.dateAddFunction);
+
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'AMOUNT', createExpressionBlock(workspace, expression.args[1]));
+      block.setFieldValue(getRequiredLiteralStringArgument(expression, 2), 'UNIT');
+      return block;
+    }
+    case 'round':
+    case 'floor':
+    case 'ceil':
+    case 'abs': {
+      const block = createBlock(workspace, BLOCK_TYPES.mathRoundingFunction);
+
+      block.setFieldValue(expression.name, 'OPERATOR');
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
+      return block;
+    }
     case 'trim':
     case 'lower':
     case 'upper':
@@ -1329,6 +1461,18 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'coalesce': {
       const block = createBlock(workspace, BLOCK_TYPES.coalesceFunction);
 
+      connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
+      connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'add':
+    case 'subtract':
+    case 'multiply':
+    case 'divide':
+    case 'modulo': {
+      const block = createBlock(workspace, BLOCK_TYPES.arithmeticFunction);
+
+      block.setFieldValue(expression.name, 'OPERATOR');
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
       return block;
@@ -1432,6 +1576,19 @@ function createBlock(workspace: Blockly.Workspace, type: string, x?: number, y?:
   }
 
   return block;
+}
+
+function getRequiredLiteralStringArgument(
+  expression: Extract<WorkflowExpression, { kind: 'call' }>,
+  index: number,
+) {
+  const argument = expression.args[index];
+
+  if (argument?.kind !== 'literal' || typeof argument.value !== 'string') {
+    throw new Error(`Function '${expression.name}' requires a string literal at args[${index}] for Blockly reconstruction.`);
+  }
+
+  return argument.value;
 }
 
 function finalizeBlock(block: Blockly.Block) {

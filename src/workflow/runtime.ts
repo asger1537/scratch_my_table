@@ -40,11 +40,13 @@ interface WorkflowChangeSummary {
 
 interface ExpressionContext {
   scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
+  runTimestamp: string;
   valueLogicalType?: LogicalType;
 }
 
 interface ExpressionExecutionContext {
   scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
+  runTimestamp: string;
   row: TableRow;
   currentValue: CellValue;
 }
@@ -52,18 +54,27 @@ interface ExpressionExecutionContext {
 type ExpressionRuntimeValue = CellValue | string[];
 
 const MISSING_CELL = Symbol('missingCell');
+const DATE_PART_UNITS = new Set(['year', 'month', 'day', 'dayOfWeek', 'hour', 'minute', 'second']);
+const DATE_DURATION_UNITS = new Set(['years', 'months', 'days', 'hours', 'minutes', 'seconds']);
+const MILLISECONDS_PER_SECOND = 1000;
+const MILLISECONDS_PER_MINUTE = 60 * MILLISECONDS_PER_SECOND;
+const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
+const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
+const MILLISECONDS_PER_MONTH = 30 * MILLISECONDS_PER_DAY;
+const MILLISECONDS_PER_YEAR = 365 * MILLISECONDS_PER_DAY;
 
 export function validateWorkflowSemantics(workflow: Workflow, table: Table): WorkflowSemanticValidationResult {
+  const runTimestamp = new Date().toISOString();
   let workingTable = cloneTable(table);
   const issues: WorkflowValidationIssue[] = [];
   const stepResults: WorkflowSemanticStepResult[] = [];
 
   workflow.steps.forEach((step, stepIndex) => {
-    const stepIssues = validateWorkflowStep(step, workingTable, stepIndex);
+    const stepIssues = validateWorkflowStep(step, workingTable, stepIndex, runTimestamp);
     const valid = stepIssues.length === 0;
 
     if (valid) {
-      workingTable = applyWorkflowStepUnchecked(workingTable, step).table;
+      workingTable = applyWorkflowStepUnchecked(workingTable, step, runTimestamp).table;
     }
 
     issues.push(...stepIssues);
@@ -85,12 +96,13 @@ export function validateWorkflowSemantics(workflow: Workflow, table: Table): Wor
 }
 
 export function executeValidatedWorkflow(workflow: Workflow, table: Table) {
+  const runTimestamp = new Date().toISOString();
   let workingTable = cloneTable(table);
   const executionWarnings: WorkflowExecutionWarning[] = [];
   let sortApplied = false;
 
   workflow.steps.forEach((step) => {
-    const stepResult = applyWorkflowStepUnchecked(workingTable, step);
+    const stepResult = applyWorkflowStepUnchecked(workingTable, step, runTimestamp);
     workingTable = stepResult.table;
     executionWarnings.push(...stepResult.warnings);
     sortApplied = sortApplied || stepResult.sortApplied;
@@ -176,20 +188,20 @@ export function summarizeWorkflowChanges(originalTable: Table, transformedTable:
   };
 }
 
-function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: number): WorkflowValidationIssue[] {
+function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: number, runTimestamp: string): WorkflowValidationIssue[] {
   const basePath = `steps[${stepIndex}]`;
 
   switch (step.type) {
     case 'scopedTransform':
-      return validateScopedTransformStep(step, table, basePath);
+      return validateScopedTransformStep(step, table, basePath, runTimestamp);
     case 'dropColumns':
       return validateDropColumnsStep(step, table, basePath);
     case 'renameColumn':
       return validateRenameColumnStep(step, table, basePath);
     case 'deriveColumn':
-      return validateDeriveColumnStep(step, table, basePath);
+      return validateDeriveColumnStep(step, table, basePath, runTimestamp);
     case 'filterRows':
-      return validateFilterRowsStep(step, table, basePath);
+      return validateFilterRowsStep(step, table, basePath, runTimestamp);
     case 'splitColumn':
       return validateSplitColumnStep(step, table, basePath);
     case 'combineColumns':
@@ -203,7 +215,7 @@ function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: numbe
   }
 }
 
-function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: Table, basePath: string) {
+function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: Table, basePath: string, runTimestamp: string) {
   const issues: WorkflowValidationIssue[] = [];
   const columns = resolveColumnIds(step.columnIds, table, `${basePath}.columnIds`, step.id, issues);
 
@@ -214,7 +226,7 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
   validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
 
   if (step.rowCondition) {
-    issues.push(...validateBooleanExpression(step.rowCondition, table, `${basePath}.rowCondition`, step.id));
+    issues.push(...validateBooleanExpression(step.rowCondition, table, `${basePath}.rowCondition`, step.id, runTimestamp));
   }
 
   columns.forEach((column, columnIndex) => {
@@ -225,6 +237,7 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
       step.id,
       {
         scope: 'scopedTransform',
+        runTimestamp,
         valueLogicalType: column.logicalType,
       },
     );
@@ -320,13 +333,14 @@ function validateDropColumnsStep(step: Extract<WorkflowStep, { type: 'dropColumn
   return issues;
 }
 
-function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveColumn' }>, table: Table, basePath: string) {
+function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveColumn' }>, table: Table, basePath: string, runTimestamp: string) {
   const issues: WorkflowValidationIssue[] = [];
 
   validateNewColumn(table, step.newColumn.columnId, step.newColumn.displayName, `${basePath}.newColumn`, step.id, issues);
 
   const expressionResult = validateExpression(step.expression, table, `${basePath}.expression`, step.id, {
     scope: 'deriveColumn',
+    runTimestamp,
   });
   issues.push(...expressionResult.issues);
 
@@ -344,8 +358,8 @@ function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveCol
   return issues;
 }
 
-function validateFilterRowsStep(step: Extract<WorkflowStep, { type: 'filterRows' }>, table: Table, basePath: string) {
-  return validateBooleanExpression(step.condition, table, `${basePath}.condition`, step.id);
+function validateFilterRowsStep(step: Extract<WorkflowStep, { type: 'filterRows' }>, table: Table, basePath: string, runTimestamp: string) {
+  return validateBooleanExpression(step.condition, table, `${basePath}.condition`, step.id, runTimestamp);
 }
 
 function validateSplitColumnStep(step: Extract<WorkflowStep, { type: 'splitColumn' }>, table: Table, basePath: string) {
@@ -516,9 +530,10 @@ function validateExpression(
   }
 }
 
-function validateBooleanExpression(expression: WorkflowExpression, table: Table, path: string, stepId: string) {
+function validateBooleanExpression(expression: WorkflowExpression, table: Table, path: string, stepId: string, runTimestamp: string) {
   const result = validateExpression(expression, table, path, stepId, {
     scope: 'predicate',
+    runTimestamp,
   });
   const issues = [...result.issues];
 
@@ -544,6 +559,128 @@ function validateCallExpression(
   const issues = results.flatMap((result) => result.issues);
 
   switch (expression.name) {
+    case 'now': {
+      if (results.length !== 0) {
+        issues.push(makeIssue('invalidExpression', `Function 'now' requires zero arguments.`, path, stepId));
+      }
+
+      return {
+        logicalType: 'datetime',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'datePart': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function 'datePart' requires exactly two arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (results[0].valueKind !== 'scalar' || !isDateTimeLikeType(results[0].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'datePart' requires a date, datetime, or string input.`, `${path}.args[0]`, stepId));
+      }
+
+      if (results[1].valueKind !== 'scalar' || !isStringLikeType(results[1].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'datePart' requires a string unit.`, `${path}.args[1]`, stepId));
+      }
+
+      const unit = getLiteralStringValue(expression.args[1]);
+
+      if (unit !== null && !DATE_PART_UNITS.has(unit)) {
+        issues.push(makeIssue('invalidExpression', `Function 'datePart' does not support unit '${unit}'.`, `${path}.args[1]`, stepId));
+      }
+
+      return {
+        logicalType: 'number',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'dateDiff': {
+      if (results.length !== 3) {
+        issues.push(makeIssue('invalidExpression', `Function 'dateDiff' requires exactly three arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (results[0].valueKind !== 'scalar' || !isDateTimeLikeType(results[0].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'dateDiff' requires a date, datetime, or string input.`, `${path}.args[0]`, stepId));
+      }
+
+      if (results[1].valueKind !== 'scalar' || !isDateTimeLikeType(results[1].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'dateDiff' requires a date, datetime, or string input.`, `${path}.args[1]`, stepId));
+      }
+
+      const unit = getLiteralStringValue(expression.args[2]);
+
+      if (unit === null) {
+        issues.push(makeIssue('invalidExpression', `Function 'dateDiff' requires a string literal unit.`, `${path}.args[2]`, stepId));
+      } else if (!DATE_DURATION_UNITS.has(unit)) {
+        issues.push(makeIssue('invalidExpression', `Function 'dateDiff' does not support unit '${unit}'.`, `${path}.args[2]`, stepId));
+      }
+
+      return {
+        logicalType: 'number',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'dateAdd': {
+      if (results.length !== 3) {
+        issues.push(makeIssue('invalidExpression', `Function 'dateAdd' requires exactly three arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (results[0].valueKind !== 'scalar' || !isDateTimeLikeType(results[0].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'dateAdd' requires a date, datetime, or string input.`, `${path}.args[0]`, stepId));
+      }
+
+      if (results[1].valueKind !== 'scalar' || !isNumberLikeType(results[1].logicalType)) {
+        issues.push(makeIssue('incompatibleType', `Function 'dateAdd' requires a numeric amount.`, `${path}.args[1]`, stepId));
+      }
+
+      const unit = getLiteralStringValue(expression.args[2]);
+
+      if (unit === null) {
+        issues.push(makeIssue('invalidExpression', `Function 'dateAdd' requires a string literal unit.`, `${path}.args[2]`, stepId));
+      } else if (!DATE_DURATION_UNITS.has(unit)) {
+        issues.push(makeIssue('invalidExpression', `Function 'dateAdd' does not support unit '${unit}'.`, `${path}.args[2]`, stepId));
+      }
+
+      return {
+        logicalType: 'datetime',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'round':
+    case 'floor':
+    case 'ceil':
+    case 'abs': {
+      const [input] = results;
+
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly one argument.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      if (input.valueKind !== 'scalar' || !isNumberLikeType(input.logicalType)) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function '${expression.name}' requires a numeric input but received '${input.logicalType}'.`,
+            `${path}.args[0]`,
+            stepId,
+            { logicalType: input.logicalType, functionName: expression.name },
+          ),
+        );
+      }
+
+      return {
+        logicalType: 'number',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
     case 'trim':
     case 'lower':
     case 'upper':
@@ -727,6 +864,35 @@ function validateCallExpression(
 
       return {
         logicalType: input.logicalType === 'string' || input.valueKind === 'list' ? 'string' : 'unknown',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
+    case 'add':
+    case 'subtract':
+    case 'multiply':
+    case 'divide':
+    case 'modulo': {
+      if (results.length !== 2) {
+        issues.push(makeIssue('invalidExpression', `Function '${expression.name}' requires exactly two arguments.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      results.forEach((result, index) => {
+        if (result.valueKind !== 'scalar' || !isNumberLikeType(result.logicalType)) {
+          issues.push(
+            makeIssue(
+              'incompatibleType',
+              `Function '${expression.name}' requires numeric inputs.`,
+              `${path}.args[${index}]`,
+              stepId,
+            ),
+          );
+        }
+      });
+
+      return {
+        logicalType: 'number',
         valueKind: 'scalar',
         issues,
       };
@@ -1119,18 +1285,18 @@ function validateNewColumn(
   validateNewColumns(table, [{ columnId, displayName }], basePath, stepId, issues);
 }
 
-function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep): WorkflowStepApplyResult {
+function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep, runTimestamp: string): WorkflowStepApplyResult {
   switch (step.type) {
     case 'scopedTransform':
-      return applyScopedTransformStep(table, step);
+      return applyScopedTransformStep(table, step, runTimestamp);
     case 'dropColumns':
       return applyDropColumnsStep(table, step);
     case 'renameColumn':
       return applyRenameColumnStep(table, step);
     case 'deriveColumn':
-      return applyDeriveColumnStep(table, step);
+      return applyDeriveColumnStep(table, step, runTimestamp);
     case 'filterRows':
-      return applyFilterRowsStep(table, step);
+      return applyFilterRowsStep(table, step, runTimestamp);
     case 'splitColumn':
       return applySplitColumnStep(table, step);
     case 'combineColumns':
@@ -1149,12 +1315,13 @@ function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep): WorkflowS
   }
 }
 
-function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformStep): WorkflowStepApplyResult {
+function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformStep, runTimestamp: string): WorkflowStepApplyResult {
   const rowsById = mapRows(table, (row) => {
     if (
       step.rowCondition
       && !Boolean(evaluateExpression(step.rowCondition, {
         scope: 'predicate',
+        runTimestamp,
         row,
         currentValue: null,
       }))
@@ -1171,6 +1338,7 @@ function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformSte
       const currentValue = cellsByColumnId[columnId] ?? null;
       const nextValue = toCellValue(evaluateExpression(step.expression, {
         scope: 'scopedTransform',
+        runTimestamp,
         row,
         currentValue,
       }));
@@ -1247,7 +1415,7 @@ function applyRenameColumnStep(table: Table, step: Extract<WorkflowStep, { type:
   };
 }
 
-function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type: 'deriveColumn' }>): WorkflowStepApplyResult {
+function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type: 'deriveColumn' }>, runTimestamp: string): WorkflowStepApplyResult {
   const newColumn = buildCreatedColumn(step.newColumn.columnId, step.newColumn.displayName, table.schema.columns.length);
   const rowsById = mapRows(table, (row) => ({
     rowId: row.rowId,
@@ -1255,6 +1423,7 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
       ...row.cellsByColumnId,
       [newColumn.columnId]: toCellValue(evaluateExpression(step.expression, {
         scope: 'deriveColumn',
+        runTimestamp,
         row,
         currentValue: null,
       })),
@@ -1275,11 +1444,12 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
   };
 }
 
-function applyFilterRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'filterRows' }>): WorkflowStepApplyResult {
+function applyFilterRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'filterRows' }>, runTimestamp: string): WorkflowStepApplyResult {
   const keptRowIds = table.rowOrder.filter((rowId) => {
     const row = table.rowsById[rowId];
     const matches = Boolean(evaluateExpression(step.condition, {
       scope: 'predicate',
+      runTimestamp,
       row,
       currentValue: null,
     }));
@@ -1460,6 +1630,100 @@ function evaluateExpression(expression: WorkflowExpression, context: ExpressionE
 
 function evaluateCallExpression(expression: WorkflowCallExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
   switch (expression.name) {
+    case 'now':
+      return context.runTimestamp;
+    case 'datePart': {
+      const input = evaluateExpression(expression.args[0], context);
+      const unit = evaluateExpression(expression.args[1], context);
+      const date = parseDateMathValue(input);
+
+      if (!date || typeof unit !== 'string') {
+        return null;
+      }
+
+      switch (unit) {
+        case 'year':
+          return date.getUTCFullYear();
+        case 'month':
+          return date.getUTCMonth() + 1;
+        case 'day':
+          return date.getUTCDate();
+        case 'dayOfWeek':
+          return date.getUTCDay();
+        case 'hour':
+          return date.getUTCHours();
+        case 'minute':
+          return date.getUTCMinutes();
+        case 'second':
+          return date.getUTCSeconds();
+        default:
+          return null;
+      }
+    }
+    case 'dateDiff': {
+      const left = parseDateMathValue(evaluateExpression(expression.args[0], context));
+      const right = parseDateMathValue(evaluateExpression(expression.args[1], context));
+      const unit = evaluateExpression(expression.args[2], context);
+      const divisor = typeof unit === 'string' ? getDateDurationUnitMilliseconds(unit) : null;
+
+      if (!left || !right || divisor === null) {
+        return null;
+      }
+
+      return (left.getTime() - right.getTime()) / divisor;
+    }
+    case 'dateAdd': {
+      const input = parseDateMathValue(evaluateExpression(expression.args[0], context));
+      const amount = evaluateExpression(expression.args[1], context);
+      const unit = evaluateExpression(expression.args[2], context);
+
+      if (!input || typeof amount !== 'number' || typeof unit !== 'string') {
+        return null;
+      }
+
+      const next = new Date(input.getTime());
+
+      switch (unit) {
+        case 'years':
+          next.setUTCFullYear(next.getUTCFullYear() + amount);
+          break;
+        case 'months':
+          next.setUTCMonth(next.getUTCMonth() + amount);
+          break;
+        case 'days':
+          next.setUTCDate(next.getUTCDate() + amount);
+          break;
+        case 'hours':
+          next.setUTCHours(next.getUTCHours() + amount);
+          break;
+        case 'minutes':
+          next.setUTCMinutes(next.getUTCMinutes() + amount);
+          break;
+        case 'seconds':
+          next.setUTCSeconds(next.getUTCSeconds() + amount);
+          break;
+        default:
+          return null;
+      }
+
+      return next.toISOString();
+    }
+    case 'round': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'number' ? Math.round(value) : null;
+    }
+    case 'floor': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'number' ? Math.floor(value) : null;
+    }
+    case 'ceil': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'number' ? Math.ceil(value) : null;
+    }
+    case 'abs': {
+      const value = evaluateExpression(expression.args[0], context);
+      return typeof value === 'number' ? Math.abs(value) : null;
+    }
     case 'trim': {
       const value = evaluateExpression(expression.args[0], context);
       return typeof value === 'string' ? value.trim() : value;
@@ -1567,6 +1831,41 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       }
 
       return null;
+    }
+    case 'add': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return typeof left === 'number' && typeof right === 'number' ? left + right : null;
+    }
+    case 'subtract': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return typeof left === 'number' && typeof right === 'number' ? left - right : null;
+    }
+    case 'multiply': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+      return typeof left === 'number' && typeof right === 'number' ? left * right : null;
+    }
+    case 'divide': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+
+      if (typeof left !== 'number' || typeof right !== 'number' || right === 0) {
+        return null;
+      }
+
+      return left / right;
+    }
+    case 'modulo': {
+      const left = evaluateExpression(expression.args[0], context);
+      const right = evaluateExpression(expression.args[1], context);
+
+      if (typeof left !== 'number' || typeof right !== 'number' || right === 0) {
+        return null;
+      }
+
+      return left % right;
     }
     case 'first': {
       const value = evaluateExpression(expression.args[0], context);
@@ -1769,8 +2068,60 @@ function isStringLikeType(logicalType: LogicalType) {
   return logicalType === 'string' || logicalType === 'unknown';
 }
 
+function isDateTimeLikeType(logicalType: LogicalType) {
+  return logicalType === 'date' || logicalType === 'datetime' || isStringLikeType(logicalType);
+}
+
 function isNumberLikeType(logicalType: LogicalType) {
   return logicalType === 'number' || logicalType === 'unknown';
+}
+
+function getLiteralStringValue(expression: WorkflowExpression | undefined): string | null {
+  return expression?.kind === 'literal' && typeof expression.value === 'string'
+    ? expression.value
+    : null;
+}
+
+function parseDateMathValue(value: ExpressionRuntimeValue): Date | null {
+  if (value === null || Array.isArray(value) || typeof value === 'number' || typeof value === 'boolean') {
+    return null;
+  }
+
+  const text = String(value).trim();
+
+  if (text === '') {
+    return null;
+  }
+
+  let candidate = text;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    candidate = `${text}T00:00:00.000Z`;
+  } else if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(text)) {
+    candidate = `${text}Z`;
+  }
+
+  const timestamp = Date.parse(candidate);
+  return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
+function getDateDurationUnitMilliseconds(unit: string): number | null {
+  switch (unit) {
+    case 'years':
+      return MILLISECONDS_PER_YEAR;
+    case 'months':
+      return MILLISECONDS_PER_MONTH;
+    case 'days':
+      return MILLISECONDS_PER_DAY;
+    case 'hours':
+      return MILLISECONDS_PER_HOUR;
+    case 'minutes':
+      return MILLISECONDS_PER_MINUTE;
+    case 'seconds':
+      return MILLISECONDS_PER_SECOND;
+    default:
+      return null;
+  }
 }
 
 function isOrderingType(logicalType: LogicalType) {

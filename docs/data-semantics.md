@@ -44,6 +44,19 @@ Rules:
 
 Built-in function semantics:
 
+- `now()`: returns the execution timestamp for the current workflow run; it is stable across every row and step in that one execution
+- `datePart(x, part)`: extracts one UTC date/time part from `x`, where `part` is one of `year`, `month`, `day`, `dayOfWeek`, `hour`, `minute`, or `second`
+- `dateDiff(a, b, unit)`: returns the numeric difference `a - b` in `years`, `months`, `days`, `hours`, `minutes`, or `seconds`
+- `dateAdd(x, amount, unit)`: adds `amount` of the given `years`, `months`, `days`, `hours`, `minutes`, or `seconds` unit to `x` and returns an ISO datetime string
+- `round(x)`: returns `x` rounded to the nearest integer
+- `floor(x)`: returns the greatest integer less than or equal to `x`
+- `ceil(x)`: returns the smallest integer greater than or equal to `x`
+- `abs(x)`: returns the absolute value of `x`
+- `add(a, b)`: returns `a + b`
+- `subtract(a, b)`: returns `a - b`
+- `multiply(a, b)`: returns `a * b`
+- `divide(a, b)`: returns `a / b`
+- `modulo(a, b)`: returns `a % b`
 - `trim(x)`: trims leading and trailing whitespace from string inputs
 - `lower(x)`: lowercases string inputs
 - `upper(x)`: uppercases string inputs
@@ -70,6 +83,20 @@ Built-in function semantics:
 - `and(a, b, ...)`: boolean conjunction
 - `or(a, b, ...)`: boolean disjunction
 - `not(x)`: boolean negation
+
+Math function rules:
+
+- Math functions require strictly numeric inputs.
+- If any input is `null` or non-numeric, including `""`, the function returns `null`.
+- `divide(..., 0)` and `modulo(..., 0)` return `null`.
+
+Date/time function rules:
+
+- Date/time functions accept ISO date strings, ISO datetime strings, or existing `date` / `datetime` typed values.
+- Date-only strings are parsed as midnight UTC.
+- ISO datetime strings without an explicit timezone are treated as UTC.
+- Invalid dates or unsupported units return `null`.
+- `now()` is stable across a single workflow execution.
 
 Determinism rules:
 

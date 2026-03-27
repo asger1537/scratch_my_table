@@ -41,3 +41,5 @@ Files:
 - `18-extract-order-code-regex.workflow.json`
 - `19-normalize-phone-digits-regex.workflow.json`
 - `20-map-status-label-with-switch.workflow.json`
+- `21-calculate-priority-score.workflow.json`
+- `22-derive-signup-date-metrics.workflow.json`

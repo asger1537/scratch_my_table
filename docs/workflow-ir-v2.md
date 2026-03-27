@@ -92,6 +92,8 @@ Rules:
 Built-in call names:
 
 - string / text: `trim`, `lower`, `upper`, `collapseWhitespace`, `substring`, `replace`, `extractRegex`, `replaceRegex`
+- date / time: `now`, `datePart`, `dateDiff`, `dateAdd`
+- math: `round`, `floor`, `ceil`, `abs`, `add`, `subtract`, `multiply`, `divide`, `modulo`
 - list / utility: `split`, `atIndex`, `first`, `last`, `coalesce`, `switch`, `concat`
 - logic: `isEmpty`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `and`, `or`, `not`
 

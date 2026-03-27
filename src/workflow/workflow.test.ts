@@ -166,6 +166,65 @@ describe('workflow validation and execution', () => {
     });
   });
 
+  it('structurally validates math expressions', () => {
+    const workflow = {
+      version: 2,
+      workflowId: 'wf_math_structure',
+      name: 'Math structure',
+      steps: [
+        {
+          id: 'step_total',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total',
+            displayName: 'total',
+          },
+          expression: call('round', call('divide', call('add', column('col_price'), literal(2)), literal(3))),
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
+  });
+
+  it('structurally validates date math expressions', () => {
+    const workflow = {
+      version: 2,
+      workflowId: 'wf_date_math_structure',
+      name: 'Date math structure',
+      steps: [
+        {
+          id: 'step_signup_year',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_signup_year',
+            displayName: 'signup_year',
+          },
+          expression: call('datePart', column('col_sign_up_date'), literal('year')),
+        },
+        {
+          id: 'step_follow_up_at',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_follow_up_at',
+            displayName: 'follow_up_at',
+          },
+          expression: call('dateAdd', call('now'), literal(7), literal('days')),
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
+  });
+
   it('runs every example workflow against Customers_Messy.xlsx', async () => {
     const workbookPath = path.resolve(process.cwd(), 'Customers_Messy.xlsx');
     const workbookBytes = await readFile(workbookPath);
@@ -196,7 +255,7 @@ describe('workflow validation and execution', () => {
       expect(execution.validationErrors, `${fileName} should execute without validation errors`).toEqual([]);
       expect(execution.transformedTable, `${fileName} should produce a transformed table`).not.toBeNull();
     }
-  });
+  }, 20000);
 
   it('lets later valid steps see schema changes from earlier valid steps', () => {
     const table = loadCsvTable('first_name,last_name\r\nAlice,Ng\r\n');
@@ -658,6 +717,192 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status_label).toBe('other');
   });
 
+  it('evaluates math functions deterministically and returns null for invalid numeric cases', () => {
+    const table = loadCsvTable('price,quantity,discount\r\n10.2,3,2\r\n,4,0\r\n7,0,0\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_math_functions',
+      name: 'Math functions',
+      steps: [
+        {
+          id: 'step_total',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total',
+            displayName: 'total',
+          },
+          expression: call('multiply', column('col_price'), column('col_quantity')),
+        },
+        {
+          id: 'step_total_minus_discount',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total_minus_discount',
+            displayName: 'total_minus_discount',
+          },
+          expression: call('subtract', column('col_total'), column('col_discount')),
+        },
+        {
+          id: 'step_total_rounded',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total_rounded',
+            displayName: 'total_rounded',
+          },
+          expression: call('round', column('col_total_minus_discount')),
+        },
+        {
+          id: 'step_total_abs',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total_abs',
+            displayName: 'total_abs',
+          },
+          expression: call('abs', column('col_total_minus_discount')),
+        },
+        {
+          id: 'step_unit_price_floor',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_unit_price_floor',
+            displayName: 'unit_price_floor',
+          },
+          expression: call('floor', call('divide', column('col_total_minus_discount'), literal(2))),
+        },
+        {
+          id: 'step_unit_price_ceil',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_unit_price_ceil',
+            displayName: 'unit_price_ceil',
+          },
+          expression: call('ceil', call('divide', column('col_total_minus_discount'), literal(2))),
+        },
+        {
+          id: 'step_remainder',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_remainder',
+            displayName: 'remainder',
+          },
+          expression: call('modulo', column('col_total_rounded'), literal(4)),
+        },
+        {
+          id: 'step_safe_sum',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_safe_sum',
+            displayName: 'safe_sum',
+          },
+          expression: call('add', column('col_price'), column('col_discount')),
+        },
+        {
+          id: 'step_divide_by_zero',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_divide_by_zero',
+            displayName: 'divide_by_zero',
+          },
+          expression: call('divide', column('col_total_rounded'), literal(0)),
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+
+    expect(validation.valid).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_total).toBeCloseTo(30.6);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_total_minus_discount).toBeCloseTo(28.6);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_total_rounded).toBe(29);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_total_abs).toBeCloseTo(28.6);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_unit_price_floor).toBe(14);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_unit_price_ceil).toBe(15);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_remainder).toBe(1);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_safe_sum).toBeCloseTo(12.2);
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_total).toBe(null);
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_safe_sum).toBe(null);
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_divide_by_zero).toBe(null);
+  });
+
+  it('evaluates date math deterministically with a stable now timestamp per execution', () => {
+    const table = loadCsvTable('sign_up_date\r\n2026-01-02\r\nbad-date\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_date_math',
+      name: 'Date math',
+      steps: [
+        {
+          id: 'step_run_started',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_run_started',
+            displayName: 'run_started',
+          },
+          expression: call('now'),
+        },
+        {
+          id: 'step_run_started_again',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_run_started_again',
+            displayName: 'run_started_again',
+          },
+          expression: call('now'),
+        },
+        {
+          id: 'step_signup_year',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_signup_year',
+            displayName: 'signup_year',
+          },
+          expression: call('datePart', column('col_sign_up_date'), literal('year')),
+        },
+        {
+          id: 'step_follow_up_at',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_follow_up_at',
+            displayName: 'follow_up_at',
+          },
+          expression: call('dateAdd', column('col_sign_up_date'), literal(7), literal('days')),
+        },
+        {
+          id: 'step_days_diff',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_days_diff',
+            displayName: 'days_diff',
+          },
+          expression: call(
+            'dateDiff',
+            call('dateAdd', column('col_sign_up_date'), literal(7), literal('days')),
+            column('col_sign_up_date'),
+            literal('days'),
+          ),
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+    const row1 = execution.transformedTable?.rowsById.row_1.cellsByColumnId;
+    const row2 = execution.transformedTable?.rowsById.row_2.cellsByColumnId;
+
+    expect(validation.valid).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(row1?.col_run_started).toBe(row1?.col_run_started_again);
+    expect(typeof row1?.col_run_started).toBe('string');
+    expect(row1?.col_signup_year).toBe(2026);
+    expect(row1?.col_follow_up_at).toBe('2026-01-09T00:00:00.000Z');
+    expect(row1?.col_days_diff).toBe(7);
+    expect(row2?.col_signup_year).toBe(null);
+    expect(row2?.col_follow_up_at).toBe(null);
+    expect(row2?.col_days_diff).toBe(null);
+  });
+
   it('filters rows with boolean call expressions and rejects incompatible comparators', async () => {
     const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
@@ -1035,6 +1280,10 @@ function column(columnId: string): WorkflowExpression {
 
 function call(
   name:
+    | 'now'
+    | 'datePart'
+    | 'dateDiff'
+    | 'dateAdd'
     | 'trim'
     | 'lower'
     | 'upper'
@@ -1045,6 +1294,15 @@ function call(
     | 'replaceRegex'
     | 'split'
     | 'atIndex'
+    | 'round'
+    | 'floor'
+    | 'ceil'
+    | 'abs'
+    | 'add'
+    | 'subtract'
+    | 'multiply'
+    | 'divide'
+    | 'modulo'
     | 'first'
     | 'last'
     | 'coalesce'

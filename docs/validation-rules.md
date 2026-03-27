@@ -95,10 +95,11 @@ Rules:
 
 Function rules:
 
-- `trim`, `lower`, `upper`, `collapseWhitespace`, `first`, `last`, `isEmpty`, and `not` require exactly 1 argument
+- `now` requires exactly 0 arguments
+- `trim`, `lower`, `upper`, `collapseWhitespace`, `first`, `last`, `isEmpty`, `not`, `round`, `floor`, `ceil`, and `abs` require exactly 1 argument
 - `substring` requires 3 arguments: string input, numeric start, numeric length
-- `replace` and `replaceRegex` require 3 arguments: string input, string pattern, string replacement
-- `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, and `lessThan` require exactly 2 arguments
+- `replace`, `replaceRegex`, `dateDiff`, and `dateAdd` require 3 arguments
+- `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `add`, `subtract`, `multiply`, `divide`, `modulo`, and `datePart` require exactly 2 arguments
 - `and`, `or`, and `concat` require at least 2 arguments
 - `switch` requires at least 4 arguments and must have an even number of arguments
 - `split` returns an intermediate list value
@@ -106,6 +107,10 @@ Function rules:
 
 Type rules:
 
+- `now` returns `datetime`
+- `datePart` requires a date, datetime, or string-like input plus a string unit and returns `number`
+- `dateDiff` requires two date, datetime, or string-like inputs plus a string literal unit and returns `number`
+- `dateAdd` requires a date, datetime, or string-like input, a numeric amount, and a string literal unit; it returns `datetime`
 - `trim`, `lower`, `upper`, `collapseWhitespace` require string-like inputs
 - `substring` requires string, number, number
 - `replace` requires string, string, string
@@ -114,6 +119,8 @@ Type rules:
 - `split` requires string, string
 - `atIndex` requires a string or intermediate list as the first input, and a number as the second input
 - `first` and `last` accept a string or intermediate list
+- `round`, `floor`, `ceil`, and `abs` require numeric inputs and return `number`
+- `add`, `subtract`, `multiply`, `divide`, and `modulo` require numeric inputs and return `number`
 - `coalesce` requires scalar inputs with compatible logical types
 - `switch` requires the `target` to be comparable to all `match` inputs. All `result` inputs and the `defaultResult` must resolve to compatible logical types
 - `concat` accepts scalar inputs and returns `string`

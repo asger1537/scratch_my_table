@@ -29,6 +29,19 @@ export interface WorkflowNewColumn {
 }
 
 export type WorkflowExpressionFunctionName =
+  | 'now'
+  | 'datePart'
+  | 'dateDiff'
+  | 'dateAdd'
+  | 'round'
+  | 'floor'
+  | 'ceil'
+  | 'abs'
+  | 'add'
+  | 'subtract'
+  | 'multiply'
+  | 'divide'
+  | 'modulo'
   | 'trim'
   | 'lower'
   | 'upper'

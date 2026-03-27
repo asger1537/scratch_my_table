@@ -1,0 +1,96 @@
+{
+  "version": 2,
+  "workflowId": "wf_derive_signup_date_metrics",
+  "name": "Derive signup date metrics",
+  "description": "Derive a stable run timestamp, the signup year, a 30-day follow-up timestamp, and account age in days from sign_up_date.",
+  "steps": [
+    {
+      "id": "step_derive_run_timestamp",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_run_timestamp",
+        "displayName": "run_timestamp"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "now",
+        "args": []
+      }
+    },
+    {
+      "id": "step_derive_signup_year",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_signup_year",
+        "displayName": "signup_year"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "datePart",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_sign_up_date"
+          },
+          {
+            "kind": "literal",
+            "value": "year"
+          }
+        ]
+      }
+    },
+    {
+      "id": "step_derive_follow_up_at",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_follow_up_at",
+        "displayName": "follow_up_at"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "dateAdd",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_sign_up_date"
+          },
+          {
+            "kind": "literal",
+            "value": 30
+          },
+          {
+            "kind": "literal",
+            "value": "days"
+          }
+        ]
+      }
+    },
+    {
+      "id": "step_derive_account_age_days",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_account_age_days",
+        "displayName": "account_age_days"
+      },
+      "expression": {
+        "kind": "call",
+        "name": "dateDiff",
+        "args": [
+          {
+            "kind": "call",
+            "name": "now",
+            "args": []
+          },
+          {
+            "kind": "column",
+            "columnId": "col_sign_up_date"
+          },
+          {
+            "kind": "literal",
+            "value": "days"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -117,3 +117,13 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 
 - File: `20-map-status-label-with-switch.workflow.json`
 - Uses `switch(lower(trim(status)), ...)` to map status values to readable labels with a default fallback.
+
+## 21. Calculate Priority Score
+
+- File: `21-calculate-priority-score.workflow.json`
+- Uses `switch`, `multiply`, `add`, `divide`, and `round` to derive a numeric `priority_score` from `status` and `VIP?`.
+
+## 22. Derive Signup Date Metrics
+
+- File: `22-derive-signup-date-metrics.workflow.json`
+- Uses `now`, `datePart`, `dateAdd`, and `dateDiff` to derive a stable run timestamp, `signup_year`, `follow_up_at`, and `account_age_days` from `sign_up_date`.
