@@ -586,6 +586,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, 'atIndex', ['INPUT', 'INDEX']);
     case BLOCK_TYPES.coalesceFunction:
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
+    case BLOCK_TYPES.switchFunction:
+      return readSwitchExpression(block);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
     case BLOCK_TYPES.notFunction:
@@ -626,6 +628,7 @@ function readFixedArityCall(
     | 'atIndex'
     | 'coalesce'
     | 'concat'
+    | 'switch'
     | 'trim'
     | 'lower'
     | 'upper'
@@ -661,6 +664,50 @@ function readFixedArityCall(
     expression: {
       kind: 'call',
       name,
+      args,
+    },
+  };
+}
+
+function readSwitchExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const target = readRequiredExpression(block, 'TARGET');
+
+  if ('issue' in target) {
+    return target;
+  }
+
+  const args: WorkflowExpression[] = [target.expression];
+  let index = 0;
+
+  while (block.getInput(`MATCH${index}`)) {
+    const match = readRequiredExpression(block, `MATCH${index}`);
+
+    if ('issue' in match) {
+      return match;
+    }
+
+    const returnValue = readRequiredExpression(block, `RETURN${index}`);
+
+    if ('issue' in returnValue) {
+      return returnValue;
+    }
+
+    args.push(match.expression, returnValue.expression);
+    index += 1;
+  }
+
+  const defaultResult = readRequiredExpression(block, 'DEFAULT');
+
+  if ('issue' in defaultResult) {
+    return defaultResult;
+  }
+
+  args.push(defaultResult.expression);
+
+  return {
+    expression: {
+      kind: 'call',
+      name: 'switch',
       args,
     },
   };
@@ -1284,6 +1331,32 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
 
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'switch': {
+      const block = createBlock(workspace, BLOCK_TYPES.switchFunction);
+      const switchBlock = block as Blockly.Block & {
+        loadExtraState?: (state: { itemCount?: number }) => void;
+        itemCount_?: number;
+        updateShape_?: () => void;
+      };
+      const caseCount = Math.max(1, Math.floor((expression.args.length - 2) / 2));
+
+      if (switchBlock.loadExtraState) {
+        switchBlock.loadExtraState({ itemCount: caseCount });
+      } else {
+        switchBlock.itemCount_ = caseCount;
+        switchBlock.updateShape_?.();
+      }
+
+      connectValueBlock(block, 'TARGET', createExpressionBlock(workspace, expression.args[0]));
+
+      for (let index = 0; index < caseCount; index += 1) {
+        connectValueBlock(block, `MATCH${index}`, createExpressionBlock(workspace, expression.args[1 + (index * 2)]));
+        connectValueBlock(block, `RETURN${index}`, createExpressionBlock(workspace, expression.args[2 + (index * 2)]));
+      }
+
+      connectValueBlock(block, 'DEFAULT', createExpressionBlock(workspace, expression.args[expression.args.length - 1]));
       return block;
     }
     case 'contains':

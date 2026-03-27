@@ -300,6 +300,47 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.replaceRegexFunction);
   });
 
+  it('reconstructs switch function trees with dynamic case inputs', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_switch_roundtrip',
+      name: 'Switch roundtrip',
+      steps: [
+        {
+          id: 'step_switch_status',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_label',
+            displayName: 'status_label',
+          },
+          expression: call(
+            'switch',
+            column('col_status'),
+            literal('active'),
+            literal('A'),
+            literal('inactive'),
+            literal('I'),
+            literal('other'),
+          ),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_status_label'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+    const switchBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.switchFunction);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(switchBlock).toBeTruthy();
+    expect(switchBlock?.getInput('TARGET')).toBeTruthy();
+    expect(switchBlock?.getInput('MATCH0')).toBeTruthy();
+    expect(switchBlock?.getInput('RETURN0')).toBeTruthy();
+    expect(switchBlock?.getInput('MATCH1')).toBeTruthy();
+    expect(switchBlock?.getInput('RETURN1')).toBeTruthy();
+    expect(switchBlock?.getInput('DEFAULT')).toBeTruthy();
+  });
+
   it('reconstructs deriveColumn workflows as create-column blank and copy modes when possible', () => {
     const workflow: Workflow = {
       version: 2,
@@ -847,6 +888,7 @@ function call(
     | 'first'
     | 'last'
     | 'coalesce'
+    | 'switch'
     | 'concat'
     | 'equals'
     | 'contains'

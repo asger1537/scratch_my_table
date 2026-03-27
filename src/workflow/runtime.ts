@@ -798,6 +798,80 @@ function validateCallExpression(
         issues,
       };
     }
+    case 'switch': {
+      if (results.length < 4 || results.length % 2 !== 0) {
+        issues.push(
+          makeIssue(
+            'invalidExpression',
+            `Function 'switch' requires an even number of arguments and at least four total arguments.`,
+            path,
+            stepId,
+          ),
+        );
+        return {
+          logicalType: 'unknown',
+          valueKind: 'scalar',
+          issues,
+        };
+      }
+
+      const target = results[0];
+
+      if (target.valueKind !== 'scalar') {
+        issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts a scalar target.`, `${path}.args[0]`, stepId));
+      }
+
+      for (let index = 1; index < results.length - 1; index += 2) {
+        const match = results[index];
+
+        if (match.valueKind !== 'scalar') {
+          issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts scalar match inputs.`, `${path}.args[${index}]`, stepId));
+          continue;
+        }
+
+        if (!areComparableEqualityTypes(target.logicalType, match.logicalType)) {
+          issues.push(
+            makeIssue(
+              'incompatibleType',
+              `Function 'switch' requires the target and every match input to be comparable.`,
+              `${path}.args[${index}]`,
+              stepId,
+            ),
+          );
+        }
+      }
+
+      const branchResults = results.filter((result, index) => index === results.length - 1 || (index >= 2 && index % 2 === 0));
+
+      branchResults.forEach((result, index) => {
+        if (result.valueKind !== 'scalar') {
+          const argIndex = index === branchResults.length - 1 ? results.length - 1 : 2 + (index * 2);
+          issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts scalar result inputs.`, `${path}.args[${argIndex}]`, stepId));
+        }
+      });
+
+      const concreteTypes = [...new Set(branchResults.map((result) => result.logicalType).filter((logicalType) => logicalType !== 'unknown'))];
+
+      if (concreteTypes.includes('mixed')) {
+        issues.push(makeIssue('incompatibleType', `Function 'switch' must not include mixed result branches.`, path, stepId));
+      } else if (concreteTypes.length > 1) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function 'switch' result branches must resolve to one compatible type.`,
+            path,
+            stepId,
+            { logicalTypes: concreteTypes },
+          ),
+        );
+      }
+
+      return {
+        logicalType: (concreteTypes[0] ?? 'unknown') as LogicalType,
+        valueKind: 'scalar',
+        issues,
+      };
+    }
     case 'concat':
       if (results.length < 2) {
         issues.push(makeIssue('invalidExpression', `Function 'concat' requires at least two arguments.`, path, stepId));
@@ -1528,6 +1602,17 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       }
 
       return evaluateExpression(expression.args[1], context);
+    }
+    case 'switch': {
+      const target = evaluateExpression(expression.args[0], context);
+
+      for (let index = 1; index < expression.args.length - 1; index += 2) {
+        if (Object.is(target, evaluateExpression(expression.args[index], context))) {
+          return evaluateExpression(expression.args[index + 1], context);
+        }
+      }
+
+      return evaluateExpression(expression.args[expression.args.length - 1], context);
     }
     case 'concat':
       return expression.args

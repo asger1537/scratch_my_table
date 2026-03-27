@@ -133,6 +133,39 @@ describe('workflow validation and execution', () => {
     });
   });
 
+  it('structurally validates switch expressions', () => {
+    const workflow = {
+      version: 2,
+      workflowId: 'wf_switch_structure',
+      name: 'Switch structure',
+      steps: [
+        {
+          id: 'step_switch_status',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_label',
+            displayName: 'status_label',
+          },
+          expression: call(
+            'switch',
+            column('col_status'),
+            literal('active'),
+            literal('A'),
+            literal('inactive'),
+            literal('I'),
+            literal('other'),
+          ),
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
+  });
+
   it('runs every example workflow against Customers_Messy.xlsx', async () => {
     const workbookPath = path.resolve(process.cwd(), 'Customers_Messy.xlsx');
     const workbookBytes = await readFile(workbookPath);
@@ -588,6 +621,43 @@ describe('workflow validation and execution', () => {
     expect(malformedExecution.transformedTable.rowsById.row_1.cellsByColumnId.col_bad_replace).toBe('Order: ORD-1234 (urgent)');
   });
 
+  it('evaluates switch deterministically with ordered cases and a default result', () => {
+    const table = loadCsvTable('status\r\nactive\r\ninactive\r\npending\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_switch_status_label',
+      name: 'Switch status label',
+      steps: [
+        {
+          id: 'step_switch_status_label',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_label',
+            displayName: 'status_label',
+          },
+          expression: call(
+            'switch',
+            column('col_status'),
+            literal('active'),
+            literal('A'),
+            literal('inactive'),
+            literal('I'),
+            literal('other'),
+          ),
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+
+    expect(validation.valid).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('A');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status_label).toBe('I');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status_label).toBe('other');
+  });
+
   it('filters rows with boolean call expressions and rejects incompatible comparators', async () => {
     const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
@@ -978,6 +1048,7 @@ function call(
     | 'first'
     | 'last'
     | 'coalesce'
+    | 'switch'
     | 'concat'
     | 'equals'
     | 'contains'

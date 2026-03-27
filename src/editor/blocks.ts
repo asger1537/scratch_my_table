@@ -29,6 +29,10 @@ type LogicalGroupBlock = Blockly.Block & {
   itemCount_?: number;
   updateShape_?: () => void;
 };
+type SwitchGroupBlock = Blockly.Block & {
+  itemCount_?: number;
+  updateShape_?: () => void;
+};
 type PredicateFunctionBlock = Blockly.Block & {
   updateShape_?: (operator?: PredicateFunctionOperator) => void;
 };
@@ -87,6 +91,7 @@ export const BLOCK_TYPES = {
   firstFunction: 'first_function',
   lastFunction: 'last_function',
   coalesceFunction: 'coalesce_function',
+  switchFunction: 'switch_function',
   concatFunction: 'concat_function',
   comparisonFunction: 'comparison_function',
   predicateFunction: 'predicate_function',
@@ -352,6 +357,26 @@ export function registerWorkflowBlocks() {
       this.updateShape_?.();
     },
   };
+  Blockly.Blocks[BLOCK_TYPES.switchFunction] = {
+    init(this: SwitchGroupBlock) {
+      this.itemCount_ = 1;
+      this.appendValueInput('TARGET').setCheck('EXPRESSION').appendField('switch');
+      this.setOutput(true, 'EXPRESSION');
+      this.setInputsInline(false);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = () => updateSwitchGroupShape(this);
+      this.updateShape_();
+    },
+    saveExtraState(this: SwitchGroupBlock) {
+      return {
+        itemCount: Math.max(1, this.itemCount_ ?? 1),
+      };
+    },
+    loadExtraState(this: SwitchGroupBlock, state: { itemCount?: number }) {
+      this.itemCount_ = Math.max(1, Number(state.itemCount) || 1);
+      this.updateShape_?.();
+    },
+  };
   createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
 }
 
@@ -421,6 +446,7 @@ export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInf
           { kind: 'block', type: BLOCK_TYPES.comparisonFunction },
           { kind: 'block', type: BLOCK_TYPES.predicateFunction },
           { kind: 'block', type: BLOCK_TYPES.logicalBinaryFunction },
+          { kind: 'block', type: BLOCK_TYPES.switchFunction },
           { kind: 'block', type: BLOCK_TYPES.notFunction },
         ],
       },
@@ -667,6 +693,100 @@ function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
   for (let index = 0; index < reconnectCount; index += 1) {
     connections[index]?.reconnect(block, `ITEM${index}`);
   }
+
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
+}
+
+function updateSwitchGroupShape(block: SwitchGroupBlock) {
+  if (block.getInput('HEADER')) {
+    block.removeInput('HEADER');
+  }
+
+  let index = 0;
+
+  while (block.getInput(`MATCH${index}`)) {
+    block.removeInput(`MATCH${index}`);
+    block.removeInput(`RETURN${index}`);
+    index += 1;
+  }
+
+  if (block.getInput('DEFAULT')) {
+    block.removeInput('DEFAULT');
+  }
+
+  block.appendDummyInput('HEADER')
+    .appendField('cases')
+    .appendField(createLogicalGroupActionField('add', 'Add case', (field) => {
+      const sourceBlock = field.getSourceBlock() as SwitchGroupBlock | null;
+
+      if (!sourceBlock) {
+        return;
+      }
+
+      resizeSwitchGroup(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 1) + 1);
+    }), 'ADD_ITEM')
+    .appendField(createLogicalGroupActionField('remove', 'Remove case', (field) => {
+      const sourceBlock = field.getSourceBlock() as SwitchGroupBlock | null;
+
+      if (!sourceBlock) {
+        return;
+      }
+
+      resizeSwitchGroup(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 1) - 1);
+    }), 'REMOVE_ITEM');
+
+  const itemCount = Math.max(1, block.itemCount_ ?? 1);
+
+  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
+    block.appendValueInput(`MATCH${itemIndex}`)
+      .setCheck('EXPRESSION')
+      .appendField(`case ${itemIndex + 1}`);
+    block.appendValueInput(`RETURN${itemIndex}`)
+      .setCheck('EXPRESSION')
+      .appendField('then');
+  }
+
+  block.appendValueInput('DEFAULT')
+    .setCheck('EXPRESSION')
+    .appendField('default');
+}
+
+function resizeSwitchGroup(block: SwitchGroupBlock, itemCount: number) {
+  const nextCount = Math.max(1, itemCount);
+  const currentCount = Math.max(1, block.itemCount_ ?? 1);
+
+  if (nextCount === currentCount) {
+    return;
+  }
+
+  const matchConnections = Array.from({ length: currentCount }, (_, index) => (
+    block.getInput(`MATCH${index}`)?.connection?.targetConnection ?? null
+  ));
+  const returnConnections = Array.from({ length: currentCount }, (_, index) => (
+    block.getInput(`RETURN${index}`)?.connection?.targetConnection ?? null
+  ));
+  const defaultConnection = block.getInput('DEFAULT')?.connection?.targetConnection ?? null;
+
+  for (let index = nextCount; index < currentCount; index += 1) {
+    matchConnections[index]?.disconnect();
+    returnConnections[index]?.disconnect();
+  }
+
+  defaultConnection?.disconnect();
+
+  block.itemCount_ = nextCount;
+  block.updateShape_?.();
+
+  const reconnectCount = Math.min(nextCount, matchConnections.length);
+
+  for (let index = 0; index < reconnectCount; index += 1) {
+    matchConnections[index]?.reconnect(block, `MATCH${index}`);
+    returnConnections[index]?.reconnect(block, `RETURN${index}`);
+  }
+
+  defaultConnection?.reconnect(block, 'DEFAULT');
 
   if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
     (block as Blockly.BlockSvg).render();

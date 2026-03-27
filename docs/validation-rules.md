@@ -100,6 +100,7 @@ Function rules:
 - `replace` and `replaceRegex` require 3 arguments: string input, string pattern, string replacement
 - `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, and `lessThan` require exactly 2 arguments
 - `and`, `or`, and `concat` require at least 2 arguments
+- `switch` requires at least 4 arguments and must have an even number of arguments
 - `split` returns an intermediate list value
 - final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values
 
@@ -114,6 +115,7 @@ Type rules:
 - `atIndex` requires a string or intermediate list as the first input, and a number as the second input
 - `first` and `last` accept a string or intermediate list
 - `coalesce` requires scalar inputs with compatible logical types
+- `switch` requires the `target` to be comparable to all `match` inputs. All `result` inputs and the `defaultResult` must resolve to compatible logical types
 - `concat` accepts scalar inputs and returns `string`
 - `isEmpty` requires a scalar input and returns `boolean`
 - `not` requires a boolean-like input and returns `boolean`

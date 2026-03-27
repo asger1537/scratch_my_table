@@ -162,6 +162,28 @@
             },
             "name": {
               "type": "string",
+              "const": "switch"
+            },
+            "args": {
+              "type": "array",
+              "minItems": 4,
+              "items": {
+                "$ref": "#/$defs/expression"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name", "args"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "call"
+            },
+            "name": {
+              "type": "string",
               "enum": ["split", "atIndex", "extractRegex", "coalesce", "equals", "contains", "startsWith", "endsWith", "matchesRegex", "greaterThan", "lessThan"]
             },
             "args": {

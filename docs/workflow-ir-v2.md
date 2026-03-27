@@ -91,8 +91,8 @@ Rules:
 
 Built-in call names:
 
-- string / text: `trim`, `lower`, `upper`, `collapseWhitespace`, `substring`, `replace`
-- list / utility: `split`, `first`, `last`, `coalesce`, `concat`
+- string / text: `trim`, `lower`, `upper`, `collapseWhitespace`, `substring`, `replace`, `extractRegex`, `replaceRegex`
+- list / utility: `split`, `atIndex`, `first`, `last`, `coalesce`, `switch`, `concat`
 - logic: `isEmpty`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `and`, `or`, `not`
 
 Examples:

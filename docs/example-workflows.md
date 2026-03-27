@@ -112,3 +112,8 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 
 - File: `19-normalize-phone-digits-regex.workflow.json`
 - Uses `replaceRegex(customer_id, "[^0-9]", "")` to keep digits only.
+
+## 20. Map Status Labels With Switch
+
+- File: `20-map-status-label-with-switch.workflow.json`
+- Uses `switch(lower(trim(status)), ...)` to map status values to readable labels with a default fallback.

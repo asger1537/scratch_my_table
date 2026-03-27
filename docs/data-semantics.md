@@ -57,6 +57,7 @@ Built-in function semantics:
 - `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
 - `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
+- `switch(target, match1, result1, ..., defaultResult)`: evaluates `target` and returns the `result` of the first matching `match` value. If no match is found, returns `defaultResult`. Requires an even number of arguments (at least 4).
 - `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
 - `isEmpty(x)`: returns `true` only when `x` is `null` or `""`
 - `equals(a, b)`: exact scalar equality

@@ -42,6 +42,7 @@ export type WorkflowExpressionFunctionName =
   | 'first'
   | 'last'
   | 'coalesce'
+  | 'switch'
   | 'concat'
   | 'equals'
   | 'contains'

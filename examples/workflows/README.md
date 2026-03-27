@@ -40,3 +40,4 @@ Files:
 - `17-extract-middle-name.workflow.json`
 - `18-extract-order-code-regex.workflow.json`
 - `19-normalize-phone-digits-regex.workflow.json`
+- `20-map-status-label-with-switch.workflow.json`
