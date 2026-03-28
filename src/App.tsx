@@ -23,6 +23,7 @@ const PREVIEW_ROW_LIMIT = 50;
 const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
 
 export default function App() {
+  const uploadDragDepthRef = useRef(0);
   const workflowImportInputRef = useRef<HTMLInputElement | null>(null);
   const workflowImportDragDepthRef = useRef(0);
   const validationDebounceTimerRef = useRef<number | null>(null);
@@ -31,6 +32,7 @@ export default function App() {
   const [workbook, setWorkbookState] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isUploadDragActive, setIsUploadDragActive] = useState(false);
   const [authoredWorkflow, setAuthoredWorkflow] = useState<Workflow | null>(null);
   const [editorIssues, setEditorIssues] = useState<EditorIssue[]>([]);
   const [validationIssues, setValidationIssues] = useState<WorkflowValidationIssue[]>([]);
@@ -128,6 +130,11 @@ export default function App() {
       return;
     }
 
+    await importWorkbookFile(file);
+    event.target.value = '';
+  }
+
+  async function importWorkbookFile(file: File) {
     setLoading(true);
     setError(null);
 
@@ -150,8 +157,42 @@ export default function App() {
       setError(caughtError instanceof Error ? caughtError.message : 'Import failed.');
     } finally {
       setLoading(false);
-      event.target.value = '';
     }
+  }
+
+  function handleUploadDragEnter(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    uploadDragDepthRef.current += 1;
+    setIsUploadDragActive(true);
+  }
+
+  function handleUploadDragOver(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setIsUploadDragActive(true);
+  }
+
+  function handleUploadDragLeave(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    uploadDragDepthRef.current = Math.max(0, uploadDragDepthRef.current - 1);
+
+    if (uploadDragDepthRef.current === 0) {
+      setIsUploadDragActive(false);
+    }
+  }
+
+  async function handleUploadDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    uploadDragDepthRef.current = 0;
+    setIsUploadDragActive(false);
+
+    const file = event.dataTransfer.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    await importWorkbookFile(file);
   }
 
   function handleActiveTableChange(event: ChangeEvent<HTMLSelectElement>) {
@@ -323,9 +364,18 @@ export default function App() {
       </section>
 
       <section className="toolbar">
-        <label className="summary-card summary-card--upload">
+        <label
+          className={`summary-card summary-card--upload${isUploadDragActive ? ' summary-card--upload-drag-active' : ''}`}
+          onDragEnter={handleUploadDragEnter}
+          onDragLeave={handleUploadDragLeave}
+          onDragOver={handleUploadDragOver}
+          onDrop={(event) => {
+            void handleUploadDrop(event);
+          }}
+        >
           <p className="summary-label">Upload</p>
           <strong>Upload CSV or XLSX</strong>
+          <span className="summary-card__hint">Drop a file anywhere in this card, or click to choose one.</span>
           <input accept=".csv,.xlsx" onChange={handleFileChange} type="file" />
         </label>
         {workbook ? (

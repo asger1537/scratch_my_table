@@ -120,10 +120,23 @@ code {
   display: grid;
   gap: 0.75rem;
   align-content: start;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
 .summary-card--upload input {
   width: 100%;
+}
+
+.summary-card--upload-drag-active {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #fff2e8 0%, #fffdf9 100%);
+  box-shadow: 0 0 0 3px rgba(176, 74, 31, 0.12), var(--shadow);
+}
+
+.summary-card__hint {
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .summary-label {
