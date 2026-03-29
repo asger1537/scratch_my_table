@@ -4,10 +4,13 @@ export { validateWorkflowStructure } from './structural';
 export type {
   Workflow,
   WorkflowExecutionResult,
+  WorkflowCellPatch,
+  WorkflowRuleCase,
   WorkflowExecutionWarning,
   WorkflowExpression,
   WorkflowSemanticStepResult,
   WorkflowSemanticValidationResult,
+  WorkflowStepExecutionSummary,
   WorkflowStep,
   WorkflowStructuralValidationResult,
   WorkflowValidationIssue,

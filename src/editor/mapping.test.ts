@@ -8,6 +8,7 @@ import { getActiveTable, type Table } from '../domain/model';
 import { executeWorkflow, type Workflow, type WorkflowExpression } from '../workflow';
 
 import { type AuthoringWorkflow, authoringWorkflowToWorkflow, workflowToAuthoringWorkflow } from './authoring';
+import { wrapCommentDisplayLines } from './FieldCommentInput';
 import { formatColumnSelectionSummary, getSelectableColumnTypeGroups, getSelectableColumns, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
 import { BLOCK_TYPES } from './blocks';
 import { runWorkspaceWorkflow, validateWorkspaceWorkflow } from './integration';
@@ -26,7 +27,7 @@ import {
 } from './index';
 
 describe('block-based workflow authoring', () => {
-  it('loads a simple scoped transform as one compact step block with nested function blocks', async () => {
+  it('loads a simple scoped rule as one compact step block with nested function blocks', async () => {
     const table = await readFixtureTable('messy-customers.csv');
     const workflow: Workflow = {
       version: 2,
@@ -36,9 +37,11 @@ describe('block-based workflow authoring', () => {
       steps: [
         {
           id: 'step_normalize_email',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_email'],
-          expression: call('lower', call('trim', value())),
+          defaultPatch: {
+            value: call('lower', call('trim', value())),
+          },
         },
       ],
     };
@@ -47,18 +50,18 @@ describe('block-based workflow authoring', () => {
     const [topBlock] = workspace.getTopBlocks(false);
     const authoredStep = authored.workflow?.steps[0];
 
-    if (!authoredStep || authoredStep.kind !== 'scopedTransform') {
-      throw new Error('Expected a scoped transform authoring step.');
+    if (!authoredStep || authoredStep.kind !== 'scopedRule') {
+      throw new Error('Expected a scoped rule authoring step.');
     }
 
     expect(workspace.getTopBlocks(false)).toHaveLength(1);
     expect(workspace.getAllBlocks(false).map((block) => block.type).sort()).toEqual([
       BLOCK_TYPES.currentValueExpression,
       BLOCK_TYPES.lowerFunction,
-      BLOCK_TYPES.scopedTransformStep,
+      BLOCK_TYPES.scopedRuleCasesStep,
       BLOCK_TYPES.trimFunction,
     ]);
-    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedTransformStep);
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
     expect(getWorkspaceMetadata(workspace)).toEqual({
       workflowId: workflow.workflowId,
       name: workflow.name,
@@ -66,25 +69,43 @@ describe('block-based workflow authoring', () => {
     });
     expect(authored.issues).toEqual([]);
     expect(authoredStep.columnIds).toEqual(['col_email']);
-    expect(authoredStep.expression).toEqual(call('lower', call('trim', value())));
+    expect(authoredStep.mode).toBe('single');
+    expect(authoredStep.singlePatch).toEqual({
+      valueEnabled: true,
+      value: call('lower', call('trim', value())),
+      formatEnabled: false,
+      fillColor: '#fff2cc',
+    });
   });
 
-  it('compiles multi-select scoped transforms with row conditions directly to canonical v2 IR', () => {
+  it('compiles multi-select scoped rules with row conditions directly to canonical v2 IR', () => {
     const authoringWorkflow: AuthoringWorkflow = {
       metadata: {
-        workflowId: 'wf_scoped_transform',
-        name: 'Scoped transform',
+        workflowId: 'wf_scoped_rule',
+        name: 'Scoped rule',
       },
       steps: [
         {
-          kind: 'scopedTransform',
+          kind: 'scopedRule',
           columnIds: ['col_first_name', 'col_last_name'],
           rowCondition: call(
             'and',
             call('startsWith', column('col_first_name'), literal('A')),
             call('startsWith', column('col_last_name'), literal('A')),
           ),
-          expression: call('substring', value(), literal(0), literal(3)),
+          mode: 'single',
+          singlePatch: {
+            valueEnabled: true,
+            value: call('substring', value(), literal(0), literal(3)),
+            formatEnabled: false,
+            fillColor: '#fff2cc',
+          },
+          cases: [],
+          defaultPatch: {
+            valueEnabled: false,
+            formatEnabled: false,
+            fillColor: '#fff2cc',
+          },
         },
       ],
     };
@@ -94,23 +115,132 @@ describe('block-based workflow authoring', () => {
     expect(compiled.issues).toEqual([]);
     expect(compiled.workflow).toEqual({
       version: 2,
-      workflowId: 'wf_scoped_transform',
-      name: 'Scoped transform',
+      workflowId: 'wf_scoped_rule',
+      name: 'Scoped rule',
       description: undefined,
       steps: [
         {
-          id: 'step_scoped_transform_1',
-          type: 'scopedTransform',
+          id: 'step_scoped_rule_1',
+          type: 'scopedRule',
           columnIds: ['col_first_name', 'col_last_name'],
           rowCondition: call(
             'and',
             call('startsWith', column('col_first_name'), literal('A')),
             call('startsWith', column('col_last_name'), literal('A')),
           ),
-          expression: call('substring', value(), literal(0), literal(3)),
+          defaultPatch: {
+            value: call('substring', value(), literal(0), literal(3)),
+          },
         },
       ],
     });
+  });
+
+  it('roundtrips comment steps through Blockly without semantic loss', async () => {
+    const table = await readFixtureTable('messy-customers.csv');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_comment_roundtrip',
+      name: 'Comment roundtrip',
+      steps: [
+        {
+          id: 'step_note_email_cleanup',
+          type: 'comment',
+          text: 'Normalize email values before any downstream filtering.',
+        },
+        {
+          id: 'step_normalize_email',
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          defaultPatch: {
+            value: call('lower', call('trim', value())),
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromTable(table, workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(workspace.getAllBlocks(false).some((block) => block.type === BLOCK_TYPES.commentStep)).toBe(true);
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('roundtrips format-only scoped rules through Blockly without semantic loss', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_color_status',
+      name: 'Color status',
+      steps: [
+        {
+          id: 'step_color_status',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          rowCondition: call('equals', column('col_vip'), literal(true)),
+          defaultPatch: {
+            format: {
+              fillColor: '#fff2cc',
+            },
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_vip'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+    const [topBlock] = workspace.getTopBlocks(false);
+
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(topBlock?.getFieldValue('DEFAULT_COLOR')).toBe('#fff2cc');
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('roundtrips case-based scoped rules through the dedicated cases block', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_status_cases',
+      name: 'Status cases',
+      steps: [
+        {
+          id: 'step_status_cases',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          cases: [
+            {
+              when: call('isEmpty', call('trim', value())),
+              then: {
+                value: literal('unknown'),
+                format: {
+                  fillColor: '#fff2cc',
+                },
+              },
+            },
+          ],
+          defaultPatch: {
+            value: call('lower', call('trim', value())),
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_status'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+    const [topBlock] = workspace.getTopBlocks(false);
+
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('wraps long comment text into multiple display lines without truncating content', () => {
+    const lines = wrapCommentDisplayLines('Calculate a priority based on status and bonus income for this customer.', 18);
+
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join(' ')).toContain('Calculate a priority');
+    expect(lines.join(' ')).toContain('bonus income');
+    expect(lines.join(' ')).toContain('customer.');
   });
 
   it('roundtrips canonical workflows through the authoring model without semantic loss', () => {
@@ -121,9 +251,11 @@ describe('block-based workflow authoring', () => {
       steps: [
         {
           id: 'step_fill_status',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_status'],
-          expression: coalesce(value(), literal('unknown')),
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
         },
         {
           id: 'step_derive_display_name',
@@ -184,7 +316,7 @@ describe('block-based workflow authoring', () => {
     ]);
   });
 
-  it('roundtrips scoped transforms that mix value() and same-row column() references', () => {
+  it('roundtrips scoped rules that mix value() and same-row column() references', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_fill_email_from_customer_id',
@@ -192,9 +324,11 @@ describe('block-based workflow authoring', () => {
       steps: [
         {
           id: 'step_fill_email',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_email'],
-          expression: coalesce(value(), column('col_customer_id')),
+          defaultPatch: {
+            value: coalesce(value(), column('col_customer_id')),
+          },
         },
       ],
     };
@@ -608,9 +742,11 @@ describe('block-based workflow authoring', () => {
       steps: [
         {
           id: 'step_fill_status',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_status'],
-          expression: coalesce(value(), literal('unknown')),
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
         },
         {
           id: 'step_drop_missing_email',
@@ -665,7 +801,7 @@ describe('block-based workflow authoring', () => {
 
   it('surfaces invalid editor blocks clearly when required inputs are missing', () => {
     const workspace = createHeadlessWorkflowWorkspace();
-    const block = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
+    const block = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
 
     block.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
 
@@ -674,10 +810,10 @@ describe('block-based workflow authoring', () => {
     expect(result.workflow).toBeNull();
     expect(result.issues).toEqual([
       {
-        code: 'missingInput',
-        message: `Block '${BLOCK_TYPES.scopedTransformStep}' is missing required input 'EXPRESSION'.`,
+        code: 'missingRuleCases',
+        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
         blockId: block.id,
-        blockType: BLOCK_TYPES.scopedTransformStep,
+        blockType: BLOCK_TYPES.scopedRuleCasesStep,
       },
     ]);
   });
@@ -690,14 +826,14 @@ describe('block-based workflow authoring', () => {
     expect(parsed.issues).toEqual([]);
     expect(parsed.workflow).toEqual(workflow);
     expect(json).toContain('"version": 2');
-    expect(json).toContain('"type": "scopedTransform"');
+    expect(json).toContain('"type": "scopedRule"');
     expect(json).toContain('"name": "lower"');
     expect(json).not.toContain('sourceBlockId');
   });
 
   it('uses expression-based logic blocks instead of legacy condition blocks', () => {
     const workspace = createHeadlessWorkflowWorkspace();
-    const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedTransformStep);
+    const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
     const comparisonBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
     const predicateBlock = workspace.newBlock(BLOCK_TYPES.predicateFunction);
     const logicalBlock = workspace.newBlock(BLOCK_TYPES.logicalBinaryFunction);
@@ -745,9 +881,11 @@ describe('block-based workflow authoring', () => {
         },
         {
           id: 'step_fill_email_safe',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['email_safe'],
-          expression: coalesce(value(), literal('NA')),
+          defaultPatch: {
+            value: coalesce(value(), literal('NA')),
+          },
         },
       ],
     };
@@ -767,7 +905,7 @@ describe('block-based workflow authoring', () => {
 
     setEditorSchemaColumns(baseColumns, ['col_email', 'email_safe'], schemaByBlockId);
 
-    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedTransformStep);
+    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
     expect(getSchemaColumnOptions(transformBlock?.id)).toContainEqual(['Email (safe) [email_safe]', 'email_safe']);
     expect(getSelectableColumns(transformBlock?.id).map((entry) => entry.columnId)).toContain('email_safe');
     expect(transformBlock?.getField('COLUMN_IDS')?.getText()).toContain('Email (safe)');
@@ -836,16 +974,36 @@ function buildAllStepsWorkflow(): Workflow {
     description: 'Covers every current step type.',
     steps: [
       {
+        id: 'step_note_cleanup',
+        type: 'comment',
+        text: 'Normalize and highlight important fields before filtering.',
+      },
+      {
         id: 'step_fill_status',
-        type: 'scopedTransform',
+        type: 'scopedRule',
         columnIds: ['col_status'],
-        expression: coalesce(value(), literal('unknown')),
+        defaultPatch: {
+          value: coalesce(value(), literal('unknown')),
+        },
+      },
+      {
+        id: 'step_highlight_vip_status',
+        type: 'scopedRule',
+        columnIds: ['col_status'],
+        rowCondition: call('equals', column('col_vip'), literal(true)),
+        defaultPatch: {
+          format: {
+            fillColor: '#fff2cc',
+          },
+        },
       },
       {
         id: 'step_normalize_text',
-        type: 'scopedTransform',
+        type: 'scopedRule',
         columnIds: ['col_email', 'col_city'],
-        expression: call('lower', call('collapseWhitespace', call('trim', value()))),
+        defaultPatch: {
+          value: call('lower', call('collapseWhitespace', call('trim', value()))),
+        },
       },
       {
         id: 'step_drop_columns',

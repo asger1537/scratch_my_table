@@ -48,7 +48,8 @@ Every step has:
 
 Step types:
 
-- `scopedTransform`
+- `comment`
+- `scopedRule`
 - `dropColumns`
 - `renameColumn`
 - `deriveColumn`
@@ -60,8 +61,9 @@ Step types:
 
 V1 capability mapping:
 
-- fill empty cells: `scopedTransform` with `coalesce(value, <literal>)`
-- trim / normalize text: `scopedTransform` with built-in string calls such as `lower(trim(value))`
+- fill empty cells: `scopedRule` with `defaultPatch.value = coalesce(value, <literal>)`
+- trim / normalize text: `scopedRule` with `defaultPatch.value = lower(trim(value))`
+- color cells: `scopedRule` with `defaultPatch.format.fillColor`
 - drop columns: `dropColumns`
 - rename columns: `renameColumn`
 - create a derived column: `deriveColumn`
@@ -84,7 +86,7 @@ Expression kinds:
 
 Rules:
 
-- `value` means the current selected cell and is valid only inside `scopedTransform.expression`.
+- `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`.
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
@@ -193,49 +195,90 @@ Optional fields:
 
 ## Step Definitions
 
-### `scopedTransform`
+### `comment`
 
-Applies one expression to one or more selected columns, optionally only on rows matching a boolean expression.
+Stores a non-executing workflow note.
+
+Fields:
+
+- `text`
+
+Rules:
+
+- comment steps persist in canonical workflow JSON
+- comment steps do not affect validation, schema, or execution
+- comment steps exist only to document intent inside a workflow
+
+Example:
+
+```json
+{
+  "id": "step_comment_status_cleanup",
+  "type": "comment",
+  "text": "Normalize status values before filtering inactive customers."
+}
+```
+
+### `scopedRule`
+
+Applies ordered cell patches to one or more selected columns, optionally only on rows matching a boolean expression.
 
 Fields:
 
 - `columnIds`
 - `rowCondition` optional
-- `expression`
+- `cases` optional
+- `defaultPatch` optional
 
 Rules:
 
-- the expression is evaluated once per selected cell
-- `value` means the current selected cell value
-- `column` may read another column from the current row
+- `rowCondition` uses the shared expression AST and must resolve to a boolean value
 - if `rowCondition` is omitted, all rows are eligible
-- `rowCondition` must resolve to a boolean value
-- whitespace-sensitive logic is expressed explicitly with functions such as `trim(...)`
+- `cases[*].when` uses the shared expression AST and must resolve to a boolean value
+- cases are checked top to bottom and first match wins
+- `defaultPatch`, if present, applies when no case matches
+- patches may contain:
+  - `value` optional
+  - `format.fillColor` optional
+- the step may change value only, format only, or both
+- runtime preview and XLSX export use the resulting fill color state
+- CSV export ignores color formatting
 
 Example:
 
 ```json
 {
   "version": 2,
-  "workflowId": "wf_fill_status",
-  "name": "Fill missing status",
+  "workflowId": "wf_fill_and_highlight_status",
+  "name": "Fill and highlight status",
   "steps": [
     {
       "id": "step_fill_status",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": ["col_status"],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "value"
-          },
-          {
-            "kind": "literal",
-            "value": "unknown"
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "coalesce",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            },
+            {
+              "kind": "literal",
+              "value": "unknown"
+            }
+          ]
+        },
+        "format": {
+          "fillColor": "#fff2cc"
+        }
       }
     }
   ]

@@ -1,14 +1,19 @@
 import {
   type CellValue,
+  type CellStyle,
   type Column,
   type LogicalType,
   type Table,
   type TableRow,
+  isValidFillColor,
+  normalizeFillColor,
   isMissingValue,
 } from '../domain/model';
 import { inferLogicalType, isIsoDate, isIsoDateTime, normalizeWhitespace } from '../domain/normalize';
 
 import type {
+  WorkflowCellFormatPatch,
+  WorkflowCellPatch,
   Workflow,
   WorkflowCallExpression,
   WorkflowCombineColumnsStep,
@@ -16,9 +21,10 @@ import type {
   WorkflowExecutionWarning,
   WorkflowExpression,
   WorkflowExpressionValidationResult,
-  WorkflowScopedTransformStep,
+  WorkflowRuleCase,
   WorkflowSemanticStepResult,
   WorkflowSemanticValidationResult,
+  WorkflowStepExecutionSummary,
   WorkflowStep,
   WorkflowValidationIssue,
 } from './types';
@@ -28,6 +34,7 @@ interface WorkflowStepApplyResult {
   createdColumnIds: string[];
   warnings: WorkflowExecutionWarning[];
   sortApplied: boolean;
+  summary: WorkflowStepExecutionSummary;
 }
 
 interface WorkflowChangeSummary {
@@ -39,13 +46,12 @@ interface WorkflowChangeSummary {
 }
 
 interface ExpressionContext {
-  scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
   runTimestamp: string;
+  allowValueReference: boolean;
   valueLogicalType?: LogicalType;
 }
 
 interface ExpressionExecutionContext {
-  scope: 'scopedTransform' | 'deriveColumn' | 'predicate';
   runTimestamp: string;
   row: TableRow;
   currentValue: CellValue;
@@ -100,12 +106,14 @@ export function executeValidatedWorkflow(workflow: Workflow, table: Table) {
   const runTimestamp = new Date().toISOString();
   let workingTable = cloneTable(table);
   const executionWarnings: WorkflowExecutionWarning[] = [];
+  const stepSummaries: WorkflowStepExecutionSummary[] = [];
   let sortApplied = false;
 
   workflow.steps.forEach((step) => {
     const stepResult = applyWorkflowStepUnchecked(workingTable, step, runTimestamp);
     workingTable = stepResult.table;
     executionWarnings.push(...stepResult.warnings);
+    stepSummaries.push(stepResult.summary);
     sortApplied = sortApplied || stepResult.sortApplied;
   });
 
@@ -114,6 +122,7 @@ export function executeValidatedWorkflow(workflow: Workflow, table: Table) {
     executionWarnings,
     sortApplied,
     changeSummary: summarizeWorkflowChanges(table, workingTable),
+    stepSummaries,
   };
 }
 
@@ -124,6 +133,7 @@ export function cloneTable(table: Table): Table {
     rowsById[rowId] = {
       rowId,
       cellsByColumnId: { ...row.cellsByColumnId },
+      stylesByColumnId: cloneStylesByColumnId(row.stylesByColumnId),
     };
   });
 
@@ -167,8 +177,14 @@ export function summarizeWorkflowChanges(originalTable: Table, transformedTable:
       const transformedValue = transformedColumnIdSet.has(columnId)
         ? (transformedRow.cellsByColumnId[columnId] ?? null)
         : MISSING_CELL;
+      const originalStyle = originalColumnIdSet.has(columnId)
+        ? getComparableCellStyle(originalRow.stylesByColumnId[columnId])
+        : MISSING_CELL;
+      const transformedStyle = transformedColumnIdSet.has(columnId)
+        ? getComparableCellStyle(transformedRow.stylesByColumnId[columnId])
+        : MISSING_CELL;
 
-      if (!Object.is(originalValue, transformedValue)) {
+      if (!Object.is(originalValue, transformedValue) || !Object.is(originalStyle, transformedStyle)) {
         changedCellCount += 1;
         rowChanged = true;
       }
@@ -193,8 +209,10 @@ function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: numbe
   const basePath = `steps[${stepIndex}]`;
 
   switch (step.type) {
-    case 'scopedTransform':
-      return validateScopedTransformStep(step, table, basePath, runTimestamp);
+    case 'comment':
+      return [];
+    case 'scopedRule':
+      return validateScopedRuleStep(step, table, basePath, runTimestamp);
     case 'dropColumns':
       return validateDropColumnsStep(step, table, basePath);
     case 'renameColumn':
@@ -216,7 +234,12 @@ function validateWorkflowStep(step: WorkflowStep, table: Table, stepIndex: numbe
   }
 }
 
-function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: Table, basePath: string, runTimestamp: string) {
+function validateScopedRuleStep(
+  step: Extract<WorkflowStep, { type: 'scopedRule' }>,
+  table: Table,
+  basePath: string,
+  runTimestamp: string,
+) {
   const issues: WorkflowValidationIssue[] = [];
   const columns = resolveColumnIds(step.columnIds, table, `${basePath}.columnIds`, step.id, issues);
 
@@ -227,44 +250,63 @@ function validateScopedTransformStep(step: WorkflowScopedTransformStep, table: T
   validateUniqueReferences(step.columnIds, `${basePath}.columnIds`, step.id, issues);
 
   if (step.rowCondition) {
-    issues.push(...validateBooleanExpression(step.rowCondition, table, `${basePath}.rowCondition`, step.id, runTimestamp));
+    issues.push(...validateBooleanExpressionWithContext(step.rowCondition, table, `${basePath}.rowCondition`, step.id, {
+      runTimestamp,
+      allowValueReference: false,
+    }));
   }
 
   columns.forEach((column, columnIndex) => {
-    const expressionResult = validateExpression(
-      step.expression,
-      table,
-      `${basePath}.expression`,
-      step.id,
-      {
-        scope: 'scopedTransform',
+    const projectedTypes: LogicalType[] = [];
+
+    if (scopedRuleRetainsOriginalValueType(step)) {
+      projectedTypes.push(column.logicalType);
+    }
+
+    (step.cases ?? []).forEach((ruleCase, caseIndex) => {
+      issues.push(...validateBooleanExpressionWithContext(ruleCase.when, table, `${basePath}.cases[${caseIndex}].when`, step.id, {
         runTimestamp,
+        allowValueReference: true,
         valueLogicalType: column.logicalType,
-      },
-    );
+      }));
 
-    issues.push(
-      ...expressionResult.issues.map((issue) =>
-        issue.code === 'incompatibleValueReference'
-          ? {
-              ...issue,
-              path: `${basePath}.columnIds[${columnIndex}]`,
-              details: {
-                ...issue.details,
-                columnId: column.columnId,
-              },
-            }
-          : issue,
-      ),
-    );
+      const patchResult = validateCellPatch(ruleCase.then, table, `${basePath}.cases[${caseIndex}].then`, step.id, {
+        runTimestamp,
+        allowValueReference: true,
+        valueLogicalType: column.logicalType,
+      });
 
-    if (expressionResult.valueKind === 'list') {
+      issues.push(...patchResult.issues);
+
+      if (patchResult.valueLogicalType) {
+        projectedTypes.push(patchResult.valueLogicalType);
+      }
+    });
+
+    if (step.defaultPatch) {
+      const patchResult = validateCellPatch(step.defaultPatch, table, `${basePath}.defaultPatch`, step.id, {
+        runTimestamp,
+        allowValueReference: true,
+        valueLogicalType: column.logicalType,
+      });
+
+      issues.push(...patchResult.issues);
+
+      if (patchResult.valueLogicalType) {
+        projectedTypes.push(patchResult.valueLogicalType);
+      }
+    }
+
+    const mergeResult = mergeLogicalTypes(projectedTypes);
+
+    if (!mergeResult.valid) {
       issues.push(
         makeIssue(
-          'invalidExpression',
-          `Scoped transform expression in step '${step.id}' must resolve to a scalar cell value.`,
-          `${basePath}.expression`,
+          'incompatibleType',
+          `Scoped rule '${step.id}' must not mix incompatible value result types for targeted column '${column.columnId}'.`,
+          `${basePath}.columnIds[${columnIndex}]`,
           step.id,
+          { columnId: column.columnId, logicalTypes: mergeResult.logicalTypes },
         ),
       );
     }
@@ -340,8 +382,8 @@ function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveCol
   validateNewColumn(table, step.newColumn.columnId, step.newColumn.displayName, `${basePath}.newColumn`, step.id, issues);
 
   const expressionResult = validateExpression(step.expression, table, `${basePath}.expression`, step.id, {
-    scope: 'deriveColumn',
     runTimestamp,
+    allowValueReference: false,
   });
   issues.push(...expressionResult.issues);
 
@@ -360,7 +402,10 @@ function validateDeriveColumnStep(step: Extract<WorkflowStep, { type: 'deriveCol
 }
 
 function validateFilterRowsStep(step: Extract<WorkflowStep, { type: 'filterRows' }>, table: Table, basePath: string, runTimestamp: string) {
-  return validateBooleanExpression(step.condition, table, `${basePath}.condition`, step.id, runTimestamp);
+  return validateBooleanExpressionWithContext(step.condition, table, `${basePath}.condition`, step.id, {
+    runTimestamp,
+    allowValueReference: false,
+  });
 }
 
 function validateSplitColumnStep(step: Extract<WorkflowStep, { type: 'splitColumn' }>, table: Table, basePath: string) {
@@ -484,11 +529,11 @@ function validateExpression(
 ): WorkflowExpressionValidationResult {
   switch (expression.kind) {
     case 'value':
-      if (context.scope !== 'scopedTransform') {
+      if (!context.allowValueReference) {
         return {
           logicalType: 'unknown',
           valueKind: 'scalar',
-          issues: [makeIssue('invalidExpression', `Value references are only valid inside scoped transforms.`, path, stepId)],
+          issues: [makeIssue('invalidExpression', `Value references are only valid inside scoped rules.`, path, stepId)],
         };
       }
 
@@ -532,9 +577,21 @@ function validateExpression(
 }
 
 function validateBooleanExpression(expression: WorkflowExpression, table: Table, path: string, stepId: string, runTimestamp: string) {
-  const result = validateExpression(expression, table, path, stepId, {
-    scope: 'predicate',
+  return validateBooleanExpressionWithContext(expression, table, path, stepId, {
     runTimestamp,
+    allowValueReference: false,
+  });
+}
+
+function validateBooleanExpressionWithContext(
+  expression: WorkflowExpression,
+  table: Table,
+  path: string,
+  stepId: string,
+  context: ExpressionContext,
+) {
+  const result = validateExpression(expression, table, path, stepId, {
+    ...context,
   });
   const issues = [...result.issues];
 
@@ -547,6 +604,80 @@ function validateBooleanExpression(expression: WorkflowExpression, table: Table,
   }
 
   return issues;
+}
+
+function validateCellPatch(
+  patch: WorkflowCellPatch,
+  table: Table,
+  path: string,
+  stepId: string,
+  context: ExpressionContext,
+) {
+  const issues: WorkflowValidationIssue[] = [];
+  let valueLogicalType: LogicalType | null = null;
+
+  if (!patch.value && !patch.format) {
+    issues.push(makeIssue('invalidExpression', `Patch in step '${stepId}' must define a value or format change.`, path, stepId));
+  }
+
+  if (patch.value) {
+    const valueResult = validateExpression(patch.value, table, `${path}.value`, stepId, context);
+
+    issues.push(...valueResult.issues);
+
+    if (valueResult.valueKind !== 'scalar') {
+      issues.push(makeIssue('invalidExpression', `Patch value in step '${stepId}' must resolve to a scalar cell value.`, `${path}.value`, stepId));
+    } else {
+      valueLogicalType = valueResult.logicalType;
+    }
+  }
+
+  if (patch.format) {
+    if (!patch.format.fillColor) {
+      issues.push(makeIssue('invalidExpression', `Format patch in step '${stepId}' must define at least one formatting property.`, `${path}.format`, stepId));
+    } else if (!isValidFillColor(patch.format.fillColor)) {
+      issues.push(makeIssue('invalidColor', `Step '${stepId}' must use a hex color like '#fff2cc'.`, `${path}.format.fillColor`, stepId));
+    }
+  }
+
+  return {
+    issues,
+    valueLogicalType,
+  };
+}
+
+function mergeLogicalTypes(logicalTypes: LogicalType[]) {
+  const concreteTypes = [...new Set(logicalTypes.filter((logicalType) => logicalType !== 'unknown'))];
+
+  if (concreteTypes.length === 1 && concreteTypes[0] === 'mixed') {
+    return {
+      valid: true,
+      logicalType: 'mixed' as const,
+      logicalTypes: concreteTypes,
+    };
+  }
+
+  if (concreteTypes.includes('mixed') || concreteTypes.length > 1) {
+    return {
+      valid: false,
+      logicalType: 'unknown' as const,
+      logicalTypes: concreteTypes,
+    };
+  }
+
+  return {
+    valid: true,
+    logicalType: (concreteTypes[0] ?? 'unknown') as LogicalType,
+    logicalTypes: concreteTypes,
+  };
+}
+
+function scopedRuleRetainsOriginalValueType(step: Extract<WorkflowStep, { type: 'scopedRule' }>) {
+  return Boolean(
+    step.rowCondition
+    || !step.defaultPatch?.value
+    || (step.cases ?? []).some((ruleCase) => !ruleCase.then.value),
+  );
 }
 
 function validateCallExpression(
@@ -1288,8 +1419,10 @@ function validateNewColumn(
 
 function projectValidatedWorkflowStep(table: Table, step: WorkflowStep, runTimestamp: string): Table {
   switch (step.type) {
-    case 'scopedTransform':
-      return projectScopedTransformSchema(table, step, runTimestamp);
+    case 'comment':
+      return table;
+    case 'scopedRule':
+      return projectScopedRuleSchema(table, step, runTimestamp);
     case 'dropColumns':
       return projectDropColumnsSchema(table, step);
     case 'renameColumn':
@@ -1309,7 +1442,11 @@ function projectValidatedWorkflowStep(table: Table, step: WorkflowStep, runTimes
   }
 }
 
-function projectScopedTransformSchema(table: Table, step: WorkflowScopedTransformStep, runTimestamp: string): Table {
+function projectScopedRuleSchema(
+  table: Table,
+  step: Extract<WorkflowStep, { type: 'scopedRule' }>,
+  runTimestamp: string,
+): Table {
   const projectedTypes = new Map<string, LogicalType>();
 
   step.columnIds.forEach((columnId) => {
@@ -1319,13 +1456,7 @@ function projectScopedTransformSchema(table: Table, step: WorkflowScopedTransfor
       return;
     }
 
-    const result = validateExpression(step.expression, table, '$projection.expression', step.id, {
-      scope: 'scopedTransform',
-      runTimestamp,
-      valueLogicalType: column.logicalType,
-    });
-
-    projectedTypes.set(columnId, result.valueKind === 'scalar' ? result.logicalType : 'unknown');
+    projectedTypes.set(columnId, getProjectedScopedRuleLogicalType(step, table, column.logicalType, runTimestamp));
   });
 
   return cloneTableWithSchema(table, {
@@ -1373,8 +1504,8 @@ function projectDeriveColumnSchema(
   runTimestamp: string,
 ): Table {
   const result = validateExpression(step.expression, table, '$projection.expression', step.id, {
-    scope: 'deriveColumn',
     runTimestamp,
+    allowValueReference: false,
   });
 
   const newColumn = buildCreatedColumn(step.newColumn.columnId, step.newColumn.displayName, table.schema.columns.length);
@@ -1409,8 +1540,16 @@ function projectCombineColumnsSchema(table: Table, step: WorkflowCombineColumnsS
 
 function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep, runTimestamp: string): WorkflowStepApplyResult {
   switch (step.type) {
-    case 'scopedTransform':
-      return applyScopedTransformStep(table, step, runTimestamp);
+    case 'comment':
+      return {
+        table,
+        createdColumnIds: [],
+        warnings: [],
+        sortApplied: false,
+        summary: createEmptyStepSummary(step.id, step.type),
+      };
+    case 'scopedRule':
+      return applyScopedRuleStep(table, step, runTimestamp);
     case 'dropColumns':
       return applyDropColumnsStep(table, step);
     case 'renameColumn':
@@ -1427,22 +1566,19 @@ function applyWorkflowStepUnchecked(table: Table, step: WorkflowStep, runTimesta
       return applyDeduplicateRowsStep(table, step);
     case 'sortRows':
       return applySortRowsStep(table, step);
-    default:
-      return {
-        table,
-        createdColumnIds: [],
-        warnings: [],
-        sortApplied: false,
-      };
   }
 }
 
-function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformStep, runTimestamp: string): WorkflowStepApplyResult {
+function applyScopedRuleStep(
+  table: Table,
+  step: Extract<WorkflowStep, { type: 'scopedRule' }>,
+  runTimestamp: string,
+): WorkflowStepApplyResult {
+  const summary = createEmptyStepSummary(step.id, step.type);
   const rowsById = mapRows(table, (row) => {
     if (
       step.rowCondition
       && !Boolean(evaluateExpression(step.rowCondition, {
-        scope: 'predicate',
         runTimestamp,
         row,
         currentValue: null,
@@ -1451,26 +1587,65 @@ function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformSte
       return {
         rowId: row.rowId,
         cellsByColumnId: { ...row.cellsByColumnId },
+        stylesByColumnId: cloneStylesByColumnId(row.stylesByColumnId),
       };
     }
 
     const cellsByColumnId = { ...row.cellsByColumnId };
+    const stylesByColumnId = cloneStylesByColumnId(row.stylesByColumnId);
 
     step.columnIds.forEach((columnId) => {
-      const currentValue = cellsByColumnId[columnId] ?? null;
-      const nextValue = toCellValue(evaluateExpression(step.expression, {
-        scope: 'scopedTransform',
-        runTimestamp,
-        row,
-        currentValue,
-      }));
+      const currentValue = row.cellsByColumnId[columnId] ?? null;
+      const patch = selectScopedRulePatch(step, row, currentValue, runTimestamp);
 
-      cellsByColumnId[columnId] = nextValue;
+      if (!patch) {
+        return;
+      }
+
+      summary.matchedCellCount += 1;
+      let valueChanged = false;
+      let formatChanged = false;
+
+      if (patch.value) {
+        const nextValue = toCellValue(evaluateExpression(patch.value, {
+          runTimestamp,
+          row,
+          currentValue,
+        }));
+
+        if (!Object.is(currentValue, nextValue)) {
+          valueChanged = true;
+          summary.valueChangedCellCount += 1;
+        }
+
+        cellsByColumnId[columnId] = nextValue;
+      }
+
+      if (patch.format?.fillColor) {
+        const previousStyle = getComparableCellStyle(stylesByColumnId[columnId]);
+        const nextStyle = {
+          ...stylesByColumnId[columnId],
+          fillColor: normalizeFillColor(patch.format.fillColor),
+        };
+        const nextComparableStyle = getComparableCellStyle(nextStyle);
+
+        stylesByColumnId[columnId] = nextStyle;
+
+        if (!Object.is(previousStyle, nextComparableStyle)) {
+          formatChanged = true;
+          summary.formatChangedCellCount += 1;
+        }
+      }
+
+      if (valueChanged || formatChanged) {
+        summary.changedCellCount += 1;
+      }
     });
 
     return {
       rowId: row.rowId,
       cellsByColumnId,
+      stylesByColumnId,
     };
   });
 
@@ -1482,6 +1657,7 @@ function applyScopedTransformStep(table: Table, step: WorkflowScopedTransformSte
     createdColumnIds: [],
     warnings: [],
     sortApplied: false,
+    summary,
   };
 }
 
@@ -1498,6 +1674,9 @@ function applyDropColumnsStep(table: Table, step: Extract<WorkflowStep, { type: 
     cellsByColumnId: Object.fromEntries(
       Object.entries(row.cellsByColumnId).filter(([columnId]) => !removedColumnIds.has(columnId)),
     ),
+    stylesByColumnId: Object.fromEntries(
+      Object.entries(row.stylesByColumnId).filter(([columnId]) => !removedColumnIds.has(columnId)),
+    ),
   }));
 
   return {
@@ -1511,6 +1690,7 @@ function applyDropColumnsStep(table: Table, step: Extract<WorkflowStep, { type: 
     createdColumnIds: [],
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1534,6 +1714,7 @@ function applyRenameColumnStep(table: Table, step: Extract<WorkflowStep, { type:
     createdColumnIds: [],
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1544,12 +1725,12 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
     cellsByColumnId: {
       ...row.cellsByColumnId,
       [newColumn.columnId]: toCellValue(evaluateExpression(step.expression, {
-        scope: 'deriveColumn',
         runTimestamp,
         row,
         currentValue: null,
       })),
     },
+    stylesByColumnId: cloneStylesByColumnId(row.stylesByColumnId),
   }));
 
   return {
@@ -1563,6 +1744,7 @@ function applyDeriveColumnStep(table: Table, step: Extract<WorkflowStep, { type:
     createdColumnIds: [newColumn.columnId],
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1570,7 +1752,6 @@ function applyFilterRowsStep(table: Table, step: Extract<WorkflowStep, { type: '
   const keptRowIds = table.rowOrder.filter((rowId) => {
     const row = table.rowsById[rowId];
     const matches = Boolean(evaluateExpression(step.condition, {
-      scope: 'predicate',
       runTimestamp,
       row,
       currentValue: null,
@@ -1588,6 +1769,7 @@ function applyFilterRowsStep(table: Table, step: Extract<WorkflowStep, { type: '
     createdColumnIds: [],
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1619,6 +1801,7 @@ function applySplitColumnStep(table: Table, step: Extract<WorkflowStep, { type: 
     return {
       rowId: row.rowId,
       cellsByColumnId: nextCells,
+      stylesByColumnId: cloneStylesByColumnId(row.stylesByColumnId),
     };
   });
 
@@ -1633,6 +1816,7 @@ function applySplitColumnStep(table: Table, step: Extract<WorkflowStep, { type: 
     createdColumnIds: newColumns.map((column) => column.columnId),
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1649,6 +1833,7 @@ function applyCombineColumnsStep(table: Table, step: WorkflowCombineColumnsStep)
         ...row.cellsByColumnId,
         [newColumn.columnId]: values.map((value) => String(value)).join(step.separator),
       },
+      stylesByColumnId: cloneStylesByColumnId(row.stylesByColumnId),
     };
   });
 
@@ -1663,6 +1848,7 @@ function applyCombineColumnsStep(table: Table, step: WorkflowCombineColumnsStep)
     createdColumnIds: [newColumn.columnId],
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1691,6 +1877,7 @@ function applyDeduplicateRowsStep(table: Table, step: WorkflowDeduplicateRowsSte
     createdColumnIds: [],
     warnings: [],
     sortApplied: false,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -1732,6 +1919,7 @@ function applySortRowsStep(table: Table, step: Extract<WorkflowStep, { type: 'so
     createdColumnIds: [],
     warnings: [],
     sortApplied: true,
+    summary: createEmptyStepSummary(step.id, step.type),
   };
 }
 
@@ -2125,6 +2313,243 @@ function cloneSchema(schema: Table['schema']) {
   };
 }
 
+function createEmptyStepSummary(
+  stepId: string,
+  stepType: WorkflowStep['type'],
+): WorkflowStepExecutionSummary {
+  return {
+    stepId,
+    stepType,
+    matchedCellCount: 0,
+    valueChangedCellCount: 0,
+    formatChangedCellCount: 0,
+    changedCellCount: 0,
+  };
+}
+
+function getProjectedScopedRuleLogicalType(
+  step: Extract<WorkflowStep, { type: 'scopedRule' }>,
+  table: Table,
+  currentLogicalType: LogicalType,
+  runTimestamp: string,
+) {
+  const projectedTypes: LogicalType[] = [];
+
+  if (scopedRuleRetainsOriginalValueType(step)) {
+    projectedTypes.push(currentLogicalType);
+  }
+
+  (step.cases ?? []).forEach((ruleCase, caseIndex) => {
+    const patchResult = validateCellPatch(ruleCase.then, table, `$projection.cases[${caseIndex}].then`, step.id, {
+      runTimestamp,
+      allowValueReference: true,
+      valueLogicalType: currentLogicalType,
+    });
+
+    if (patchResult.valueLogicalType) {
+      projectedTypes.push(patchResult.valueLogicalType);
+    }
+  });
+
+  if (step.defaultPatch) {
+    const patchResult = validateCellPatch(step.defaultPatch, table, '$projection.defaultPatch', step.id, {
+      runTimestamp,
+      allowValueReference: true,
+      valueLogicalType: currentLogicalType,
+    });
+
+    if (patchResult.valueLogicalType) {
+      projectedTypes.push(patchResult.valueLogicalType);
+    }
+  }
+
+  return mergeLogicalTypes(projectedTypes).logicalType;
+}
+
+function selectScopedRulePatch(
+  step: Extract<WorkflowStep, { type: 'scopedRule' }>,
+  row: TableRow,
+  currentValue: CellValue,
+  runTimestamp: string,
+) {
+  for (const ruleCase of step.cases ?? []) {
+    if (Boolean(evaluateExpression(ruleCase.when, {
+      runTimestamp,
+      row,
+      currentValue,
+    }))) {
+      return ruleCase.then;
+    }
+  }
+
+  return step.defaultPatch;
+}
+
+function normalizeCellFormatPatch(format: WorkflowCellFormatPatch | undefined) {
+  if (!format) {
+    return undefined;
+  }
+
+  return {
+    ...format,
+    ...(format.fillColor ? { fillColor: normalizeFillColor(format.fillColor) } : {}),
+  };
+}
+
+function applyCellPatchFormat(
+  stylesByColumnId: Record<string, CellStyle>,
+  columnId: string,
+  format: WorkflowCellFormatPatch | undefined,
+) {
+  if (!format?.fillColor) {
+    return {
+      stylesByColumnId,
+      formatChanged: false,
+    };
+  }
+
+  const previousStyle = getComparableCellStyle(stylesByColumnId[columnId]);
+  const nextStyle = {
+    ...stylesByColumnId[columnId],
+    ...normalizeCellFormatPatch(format),
+  };
+  const nextComparableStyle = getComparableCellStyle(nextStyle);
+
+  stylesByColumnId[columnId] = nextStyle;
+
+  return {
+    stylesByColumnId,
+    formatChanged: !Object.is(previousStyle, nextComparableStyle),
+  };
+}
+
+function applyCellPatchValue(
+  patch: WorkflowCellPatch,
+  row: TableRow,
+  currentValue: CellValue,
+  runTimestamp: string,
+) {
+  if (!patch.value) {
+    return {
+      nextValue: currentValue,
+      valueChanged: false,
+    };
+  }
+
+  const nextValue = toCellValue(evaluateExpression(patch.value, {
+    runTimestamp,
+    row,
+    currentValue,
+  }));
+
+  return {
+    nextValue,
+    valueChanged: !Object.is(currentValue, nextValue),
+  };
+}
+
+function cloneCellPatch(patch: WorkflowCellPatch | undefined) {
+  if (!patch) {
+    return undefined;
+  }
+
+  return {
+    ...(patch.value ? { value: patch.value } : {}),
+    ...(patch.format ? { format: normalizeCellFormatPatch(patch.format) } : {}),
+  };
+}
+
+function cloneRuleCase(ruleCase: WorkflowRuleCase) {
+  return {
+    when: ruleCase.when,
+    then: cloneCellPatch(ruleCase.then) ?? {},
+  };
+}
+
+function cloneScopedRuleStep(step: Extract<WorkflowStep, { type: 'scopedRule' }>) {
+  return {
+    ...step,
+    columnIds: [...step.columnIds],
+    ...(step.cases ? { cases: step.cases.map(cloneRuleCase) } : {}),
+    ...(step.defaultPatch ? { defaultPatch: cloneCellPatch(step.defaultPatch) } : {}),
+  };
+}
+
+function getComparableCellPatchFormat(format: WorkflowCellFormatPatch | undefined) {
+  return format?.fillColor ?? null;
+}
+
+function getComparableCellPatch(patch: WorkflowCellPatch | undefined) {
+  return patch
+    ? JSON.stringify({
+        hasValue: Boolean(patch.value),
+        format: getComparableCellPatchFormat(patch.format),
+      })
+    : null;
+}
+
+function getRuleCasesWithDefault(step: Extract<WorkflowStep, { type: 'scopedRule' }>) {
+  return {
+    cases: (step.cases ?? []).map(cloneRuleCase),
+    defaultPatch: cloneCellPatch(step.defaultPatch),
+  };
+}
+
+function hasCellPatchValue(patch: WorkflowCellPatch | undefined) {
+  return Boolean(patch?.value);
+}
+
+function hasCellPatchFormat(patch: WorkflowCellPatch | undefined) {
+  return Boolean(patch?.format?.fillColor);
+}
+
+function isEmptyCellPatch(patch: WorkflowCellPatch | undefined) {
+  return !hasCellPatchValue(patch) && !hasCellPatchFormat(patch);
+}
+
+function getScopedRulePatches(step: Extract<WorkflowStep, { type: 'scopedRule' }>) {
+  return [...(step.cases ?? []).map((ruleCase) => ruleCase.then), ...(step.defaultPatch ? [step.defaultPatch] : [])];
+}
+
+function canApplyScopedRuleValueToAllPaths(step: Extract<WorkflowStep, { type: 'scopedRule' }>) {
+  return !step.rowCondition && step.defaultPatch?.value && (step.cases ?? []).every((ruleCase) => ruleCase.then.value);
+}
+
+function scopedRuleChangesOnlyFormat(step: Extract<WorkflowStep, { type: 'scopedRule' }>) {
+  return getScopedRulePatches(step).every((patch) => !patch.value && Boolean(patch.format?.fillColor));
+}
+
+function getScopedRuleProjectedTypeCandidates(
+  step: Extract<WorkflowStep, { type: 'scopedRule' }>,
+  currentLogicalType: LogicalType,
+  table: Table,
+  runTimestamp: string,
+) {
+  const projectedTypes: LogicalType[] = [];
+
+  if (!canApplyScopedRuleValueToAllPaths(step)) {
+    projectedTypes.push(currentLogicalType);
+  }
+
+  getScopedRulePatches(step).forEach((patch, index) => {
+    if (!patch.value) {
+      return;
+    }
+
+    const patchResult = validateCellPatch(patch, table, `$projection.patch[${index}]`, step.id, {
+      runTimestamp,
+      allowValueReference: true,
+      valueLogicalType: currentLogicalType,
+    });
+
+    if (patchResult.valueLogicalType) {
+      projectedTypes.push(patchResult.valueLogicalType);
+    }
+  });
+
+  return projectedTypes;
+}
+
 export function projectWorkflowStepSchema(table: Table, step: WorkflowStep): Table {
   return projectValidatedWorkflowStep(table, step, SCHEMA_PROJECTION_RUN_TIMESTAMP);
 }
@@ -2143,6 +2568,7 @@ function cloneRowsById(table: Table, rowIds: string[]) {
       {
         rowId,
         cellsByColumnId: { ...table.rowsById[rowId].cellsByColumnId },
+        stylesByColumnId: cloneStylesByColumnId(table.rowsById[rowId].stylesByColumnId),
       },
     ]),
   );
@@ -2172,6 +2598,12 @@ function buildCreatedColumn(columnId: string, displayName: string, sourceIndex: 
   };
 }
 
+function cloneStylesByColumnId(stylesByColumnId: Record<string, CellStyle> | undefined) {
+  return Object.fromEntries(
+    Object.entries(stylesByColumnId ?? {}).map(([columnId, style]) => [columnId, { ...style }]),
+  );
+}
+
 function normalizeWorkflowDisplayName(displayName: string) {
   return normalizeWhitespace(displayName);
 }
@@ -2182,6 +2614,10 @@ function getDisplayNameKey(displayName: string) {
 
 function isEmptyValue(value: CellValue) {
   return value === null || value === '';
+}
+
+function getComparableCellStyle(style: CellStyle | undefined) {
+  return style?.fillColor ?? null;
 }
 
 function isValidRegexPattern(pattern: string) {

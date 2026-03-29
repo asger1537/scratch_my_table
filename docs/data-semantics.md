@@ -37,7 +37,7 @@ Expression node kinds:
 
 Rules:
 
-- `value` means the current selected cell and is valid only inside `scopedTransform.expression`
+- `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
 - `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
 - `literal` may be `string`, `number`, `boolean`, or `null`
 - `call` applies one built-in pure function
@@ -103,6 +103,18 @@ Determinism rules:
 - Functions are pure and deterministic.
 - No function mutates other cells, rows, or schema.
 - V1 does not support user-defined functions, loops, or recursion.
+
+## Cell Formatting Semantics
+
+Workflow formatting is separate from canonical cell values.
+
+Rules:
+
+- `scopedRule` format patches store per-cell fill color state without changing the underlying value
+- formatting is produced by workflow execution; import still ignores incoming spreadsheet formatting
+- preview UI may render runtime fill colors directly from the transformed table state
+- CSV export is value-only and does not preserve formatting
+- XLSX export writes runtime fill colors for styled cells
 
 ## Type Inference
 

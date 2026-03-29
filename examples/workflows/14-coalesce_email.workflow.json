@@ -4,35 +4,37 @@
   "name": "Fill missing email from Email (2)",
   "steps": [
     {
-      "id": "step_scoped_transform_1",
-      "type": "scopedTransform",
+      "id": "step_scoped_rule_1",
+      "type": "scopedRule",
       "columnIds": [
         "col_email"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_email_2"
-              }
-            ]
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "coalesce",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            },
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "column",
+                  "columnId": "col_email_2"
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     {

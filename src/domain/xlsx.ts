@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 
-import { CellValue, ImportWarning, Table, Workbook, getOrderedRows } from './model';
+import { CellValue, ImportWarning, Table, Workbook, getOrderedRows, getReadableTextColor } from './model';
 import { ImportedCellInput, cellValueToHeaderText, extractDisplayHeaderLine, normalizeImportedWorkbook } from './normalize';
 
 export interface ImportXlsxWorkbookOptions {
@@ -81,11 +81,7 @@ export function importXlsxWorkbook(
 }
 
 export function exportTableToXlsxBytes(table: Table): ArrayBuffer {
-  const headerRow = table.schema.columns.map((column) => column.displayName);
-  const bodyRows = getOrderedRows(table).map((row) =>
-    table.schema.columns.map((column) => serializeCellValue(row.cellsByColumnId[column.columnId])),
-  );
-  const sheet = XLSX.utils.aoa_to_sheet([headerRow, ...bodyRows]);
+  const sheet = buildWorksheetFromTable(table);
   const workbook = XLSX.utils.book_new();
 
   XLSX.utils.book_append_sheet(workbook, sheet, sanitizeSheetName(table.sourceName));
@@ -93,7 +89,51 @@ export function exportTableToXlsxBytes(table: Table): ArrayBuffer {
   return XLSX.write(workbook, {
     type: 'array',
     bookType: 'xlsx',
+    cellStyles: true,
   }) as ArrayBuffer;
+}
+
+export function buildWorksheetFromTable(table: Table): XLSX.WorkSheet {
+  const headerRow = table.schema.columns.map((column) => column.displayName);
+  const bodyRows = getOrderedRows(table).map((row) =>
+    table.schema.columns.map((column) => serializeCellValue(row.cellsByColumnId[column.columnId])),
+  );
+  const sheet = XLSX.utils.aoa_to_sheet([headerRow, ...bodyRows]);
+
+  getOrderedRows(table).forEach((row, rowIndex) => {
+    table.schema.columns.forEach((column, columnIndex) => {
+      const fillColor = row.stylesByColumnId[column.columnId]?.fillColor;
+
+      if (!fillColor) {
+        return;
+      }
+
+      const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex });
+      const cell = sheet[address];
+
+      if (!cell) {
+        return;
+      }
+
+      const rgb = `FF${fillColor.slice(1).toLocaleUpperCase()}`;
+      const textRgb = `FF${getReadableTextColor(fillColor).slice(1).toLocaleUpperCase()}`;
+
+      cell.s = {
+        ...(cell.s ?? {}),
+        fill: {
+          patternType: 'solid',
+          fgColor: { rgb },
+          bgColor: { rgb },
+        },
+        font: {
+          ...(cell.s?.font ?? {}),
+          color: { rgb: textRgb },
+        },
+      };
+    });
+  });
+
+  return sheet;
 }
 
 function convertSheetToImportedRows(sheet: XLSX.WorkSheet): ImportedCellInput[][] {

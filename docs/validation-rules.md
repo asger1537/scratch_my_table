@@ -87,11 +87,11 @@ Workflow IR v2 uses one shared expression AST:
 
 Rules:
 
-- `value` is valid only inside `scopedTransform.expression`
+- `value` is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
 - `column` is valid anywhere row-scoped expressions are evaluated
 - `literal` is always structurally valid
 - `call` must use one supported built-in function name and the correct arity
-- logical checks in `filterRows.condition` and `scopedTransform.rowCondition` are ordinary expressions and must resolve to boolean
+- logical checks in `filterRows.condition`, `scopedRule.rowCondition`, and `scopedRule.cases[*].when` are ordinary expressions and must resolve to boolean
 
 Function rules:
 
@@ -103,7 +103,7 @@ Function rules:
 - `and`, `or`, and `concat` require at least 2 arguments
 - `switch` requires at least 4 arguments and must have an even number of arguments
 - `split` returns an intermediate list value
-- final `scopedTransform` and `deriveColumn` expressions must resolve to scalar cell values
+- final `scopedRule` patch values and `deriveColumn` expressions must resolve to scalar cell values
 
 Type rules:
 
@@ -140,7 +140,18 @@ Errors:
 
 ## Step Rules
 
-### `scopedTransform`
+### `comment`
+
+Valid when:
+
+- `text` is present and non-empty
+
+Behavior:
+
+- comment steps are always schema-neutral
+- comment steps do not produce semantic validation issues beyond structural shape checks
+
+### `scopedRule`
 
 Valid when:
 
@@ -148,26 +159,41 @@ Valid when:
 - at least one target column is provided
 - target column references are unique
 - `rowCondition`, if present, is a valid boolean expression
-- the expression is valid for every targeted column type
+- at least one of `cases` or `defaultPatch` is present
+- every `cases[*].when` expression resolves to boolean
+- every `cases[*].then` and `defaultPatch`, if present, defines at least one of `value` or `format`
+- every patch `value`, if present, resolves to a scalar cell value
+- every `format.fillColor`, if present, is a valid 6-digit hex color such as `#fff2cc`
+- all value-producing branches are type-compatible for each targeted column
 
 Rules:
 
+- `rowCondition` is evaluated against the current row before any targeted cell work
 - `value` is evaluated as the current selected cell
 - `column` may read any existing column from the current row
-- `rowCondition` is evaluated against the current row before applying the expression
+- cases are checked top to bottom and first match wins
+- `defaultPatch`, if present, applies when no case matches
+- patches may change value only, format only, or both
+- format-only rules do not change schema
+- a style-only change still counts as a changed cell in execution metadata
+- preview and XLSX export may use the resulting color state
+- CSV export ignores color state
 - if whitespace-sensitive emptiness is needed, express it explicitly with calls such as `trim(...)` and `isEmpty(...)`
 
 Common capability mappings:
 
-- fill empty cells: `coalesce(value, <literal>)`
-- fill empty trimmed text: `coalesce(trim(value), <literal>)`
-- normalize text: nested string calls such as `lower(trim(value))`
+- fill empty cells: `defaultPatch.value = coalesce(value, <literal>)`
+- fill empty trimmed text: `defaultPatch.value = coalesce(trim(value), <literal>)`
+- normalize text: `defaultPatch.value = lower(trim(value))`
+- highlight cells: `defaultPatch.format.fillColor = "#fff2cc"`
+- transform and highlight together: use both `then.value` and `then.format` in the same matching case
 
 Errors:
 
 - `missingColumn`
 - `duplicateColumnReference`
 - `emptyTarget`
+- `invalidColor`
 - `invalidExpression`
 - `incompatibleType`
 

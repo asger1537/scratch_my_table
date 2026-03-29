@@ -1,5 +1,5 @@
 import { slugify } from '../domain/normalize';
-import type { Workflow, WorkflowExpression, WorkflowStep } from '../workflow';
+import type { Workflow, WorkflowCellPatch, WorkflowExpression, WorkflowRuleCase, WorkflowStep } from '../workflow';
 
 import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
@@ -20,11 +20,31 @@ interface AuthoringStepBase {
   sourceBlockType?: string;
 }
 
-export interface AuthoringScopedTransformStep extends AuthoringStepBase {
-  kind: 'scopedTransform';
+export interface AuthoringCommentStep extends AuthoringStepBase {
+  kind: 'comment';
+  text: string;
+}
+
+export interface AuthoringCellPatch {
+  valueEnabled: boolean;
+  value?: WorkflowExpression;
+  formatEnabled: boolean;
+  fillColor?: string;
+}
+
+export interface AuthoringRuleCase {
+  when: WorkflowExpression;
+  then: AuthoringCellPatch;
+}
+
+export interface AuthoringScopedRuleStep extends AuthoringStepBase {
+  kind: 'scopedRule';
   columnIds: string[];
   rowCondition?: WorkflowExpression;
-  expression: WorkflowExpression;
+  mode: 'single' | 'cases';
+  singlePatch: AuthoringCellPatch;
+  cases: AuthoringRuleCase[];
+  defaultPatch: AuthoringCellPatch;
 }
 
 export interface AuthoringRenameColumnStep extends AuthoringStepBase {
@@ -87,7 +107,8 @@ export interface AuthoringSortRowsStep extends AuthoringStepBase {
 }
 
 export type AuthoringStep =
-  | AuthoringScopedTransformStep
+  | AuthoringCommentStep
+  | AuthoringScopedRuleStep
   | AuthoringDropColumnsStep
   | AuthoringRenameColumnStep
   | AuthoringDeriveColumnStep
@@ -141,14 +162,31 @@ function compileStep(step: AuthoringStep, index: number, usedStepIds: Set<string
   const stepId = getUniqueStepId(step.stepId, getDefaultStepIdBase(step), index, usedStepIds);
 
   switch (step.kind) {
-    case 'scopedTransform':
+    case 'comment':
       return {
         id: stepId,
-        type: 'scopedTransform',
+        type: 'comment',
+        text: step.text,
+      };
+    case 'scopedRule': {
+      const defaultPatch = step.mode === 'single'
+        ? compileAuthoringCellPatch(step.singlePatch)
+        : compileAuthoringCellPatch(step.defaultPatch);
+      const cases = step.mode === 'cases'
+        ? step.cases
+          .map(compileAuthoringRuleCase)
+          .filter((ruleCase): ruleCase is WorkflowRuleCase => Boolean(ruleCase))
+        : undefined;
+
+      return {
+        id: stepId,
+        type: 'scopedRule',
         columnIds: step.columnIds,
         rowCondition: step.rowCondition,
-        expression: step.expression,
+        ...(cases && cases.length > 0 ? { cases } : {}),
+        ...(defaultPatch ? { defaultPatch } : {}),
       };
+    }
     case 'renameColumn':
       return {
         id: stepId,
@@ -209,13 +247,26 @@ function compileStep(step: AuthoringStep, index: number, usedStepIds: Set<string
 
 function workflowStepToAuthoringStep(step: WorkflowStep): AuthoringStep {
   switch (step.type) {
-    case 'scopedTransform':
+    case 'comment':
       return {
-        kind: 'scopedTransform',
+        kind: 'comment',
+        stepId: step.id,
+        text: step.text,
+      };
+    case 'scopedRule':
+      return {
+        kind: 'scopedRule',
         stepId: step.id,
         columnIds: [...step.columnIds],
         rowCondition: step.rowCondition,
-        expression: step.expression,
+        mode: step.cases && step.cases.length > 0 ? 'cases' : 'single',
+        singlePatch: step.cases && step.cases.length > 0
+          ? createEmptyAuthoringCellPatch()
+          : workflowCellPatchToAuthoringPatch(step.defaultPatch),
+        cases: (step.cases ?? []).map(workflowRuleCaseToAuthoringRuleCase),
+        defaultPatch: step.cases && step.cases.length > 0
+          ? workflowCellPatchToAuthoringPatch(step.defaultPatch)
+          : createEmptyAuthoringCellPatch(),
       };
     case 'renameColumn':
       return {
@@ -279,8 +330,8 @@ function workflowStepToAuthoringStep(step: WorkflowStep): AuthoringStep {
 
 function getDefaultStepIdBase(step: AuthoringStep) {
   switch (step.kind) {
-    case 'scopedTransform':
-      return 'scoped_transform';
+    case 'scopedRule':
+      return 'scoped_rule';
     default:
       return step.kind;
   }
@@ -328,6 +379,61 @@ function normalizeWorkflowId(workflowId: string, name: string) {
 
 function normalizeDescription(description: string | undefined) {
   return (description ?? '').trim();
+}
+
+function normalizeWorkflowColor(value: string) {
+  const normalized = value.trim().toLocaleLowerCase();
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '#fff2cc';
+}
+
+function createEmptyAuthoringCellPatch(): AuthoringCellPatch {
+  return {
+    valueEnabled: false,
+    formatEnabled: false,
+    fillColor: '#fff2cc',
+  };
+}
+
+function compileAuthoringCellPatch(patch: AuthoringCellPatch): WorkflowCellPatch | undefined {
+  const nextPatch: WorkflowCellPatch = {
+    ...(patch.valueEnabled && patch.value ? { value: patch.value } : {}),
+    ...(patch.formatEnabled
+      ? {
+          format: {
+            fillColor: normalizeWorkflowColor(patch.fillColor ?? '#fff2cc'),
+          },
+        }
+      : {}),
+  };
+
+  return Object.keys(nextPatch).length > 0 ? nextPatch : undefined;
+}
+
+function compileAuthoringRuleCase(ruleCase: AuthoringRuleCase): WorkflowRuleCase | undefined {
+  const then = compileAuthoringCellPatch(ruleCase.then);
+
+  return then
+    ? {
+        when: ruleCase.when,
+        then,
+      }
+    : undefined;
+}
+
+function workflowCellPatchToAuthoringPatch(patch: WorkflowCellPatch | undefined): AuthoringCellPatch {
+  return {
+    valueEnabled: Boolean(patch?.value),
+    ...(patch?.value ? { value: patch.value } : {}),
+    formatEnabled: Boolean(patch?.format?.fillColor),
+    fillColor: normalizeWorkflowColor(patch?.format?.fillColor ?? '#fff2cc'),
+  };
+}
+
+function workflowRuleCaseToAuthoringRuleCase(ruleCase: WorkflowRuleCase): AuthoringRuleCase {
+  return {
+    when: ruleCase.when,
+    then: workflowCellPatchToAuthoringPatch(ruleCase.then),
+  };
 }
 
 function emptyToUndefined(value: string) {

@@ -7,13 +7,16 @@ import { projectWorkflowStepSchema, validateWorkflowSemantics, validateWorkflowS
 import {
   authoringWorkflowToWorkflow,
   normalizeWorkflowMetadata,
+  type AuthoringCellPatch,
+  type AuthoringCommentStep,
   type AuthoringCombineColumnsStep,
   type AuthoringDeduplicateRowsStep,
   type AuthoringDeriveColumnStep,
   type AuthoringDropColumnsStep,
   type AuthoringFilterRowsStep,
   type AuthoringRenameColumnStep,
-  type AuthoringScopedTransformStep,
+  type AuthoringRuleCase,
+  type AuthoringScopedRuleStep,
   type AuthoringSortRowsStep,
   type AuthoringSplitColumnStep,
   type AuthoringStep,
@@ -27,7 +30,8 @@ import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
 const workspaceMetadata = new WeakMap<Blockly.Workspace, AuthoringWorkflowMetadata>();
 const STEP_BLOCK_TYPES = new Set<string>([
-  BLOCK_TYPES.scopedTransformStep,
+  BLOCK_TYPES.commentStep,
+  BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,
   BLOCK_TYPES.deriveColumnStep,
@@ -311,32 +315,74 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
   const stepMetadata = readBlockMetadata(block);
 
   switch (block.type) {
-    case BLOCK_TYPES.scopedTransformStep: {
+    case BLOCK_TYPES.commentStep:
+      return {
+        step: {
+          kind: 'comment',
+          stepId: stepMetadata.stepId,
+          sourceBlockId: block.id,
+          sourceBlockType: block.type,
+          text: getFieldString(block, 'TEXT'),
+        },
+      };
+    case BLOCK_TYPES.scopedRuleCasesStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
-      const expression = readRequiredExpression(block, 'EXPRESSION');
       const rowCondition = readOptionalExpression(block, 'ROW_CONDITION');
 
       if ('issue' in columnIds) {
         return { step: undefined as never, issue: columnIds.issue };
       }
 
-      if ('issue' in expression) {
-        return { step: undefined as never, issue: expression.issue };
-      }
-
       if ('issue' in rowCondition) {
         return { step: undefined as never, issue: rowCondition.issue };
       }
 
+      const defaultPatch = readAuthoringCellPatch(block, {
+        valueEnabledField: 'DEFAULT_VALUE_ENABLED',
+        valueInput: 'DEFAULT_VALUE',
+        formatEnabledField: 'DEFAULT_FORMAT_ENABLED',
+        colorField: 'DEFAULT_COLOR',
+        required: false,
+      });
+
+      if ('issue' in defaultPatch) {
+        return { step: undefined as never, issue: defaultPatch.issue };
+      }
+
+      const cases = readOptionalRuleCases(block, 'CASES');
+
+      if ('issue' in cases) {
+        return { step: undefined as never, issue: cases.issue };
+      }
+
+      if (cases.cases.length === 0 && !isAuthoringCellPatchEnabled(defaultPatch.patch)) {
+        return {
+          step: undefined as never,
+          issue: {
+            code: 'missingRuleCases',
+            message: `Block '${block.type}' must define at least one case or a default patch.`,
+            blockId: block.id,
+            blockType: block.type,
+          },
+        };
+      }
+
       return {
         step: {
-          kind: 'scopedTransform',
+          kind: 'scopedRule',
           stepId: stepMetadata.stepId,
           sourceBlockId: block.id,
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
           rowCondition: rowCondition.expression,
-          expression: expression.expression,
+          mode: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch) ? 'single' : 'cases',
+          singlePatch: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch)
+            ? defaultPatch.patch
+            : createEmptyAuthoringCellPatch(),
+          cases: cases.cases,
+          defaultPatch: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch)
+            ? createEmptyAuthoringCellPatch()
+            : defaultPatch.patch,
         },
       };
     }
@@ -532,6 +578,107 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
   }
 
   return readExpression(expressionBlock);
+}
+
+function readAuthoringCellPatch(
+  block: Blockly.Block,
+  fields: {
+    valueEnabledField: string;
+    valueInput: string;
+    formatEnabledField: string;
+    colorField: string;
+    required: boolean;
+  },
+): { patch: AuthoringCellPatch } | { issue: EditorIssue } {
+  const valueEnabled = isCheckboxFieldChecked(block, fields.valueEnabledField);
+  const formatEnabled = isCheckboxFieldChecked(block, fields.formatEnabledField);
+  let value: WorkflowExpression | undefined;
+
+  if (valueEnabled) {
+    const expression = readRequiredExpression(block, fields.valueInput);
+
+    if ('issue' in expression) {
+      return expression;
+    }
+
+    value = expression.expression;
+  }
+
+  if (!valueEnabled && !formatEnabled && fields.required) {
+    return {
+      issue: {
+        code: 'missingPatch',
+        message: `Block '${block.type}' must define a value change or fill color.`,
+        blockId: block.id,
+        blockType: block.type,
+      },
+    };
+  }
+
+  return {
+    patch: {
+      valueEnabled,
+      ...(value ? { value } : {}),
+      formatEnabled,
+      fillColor: getFieldString(block, fields.colorField),
+    },
+  };
+}
+
+function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[] } | { issue: EditorIssue } {
+  const cases: AuthoringRuleCase[] = [];
+  let current = block.getInputTargetBlock(inputName);
+
+  while (current) {
+    if (current.type !== BLOCK_TYPES.ruleCaseItem) {
+      return {
+        issue: {
+          code: 'invalidCaseBlock',
+          message: `Block '${block.type}' contains unsupported case block '${current.type}'.`,
+          blockId: current.id,
+          blockType: current.type,
+        },
+      };
+    }
+
+    const when = readRequiredExpression(current, 'WHEN');
+
+    if ('issue' in when) {
+      return when;
+    }
+
+    const then = readAuthoringCellPatch(current, {
+      valueEnabledField: 'VALUE_ENABLED',
+      valueInput: 'VALUE',
+      formatEnabledField: 'FORMAT_ENABLED',
+      colorField: 'COLOR',
+      required: true,
+    });
+
+    if ('issue' in then) {
+      return then;
+    }
+
+    cases.push({
+      when: when.expression,
+      then: then.patch,
+    });
+    current = current.getNextBlock();
+  }
+
+  return { cases };
+}
+
+function isAuthoringCellPatchEnabled(patch: AuthoringCellPatch) {
+  return patch.valueEnabled || patch.formatEnabled;
+}
+
+function createEmptyAuthoringCellPatch(): AuthoringCellPatch {
+  return {
+    valueEnabled: false,
+    formatEnabled: false,
+    fillColor: '#fff2cc',
+  };
 }
 
 function readRequiredExpression(block: Blockly.Block, inputName: string): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -1159,8 +1306,10 @@ function readStatementItems<T>(
 
 function createStepBlockFromAuthoringStep(workspace: Blockly.Workspace, step: AuthoringStep, isTopBlock: boolean) {
   switch (step.kind) {
-    case 'scopedTransform':
-      return createScopedTransformBlock(workspace, step, isTopBlock);
+    case 'comment':
+      return createCommentBlock(workspace, step, isTopBlock);
+    case 'scopedRule':
+      return createScopedRuleBlock(workspace, step, isTopBlock);
     case 'dropColumns':
       return createDropColumnsBlock(workspace, step, isTopBlock);
     case 'renameColumn':
@@ -1182,8 +1331,16 @@ function createStepBlockFromAuthoringStep(workspace: Blockly.Workspace, step: Au
   }
 }
 
-function createScopedTransformBlock(workspace: Blockly.Workspace, step: AuthoringScopedTransformStep, isTopBlock: boolean) {
-  const block = createBlock(workspace, BLOCK_TYPES.scopedTransformStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
+function createCommentBlock(workspace: Blockly.Workspace, step: AuthoringCommentStep, isTopBlock: boolean) {
+  const block = createBlock(workspace, BLOCK_TYPES.commentStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
+
+  setBlockMetadata(block, step.stepId);
+  block.setFieldValue(step.text, 'TEXT');
+  return block;
+}
+
+function createScopedRuleBlock(workspace: Blockly.Workspace, step: AuthoringScopedRuleStep, isTopBlock: boolean) {
+  const block = createBlock(workspace, BLOCK_TYPES.scopedRuleCasesStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(serializeColumnSelectionValue(step.columnIds), 'COLUMN_IDS');
@@ -1192,9 +1349,52 @@ function createScopedTransformBlock(workspace: Blockly.Workspace, step: Authorin
     connectValueBlock(block, 'ROW_CONDITION', createExpressionBlock(workspace, step.rowCondition));
   }
 
-  connectValueBlock(block, 'EXPRESSION', createExpressionBlock(workspace, step.expression));
+  setAuthoringCellPatchFields(block, {
+    valueEnabledField: 'DEFAULT_VALUE_ENABLED',
+    valueInput: 'DEFAULT_VALUE',
+    formatEnabledField: 'DEFAULT_FORMAT_ENABLED',
+    colorField: 'DEFAULT_COLOR',
+  }, step.mode === 'single' ? step.singlePatch : step.defaultPatch, workspace);
+
+  if (step.mode === 'cases' && step.cases.length > 0) {
+    connectStatementChain(block, 'CASES', step.cases.map((ruleCase) => createRuleCaseBlock(workspace, ruleCase)));
+  }
 
   return block;
+}
+
+function createRuleCaseBlock(workspace: Blockly.Workspace, ruleCase: AuthoringRuleCase) {
+  const block = createBlock(workspace, BLOCK_TYPES.ruleCaseItem);
+
+  connectValueBlock(block, 'WHEN', createExpressionBlock(workspace, ruleCase.when));
+  setAuthoringCellPatchFields(block, {
+    valueEnabledField: 'VALUE_ENABLED',
+    valueInput: 'VALUE',
+    formatEnabledField: 'FORMAT_ENABLED',
+    colorField: 'COLOR',
+  }, ruleCase.then, workspace);
+
+  return block;
+}
+
+function setAuthoringCellPatchFields(
+  block: Blockly.Block,
+  fields: {
+    valueEnabledField: string;
+    valueInput: string;
+    formatEnabledField: string;
+    colorField: string;
+  },
+  patch: AuthoringCellPatch,
+  workspace: Blockly.Workspace,
+) {
+  block.setFieldValue(patch.valueEnabled ? 'TRUE' : 'FALSE', fields.valueEnabledField);
+  block.setFieldValue(patch.formatEnabled ? 'TRUE' : 'FALSE', fields.formatEnabledField);
+  block.setFieldValue(patch.fillColor ?? '#fff2cc', fields.colorField);
+
+  if (patch.valueEnabled && patch.value) {
+    connectValueBlock(block, fields.valueInput, createExpressionBlock(workspace, patch.value));
+  }
 }
 
 function createRenameColumnBlock(workspace: Blockly.Workspace, step: AuthoringRenameColumnStep, isTopBlock: boolean) {
@@ -1652,6 +1852,10 @@ function createSchemaProjectionTable(table: Table): Table {
 
 function getFieldString(block: Blockly.Block, fieldName: string) {
   return String(block.getFieldValue(fieldName) ?? '');
+}
+
+function isCheckboxFieldChecked(block: Blockly.Block, fieldName: string) {
+  return getFieldString(block, fieldName).toUpperCase() === 'TRUE';
 }
 
 function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {

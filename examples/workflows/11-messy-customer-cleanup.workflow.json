@@ -6,108 +6,116 @@
   "steps": [
     {
       "id": "step_normalize_email",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_email",
         "col_email_2"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "lower",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "lower",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     {
       "id": "step_normalize_text_columns",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_first_name",
         "col_last_name",
         "col_column",
         "col_status"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "collapseWhitespace",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "collapseWhitespace",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     {
       "id": "step_fill_email_from_email_2",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_email"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_email_2"
-              }
-            ]
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "coalesce",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            },
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "column",
+                  "columnId": "col_email_2"
+                }
+              ]
+            }
+          ]
+        }
       }
     },
     {
       "id": "step_fill_status",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_status"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "unknown"
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "coalesce",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            },
+            {
+              "kind": "literal",
+              "value": "unknown"
+            }
+          ]
+        }
       }
     },
     {

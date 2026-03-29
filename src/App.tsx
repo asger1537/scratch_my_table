@@ -10,7 +10,7 @@ import {
 } from './editor';
 import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
 import type { ValidationWorkerResponse, ValidationWorkerTableSnapshot } from './workflow/validationWorker';
-import { getActiveTable, getOrderedRows, setActiveTable, type ImportWarning, type Table, type Workbook } from './domain/model';
+import { getActiveTable, getCellStyle, getOrderedRows, getReadableTextColor, setActiveTable, type ImportWarning, type Table, type Workbook } from './domain/model';
 import {
   buildCsvExportFileName,
   buildXlsxExportFileName,
@@ -807,9 +807,18 @@ function PreviewPanel({
                 <td>
                   <code>{row.rowId}</code>
                 </td>
-                {table.schema.columns.map((column) => (
-                  <td key={`${row.rowId}-${column.columnId}`}>{formatCellValue(row.cellsByColumnId[column.columnId])}</td>
-                ))}
+                {table.schema.columns.map((column) => {
+                  const fillColor = getCellStyle(row, column.columnId)?.fillColor;
+
+                  return (
+                    <td
+                      key={`${row.rowId}-${column.columnId}`}
+                      style={fillColor ? { backgroundColor: fillColor, color: getReadableTextColor(fillColor) } : undefined}
+                    >
+                      {formatCellValue(row.cellsByColumnId[column.columnId])}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

@@ -18,6 +18,7 @@ export function executeWorkflow(candidate: unknown, table: Table): WorkflowExecu
       removedRowCount: 0,
       rowOrderChanged: false,
       sortApplied: false,
+      stepSummaries: [],
     };
   }
 
@@ -34,6 +35,7 @@ export function executeWorkflow(candidate: unknown, table: Table): WorkflowExecu
       removedRowCount: 0,
       rowOrderChanged: false,
       sortApplied: false,
+      stepSummaries: [],
     };
   }
 
@@ -49,5 +51,6 @@ export function executeWorkflow(candidate: unknown, table: Table): WorkflowExecu
     removedRowCount: execution.changeSummary.removedRowCount,
     rowOrderChanged: execution.changeSummary.rowOrderChanged,
     sortApplied: execution.sortApplied,
+    stepSummaries: execution.stepSummaries,
   };
 }

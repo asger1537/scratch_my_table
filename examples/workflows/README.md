@@ -7,7 +7,7 @@ Rules:
 - every file is plain workflow JSON
 - every file uses `version: 2`
 - all column references use explicit `columnId` values
-- scoped cell transforms use `scopedTransform` plus the expression AST
+- scoped cell changes use `scopedRule` plus the shared expression AST and optional format patches
 - filters and row predicates use the same expression AST with boolean-returning `call` nodes
 - these files are used for authoring, import/export, migration, and roundtrip testing
 
@@ -43,3 +43,6 @@ Files:
 - `20-map-status-label-with-switch.workflow.json`
 - `21-calculate-priority-score.workflow.json`
 - `22-derive-signup-date-metrics.workflow.json`
+- `23-highlight-vip-fields.workflow.json`
+- `24-scoped-rule-single-action.workflow.json`
+- `25-scoped-rule-cases.workflow.json`

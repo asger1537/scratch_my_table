@@ -567,6 +567,31 @@ code {
   padding: 0.3rem;
 }
 
+.blockly-color-input {
+  width: 11rem;
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.5rem;
+}
+
+.blockly-color-input__picker {
+  width: 100%;
+  height: 3rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fffdf9;
+  cursor: pointer;
+}
+
+.blockly-color-input__value {
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  background: #fffdf9;
+  text-align: center;
+  font-family: "Consolas", "Courier New", monospace;
+}
+
 .blockly-column-multiselect__search {
   width: 100%;
   border: 1px solid var(--line);

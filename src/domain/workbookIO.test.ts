@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { exportTableToCsv, importCsvWorkbook } from './csv';
 import { getActiveTable, setActiveTable } from './model';
-import { importXlsxWorkbook, exportTableToXlsxBytes } from './xlsx';
+import { buildWorksheetFromTable, importXlsxWorkbook, exportTableToXlsxBytes } from './xlsx';
 
 describe('Milestone 1 normalization and export', () => {
   it('normalizes the simple customers CSV fixture', async () => {
@@ -172,6 +172,30 @@ describe('Milestone 1 normalization and export', () => {
     expect(roundtripTable?.rowsById.row_1.cellsByColumnId.col_order_total).toBe(120.5);
     expect(roundtripTable?.rowsById.row_4.cellsByColumnId.col_customer_email).toBe(null);
     expect(roundtripTable?.importWarnings.some((warning) => warning.code === 'xlsxHeaderRowAutoDetected')).toBe(false);
+  });
+
+  it('builds XLSX worksheet cells with fill styles from runtime color state', async () => {
+    const workbook = importCsvWorkbook('simple-customers.csv', await readFixture('simple-customers.csv'));
+    const table = getActiveTable(workbook);
+
+    if (!table) {
+      throw new Error('Expected active table for worksheet style test.');
+    }
+
+    table.rowsById.row_1.stylesByColumnId.col_email = { fillColor: '#fff2cc' };
+
+    const sheet = buildWorksheetFromTable(table);
+
+    expect(sheet.D2?.s).toEqual({
+      fill: {
+        patternType: 'solid',
+        fgColor: { rgb: 'FFFFF2CC' },
+        bgColor: { rgb: 'FFFFF2CC' },
+      },
+      font: {
+        color: { rgb: 'FF1C1A17' },
+      },
+    });
   });
 });
 

@@ -5,28 +5,30 @@
   "steps": [
     {
       "id": "step_fill_status",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_status"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "coalesce",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "unknown"
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "coalesce",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            },
+            {
+              "kind": "literal",
+              "value": "unknown"
+            }
+          ]
+        }
       }
     }
   ]

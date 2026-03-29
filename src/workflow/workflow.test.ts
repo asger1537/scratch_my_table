@@ -17,9 +17,11 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_fill_status',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_status'],
-          expression: coalesce(value(), literal('unknown')),
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
         },
       ],
     };
@@ -69,9 +71,11 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_repeat',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_status'],
-          expression: coalesce(value(), literal('unknown')),
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
         },
         {
           id: 'step_repeat',
@@ -94,12 +98,14 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_bad_call',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_email'],
-          expression: {
-            kind: 'call',
-            name: 'lower',
-            args: [value(), literal('extra')],
+          defaultPatch: {
+            value: {
+              kind: 'call',
+              name: 'lower',
+              args: [value(), literal('extra')],
+            },
           },
         },
       ],
@@ -131,6 +137,85 @@ describe('workflow validation and execution', () => {
       workflow,
       issues: [],
     });
+  });
+
+  it('treats comment steps as canonical no-ops during validation and execution', async () => {
+    const table = await readFixtureTable('messy-customers.csv');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_comment_noop',
+      name: 'Comment noop',
+      steps: [
+        {
+          id: 'step_note_status_cleanup',
+          type: 'comment',
+          text: 'Fill missing status values before sorting customers.',
+        },
+        {
+          id: 'step_fill_status',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
+
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+
+    expect(validation.valid).toBe(true);
+    expect(validation.stepResults[0]).toEqual(
+      expect.objectContaining({
+        stepType: 'comment',
+        valid: true,
+        issues: [],
+        schemaAfterStep: table.schema,
+      }),
+    );
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.changedRowCount).toBeGreaterThan(0);
+    expect(execution.transformedTable?.schema.columns).toHaveLength(table.schema.columns.length);
+  });
+
+  it('validates and applies format-only scoped rules deterministically', () => {
+    const table = loadCsvTable('status,vip\r\nactive,true\r\npending,false\r\ninactive,true\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_color_status',
+      name: 'Color status',
+      steps: [
+        {
+          id: 'step_color_status',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          rowCondition: call('equals', column('col_vip'), literal(true)),
+          defaultPatch: {
+            format: {
+              fillColor: '#fff2cc',
+            },
+          },
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+
+    expect(validation.valid).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.changedRowCount).toBe(2);
+    expect(execution.changedCellCount).toBe(2);
+    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
+    expect(execution.transformedTable?.rowsById.row_2.stylesByColumnId.col_status).toBeUndefined();
+    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
   });
 
   it('structurally validates switch expressions', () => {
@@ -255,7 +340,7 @@ describe('workflow validation and execution', () => {
       expect(execution.validationErrors, `${fileName} should execute without validation errors`).toEqual([]);
       expect(execution.transformedTable, `${fileName} should produce a transformed table`).not.toBeNull();
     }
-  }, 20000);
+  }, 40000);
 
   it('lets later valid steps see schema changes from earlier valid steps', () => {
     const table = loadCsvTable('first_name,last_name\r\nAlice,Ng\r\n');
@@ -320,7 +405,7 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'missingColumn' && issue.stepId === 'step_rename_missing')).toBe(true);
   });
 
-  it('executes scoped transforms with row conditions, multi-column targets, and explicit coalesce emptiness semantics', () => {
+  it('executes scoped rules with row conditions, multi-column targets, and explicit coalesce emptiness semantics', () => {
     const table = loadCsvTable('first_name,last_name,status,region\r\nAlice,Ng,,west\r\nAmy,Adams,  ,west\r\nBen,Ortiz,,east\r\n');
     const workflow: Workflow = {
       version: 2,
@@ -329,10 +414,12 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_fill_unknown',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_first_name', 'col_last_name', 'col_status'],
           rowCondition: call('equals', column('col_region'), literal('west')),
-          expression: coalesce(value(), literal('unknown')),
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
         },
       ],
     };
@@ -347,7 +434,7 @@ describe('workflow validation and execution', () => {
     expect(execution.changedCellCount).toBe(1);
   });
 
-  it('allows scoped transforms to read another column from the same row', () => {
+  it('allows scoped rules to read another column from the same row', () => {
     const table = loadCsvTable('customer_id,email\r\nC001,\r\nC002,bob@example.com\r\nC003,   \r\n');
     const workflow: Workflow = {
       version: 2,
@@ -356,9 +443,11 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_fill_email',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_email'],
-          expression: coalesce(value(), column('col_customer_id')),
+          defaultPatch: {
+            value: coalesce(value(), column('col_customer_id')),
+          },
         },
       ],
     };
@@ -374,7 +463,7 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_email).toBe('   ');
   });
 
-  it('executes nested built-in scoped-transform functions deterministically', async () => {
+  it('executes nested built-in scoped-rule functions deterministically', async () => {
     const table = await readFixtureTable('messy-customers.csv');
     const workflow: Workflow = {
       version: 2,
@@ -383,22 +472,28 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_normalize_email',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_email'],
-          expression: call('lower', call('trim', value())),
+          defaultPatch: {
+            value: call('lower', call('trim', value())),
+          },
         },
         {
           id: 'step_clean_full_name',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_full_name'],
-          expression: call('replace', call('collapseWhitespace', call('trim', value())), literal('Ng'), literal('NG')),
+          defaultPatch: {
+            value: call('replace', call('collapseWhitespace', call('trim', value())), literal('Ng'), literal('NG')),
+          },
         },
         {
           id: 'step_abbreviate_status',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_status'],
           rowCondition: call('not', call('isEmpty', call('trim', column('col_status')))),
-          expression: call('substring', call('upper', call('trim', value())), literal(0), literal(3)),
+          defaultPatch: {
+            value: call('substring', call('upper', call('trim', value())), literal(0), literal(3)),
+          },
         },
       ],
     };
@@ -412,7 +507,7 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_5.cellsByColumnId.col_status).toBe('   ');
   });
 
-  it('rejects incompatible scoped-transform expressions and invalid value references', async () => {
+  it('rejects incompatible scoped-rule expressions and invalid value references', async () => {
     const table = await readFixtureTable('messy-customers.csv');
     const incompatibleWorkflow: Workflow = {
       version: 2,
@@ -421,9 +516,11 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_bad_lower',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_signup_date'],
-          expression: call('lower', value()),
+          defaultPatch: {
+            value: call('lower', value()),
+          },
         },
       ],
     };
@@ -1191,9 +1288,11 @@ describe('workflow validation and execution', () => {
       steps: [
         {
           id: 'step_fill_status',
-          type: 'scopedTransform',
+          type: 'scopedRule',
           columnIds: ['col_status'],
-          expression: coalesce(value(), literal('unknown')),
+          defaultPatch: {
+            value: coalesce(value(), literal('unknown')),
+          },
         },
         {
           id: 'step_make_location',

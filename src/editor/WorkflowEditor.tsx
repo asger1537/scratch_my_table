@@ -33,7 +33,8 @@ interface DeferredWorkspaceInputs {
 }
 
 const STEP_BLOCK_TYPES = new Set<string>([
-  BLOCK_TYPES.scopedTransformStep,
+  BLOCK_TYPES.commentStep,
+  BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,
   BLOCK_TYPES.deriveColumnStep,
@@ -43,8 +44,23 @@ const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.deduplicateRowsStep,
   BLOCK_TYPES.sortRowsStep,
 ]);
+const SCHEMA_AFFECTING_BLOCK_TYPES = new Set<string>([
+  BLOCK_TYPES.scopedRuleCasesStep,
+  BLOCK_TYPES.dropColumnsStep,
+  BLOCK_TYPES.renameColumnStep,
+  BLOCK_TYPES.deriveColumnStep,
+  BLOCK_TYPES.filterRowsStep,
+  BLOCK_TYPES.splitColumnStep,
+  BLOCK_TYPES.combineColumnsStep,
+  BLOCK_TYPES.deduplicateRowsStep,
+  BLOCK_TYPES.sortRowsStep,
+  BLOCK_TYPES.ruleCaseItem,
+  BLOCK_TYPES.outputColumnItem,
+  BLOCK_TYPES.sortItem,
+]);
 const ORDER_SENSITIVE_BLOCK_TYPES = new Set<string>([
   ...STEP_BLOCK_TYPES,
+  BLOCK_TYPES.ruleCaseItem,
   BLOCK_TYPES.outputColumnItem,
   BLOCK_TYPES.sortItem,
 ]);
@@ -380,7 +396,7 @@ function isSemanticNoOpMoveEvent(workspace: Blockly.Workspace, event: Blockly.Ev
 function shouldProjectSchemaForEvent(workspace: Blockly.Workspace, event: Blockly.Events.Abstract) {
   if (event instanceof Blockly.Events.BlockCreate || event instanceof Blockly.Events.BlockDelete) {
     const block = getEventBlock(workspace, event);
-    return !block || ORDER_SENSITIVE_BLOCK_TYPES.has(block.type) || block.type === BLOCK_TYPES.deriveColumnStep;
+    return !block || SCHEMA_AFFECTING_BLOCK_TYPES.has(block.type);
   }
 
   if (event instanceof Blockly.Events.BlockMove) {
@@ -390,7 +406,7 @@ function shouldProjectSchemaForEvent(workspace: Blockly.Workspace, event: Blockl
       return true;
     }
 
-    return ORDER_SENSITIVE_BLOCK_TYPES.has(block.type);
+    return SCHEMA_AFFECTING_BLOCK_TYPES.has(block.type);
   }
 
   if (event instanceof Blockly.Events.BlockChange) {

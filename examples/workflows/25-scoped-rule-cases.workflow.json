@@ -1,0 +1,96 @@
+{
+  "version": 2,
+  "workflowId": "wf_scoped_rule_cases",
+  "name": "Scoped rule cases",
+  "description": "Uses ordered cases to normalize and highlight status values.",
+  "steps": [
+    {
+      "id": "step_status_cases",
+      "type": "scopedRule",
+      "columnIds": [
+        "col_status"
+      ],
+      "cases": [
+        {
+          "when": {
+            "kind": "call",
+            "name": "isEmpty",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          "then": {
+            "value": {
+              "kind": "literal",
+              "value": "unknown"
+            },
+            "format": {
+              "fillColor": "#fff2cc"
+            }
+          }
+        },
+        {
+          "when": {
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "call",
+                "name": "lower",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": "inactive"
+              }
+            ]
+          },
+          "then": {
+            "value": {
+              "kind": "literal",
+              "value": "inactive"
+            },
+            "format": {
+              "fillColor": "#f4cccc"
+            }
+          }
+        }
+      ],
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "lower",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

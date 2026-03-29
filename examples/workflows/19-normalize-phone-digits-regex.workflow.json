@@ -5,26 +5,28 @@
   "steps": [
     {
       "id": "step_normalize_customer_id_digits",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_customer_id"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "replaceRegex",
-        "args": [
-          {
-            "kind": "value"
-          },
-          {
-            "kind": "literal",
-            "value": "[^0-9]"
-          },
-          {
-            "kind": "literal",
-            "value": ""
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "replaceRegex",
+          "args": [
+            {
+              "kind": "value"
+            },
+            {
+              "kind": "literal",
+              "value": "[^0-9]"
+            },
+            {
+              "kind": "literal",
+              "value": ""
+            }
+          ]
+        }
       }
     }
   ]

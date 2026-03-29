@@ -47,12 +47,20 @@ export function collectWorkflowColumnIds(workflow: Workflow): string[] {
 
 function collectStepColumnIds(step: WorkflowStep, columnIds: Set<string>) {
   switch (step.type) {
-    case 'scopedTransform':
+    case 'scopedRule':
       step.columnIds.forEach((columnId) => columnIds.add(columnId));
       if (step.rowCondition) {
         collectExpressionColumnIds(step.rowCondition, columnIds);
       }
-      collectExpressionColumnIds(step.expression, columnIds);
+      step.cases?.forEach((ruleCase) => {
+        collectExpressionColumnIds(ruleCase.when, columnIds);
+        if (ruleCase.then.value) {
+          collectExpressionColumnIds(ruleCase.then.value, columnIds);
+        }
+      });
+      if (step.defaultPatch?.value) {
+        collectExpressionColumnIds(step.defaultPatch.value, columnIds);
+      }
       return;
     case 'dropColumns':
     case 'combineColumns':

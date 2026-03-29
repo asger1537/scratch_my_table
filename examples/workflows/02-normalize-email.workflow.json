@@ -5,25 +5,27 @@
   "steps": [
     {
       "id": "step_normalize_email",
-      "type": "scopedTransform",
+      "type": "scopedRule",
       "columnIds": [
         "col_email",
         "col_email_2"
       ],
-      "expression": {
-        "kind": "call",
-        "name": "lower",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "value"
-              }
-            ]
-          }
-        ]
+      "defaultPatch": {
+        "value": {
+          "kind": "call",
+          "name": "lower",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "value"
+                }
+              ]
+            }
+          ]
+        }
       }
     }
   ]

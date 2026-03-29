@@ -111,6 +111,7 @@ function normalizeImportedTable(input: ImportedTableInput, tableIdCounts: Map<st
     rowsById[rowId] = {
       rowId,
       cellsByColumnId,
+      stylesByColumnId: {},
     };
     rowOrder.push(rowId);
   }

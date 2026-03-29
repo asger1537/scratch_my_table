@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "workflowId": "wf_highlight_vip_fields",
+  "name": "Highlight VIP fields",
+  "description": "Highlight status and balance cells for VIP customers.",
+  "steps": [
+    {
+      "id": "step_highlight_vip_fields",
+      "type": "scopedRule",
+      "columnIds": [
+        "col_status",
+        "col_balance"
+      ],
+      "rowCondition": {
+        "kind": "call",
+        "name": "equals",
+        "args": [
+          {
+            "kind": "column",
+            "columnId": "col_vip"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          }
+        ]
+      },
+      "defaultPatch": {
+        "format": {
+          "fillColor": "#fff2cc"
+        }
+      }
+    }
+  ]
+}

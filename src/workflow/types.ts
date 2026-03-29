@@ -5,7 +5,8 @@ export type WorkflowNonNullScalar = Exclude<WorkflowScalar, null>;
 export type WorkflowVersion = 2;
 
 export type WorkflowStepType =
-  | 'scopedTransform'
+  | 'comment'
+  | 'scopedRule'
   | 'dropColumns'
   | 'renameColumn'
   | 'deriveColumn'
@@ -95,12 +96,33 @@ export interface WorkflowCallExpression {
   args: WorkflowExpression[];
 }
 
-export interface WorkflowScopedTransformStep {
+export interface WorkflowCellFormatPatch {
+  fillColor?: string;
+}
+
+export interface WorkflowCellPatch {
+  value?: WorkflowExpression;
+  format?: WorkflowCellFormatPatch;
+}
+
+export interface WorkflowRuleCase {
+  when: WorkflowExpression;
+  then: WorkflowCellPatch;
+}
+
+export interface WorkflowScopedRuleStep {
   id: string;
-  type: 'scopedTransform';
+  type: 'scopedRule';
   columnIds: string[];
   rowCondition?: WorkflowExpression;
-  expression: WorkflowExpression;
+  cases?: WorkflowRuleCase[];
+  defaultPatch?: WorkflowCellPatch;
+}
+
+export interface WorkflowCommentStep {
+  id: string;
+  type: 'comment';
+  text: string;
 }
 
 export interface WorkflowRenameColumnStep {
@@ -164,7 +186,8 @@ export interface WorkflowSortRowsStep {
 }
 
 export type WorkflowStep =
-  | WorkflowScopedTransformStep
+  | WorkflowCommentStep
+  | WorkflowScopedRuleStep
   | WorkflowDropColumnsStep
   | WorkflowRenameColumnStep
   | WorkflowDeriveColumnStep
@@ -214,6 +237,15 @@ export interface WorkflowExecutionWarning {
   details?: Record<string, unknown>;
 }
 
+export interface WorkflowStepExecutionSummary {
+  stepId: string;
+  stepType: WorkflowStepType;
+  matchedCellCount: number;
+  valueChangedCellCount: number;
+  formatChangedCellCount: number;
+  changedCellCount: number;
+}
+
 export interface WorkflowExecutionResult {
   transformedTable: Table | null;
   validationErrors: WorkflowValidationIssue[];
@@ -224,6 +256,7 @@ export interface WorkflowExecutionResult {
   removedRowCount: number;
   rowOrderChanged: boolean;
   sortApplied: boolean;
+  stepSummaries: WorkflowStepExecutionSummary[];
 }
 
 export interface WorkflowExpressionValidationResult {

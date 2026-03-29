@@ -10,6 +10,9 @@ export type LogicalType =
   | 'mixed';
 
 export type CellValue = string | number | boolean | null;
+export interface CellStyle {
+  fillColor?: string;
+}
 
 export type ImportWarningScope = 'workbook' | 'table' | 'column' | 'cell';
 
@@ -38,6 +41,7 @@ export interface Schema {
 export interface TableRow {
   rowId: string;
   cellsByColumnId: Record<string, CellValue>;
+  stylesByColumnId: Record<string, CellStyle>;
 }
 
 export interface Table {
@@ -95,4 +99,26 @@ export function getOrderedRows(table: Table): TableRow[] {
 
 export function isMissingValue(value: CellValue): boolean {
   return value === null || value === '';
+}
+
+export function isValidFillColor(value: string): boolean {
+  return /^#[0-9a-f]{6}$/i.test(value.trim());
+}
+
+export function normalizeFillColor(value: string): string {
+  return value.trim().toLocaleLowerCase();
+}
+
+export function getCellStyle(row: TableRow, columnId: string): CellStyle | undefined {
+  return row.stylesByColumnId[columnId];
+}
+
+export function getReadableTextColor(fillColor: string): string {
+  const normalized = normalizeFillColor(fillColor).slice(1);
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
+
+  return luminance >= 160 ? '#1c1a17' : '#fffdf9';
 }

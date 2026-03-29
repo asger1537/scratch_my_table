@@ -127,3 +127,18 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 
 - File: `22-derive-signup-date-metrics.workflow.json`
 - Uses `now`, `datePart`, `dateAdd`, and `dateDiff` to derive a stable run timestamp, `signup_year`, `follow_up_at`, and `account_age_days` from `sign_up_date`.
+
+## 23. Highlight VIP Fields
+
+- File: `23-highlight-vip-fields.workflow.json`
+- Uses `scopedRule` with a format patch to highlight `status` and `balance` for rows where `VIP?` is `true`.
+
+## 24. Scoped Rule Single Action
+
+- File: `24-scoped-rule-single-action.workflow.json`
+- Shows the compact single-action authoring shape: one `defaultPatch` that both normalizes VIP `status` cells and fills them with a highlight color.
+
+## 25. Scoped Rule Cases
+
+- File: `25-scoped-rule-cases.workflow.json`
+- Shows the cases-mode authoring shape: ordered `cases` with first-match-wins semantics plus a `defaultPatch` fallback for `status`.
