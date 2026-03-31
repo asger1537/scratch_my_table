@@ -1,6 +1,21 @@
 import { ChangeEvent, DragEvent, startTransition, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { DEFAULT_GEMINI_MODEL, appendAIDevLog, buildGeminiRequestExport, replaceWorkflowSteps, runGeminiDraftTurn, summarizeDraftStepsForDisplay, type AIDebugTrace, type AIDraft, type AIMessage, type AIProgressEvent, type AISettings, type GeminiClientLogEvent } from './ai';
+import {
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_OPTIONS,
+  appendAIDevLog,
+  buildGeminiRequestExport,
+  normalizeGeminiModelSelection,
+  replaceWorkflowSteps,
+  runGeminiDraftTurn,
+  summarizeDraftStepsForDisplay,
+  type AIDebugTrace,
+  type AIDraft,
+  type AIMessage,
+  type AIProgressEvent,
+  type AISettings,
+  type GeminiClientLogEvent,
+} from './ai';
 import {
   WorkflowEditor,
   collectWorkflowColumnIds,
@@ -25,6 +40,7 @@ const PREVIEW_ROW_LIMIT = 50;
 const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
 const GEMINI_API_KEY_STORAGE_KEY = 'scratch_my_table.gemini_api_key';
 const GEMINI_MODEL_STORAGE_KEY = 'scratch_my_table.gemini_model';
+const GEMINI_THINKING_ENABLED_STORAGE_KEY = 'scratch_my_table.gemini_thinking_enabled';
 
 export default function App() {
   const uploadDragDepthRef = useRef(0);
@@ -52,7 +68,8 @@ export default function App() {
   const [isAIDialogOpen, setIsAIDialogOpen] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>(() => ({
     apiKey: readStoredValue(GEMINI_API_KEY_STORAGE_KEY),
-    model: readStoredValue(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL,
+    model: normalizeGeminiModelSelection(readStoredValue(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL),
+    thinkingEnabled: readStoredBoolean(GEMINI_THINKING_ENABLED_STORAGE_KEY),
   }));
   const [aiMessages, setAIMessages] = useState<AIMessage[]>([]);
   const [aiPromptValue, setAIPromptValue] = useState('');
@@ -69,6 +86,7 @@ export default function App() {
   const resultPreviewRows = resultTable ? getOrderedRows(resultTable).slice(0, PREVIEW_ROW_LIMIT) : [];
   const deferredAuthoredWorkflow = useDeferredValue(authoredWorkflow);
   const authoredWorkflowJson = deferredAuthoredWorkflow ? workflowToJson(deferredAuthoredWorkflow) : '';
+  const selectedAIModel = normalizeGeminiModelSelection(aiSettings.model);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -118,8 +136,9 @@ export default function App() {
 
   useEffect(() => {
     window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, aiSettings.apiKey);
-    window.localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, aiSettings.model);
-  }, [aiSettings]);
+    window.localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, selectedAIModel);
+    window.localStorage.setItem(GEMINI_THINKING_ENABLED_STORAGE_KEY, aiSettings.thinkingEnabled ? 'true' : 'false');
+  }, [aiSettings.apiKey, aiSettings.thinkingEnabled, selectedAIModel]);
 
   useEffect(() => {
     setIsAIDialogOpen(false);
@@ -410,7 +429,8 @@ export default function App() {
       turnId,
       kind: 'turn_start',
       prompt: userText,
-      model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+      model: selectedAIModel,
+      thinkingEnabled: aiSettings.thinkingEnabled,
       workflowId: aiContextWorkflow.workflowId,
       activeTableId: activeTable.tableId,
     });
@@ -419,7 +439,8 @@ export default function App() {
       const outcome = await runGeminiDraftTurn({
         settings: {
           apiKey: aiSettings.apiKey.trim(),
-          model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+          model: selectedAIModel,
+          thinkingEnabled: aiSettings.thinkingEnabled,
         },
         context: {
           table: activeTable,
@@ -557,7 +578,8 @@ export default function App() {
     const requestExport = buildGeminiRequestExport({
       settings: {
         apiKey: aiSettings.apiKey.trim(),
-        model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+        model: selectedAIModel,
+        thinkingEnabled: aiSettings.thinkingEnabled,
       },
       context: {
         table: activeTable,
@@ -1080,16 +1102,40 @@ function AIAssistantModal({
           </label>
           <label className="workflow-meta-field">
             <span>Model</span>
-            <input
+            <select
               onChange={(event) =>
                 onSettingsChange({
                   ...aiSettings,
                   model: event.target.value,
                 })
               }
-              placeholder={DEFAULT_GEMINI_MODEL}
               value={aiSettings.model}
-            />
+            >
+              {GEMINI_MODEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="workflow-meta-field">
+            <span>Thinking mode</span>
+            <div className="ai-assistant-toggle">
+              <input
+                checked={aiSettings.thinkingEnabled}
+                onChange={(event) =>
+                  onSettingsChange({
+                    ...aiSettings,
+                    thinkingEnabled: event.target.checked,
+                  })
+                }
+                type="checkbox"
+              />
+              <div className="ai-assistant-toggle__body">
+                <strong>{aiSettings.thinkingEnabled ? 'Enabled' : 'Disabled'}</strong>
+                <small>{describeAIThinkingMode(aiSettings.model, aiSettings.thinkingEnabled)}</small>
+              </div>
+            </div>
           </label>
         </div>
 
@@ -1152,7 +1198,7 @@ function AIAssistantModal({
                   Download prompt
                 </button>
                 <button disabled={!canSendPrompt} onClick={onSendPrompt} type="button">
-                  {isLoading ? 'Thinking...' : 'Send'}
+                  {isLoading ? 'Working...' : 'Send'}
                 </button>
               </div>
             </div>
@@ -1427,6 +1473,24 @@ function readStoredValue(key: string) {
   }
 
   return window.localStorage.getItem(key) ?? '';
+}
+
+function readStoredBoolean(key: string) {
+  return readStoredValue(key) === 'true';
+}
+
+function describeAIThinkingMode(model: string, thinkingEnabled: boolean) {
+  const normalizedModel = normalizeGeminiModelSelection(model);
+
+  if (normalizedModel.startsWith('gemini-3')) {
+    return thinkingEnabled
+      ? 'On uses Gemini 3 high thinking. Expect higher latency and more billed output tokens.'
+      : 'Off uses Gemini 3 minimal thinking. Google notes the model may still think a little on harder prompts.';
+  }
+
+  return thinkingEnabled
+    ? 'On enables dynamic thinking. Expect higher latency and more billed output tokens.'
+    : 'Off disables thinking to keep drafting faster and cheaper.';
 }
 
 function isAbortError(error: unknown) {

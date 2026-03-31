@@ -426,7 +426,7 @@ code {
 .ai-assistant-settings {
   display: grid;
   gap: 0.9rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
 }
 
 .ai-assistant-layout {
@@ -654,6 +654,7 @@ code {
 }
 
 .workflow-meta-field input,
+.workflow-meta-field select,
 .workflow-meta-field textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -667,8 +668,40 @@ code {
   resize: vertical;
 }
 
+.workflow-meta-field small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .workflow-meta-field--wide {
   grid-column: span 1;
+}
+
+.ai-assistant-toggle {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  min-height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fffdf9;
+  padding: 0.75rem 0.9rem;
+}
+
+.ai-assistant-toggle input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0.15rem 0 0;
+  accent-color: var(--accent);
+}
+
+.ai-assistant-toggle__body {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.ai-assistant-toggle__body strong {
+  font-size: 0.95rem;
 }
 
 .workflow-editor-toolbox-search {

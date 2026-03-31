@@ -90,6 +90,48 @@ describe('AI workflow copilot helpers', () => {
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
   });
 
+  it('maps the thinking toggle onto Gemini 2.5 and Gemini 3 request configs', () => {
+    const context = createPromptContext();
+    const userMessage = {
+      role: 'user' as const,
+      text: 'Normalize the email column.',
+      timestamp: '2026-03-31T09:00:00.000Z',
+    };
+
+    const flashThinkingOnExport = buildGeminiRequestExport({
+      settings: {
+        ...createAISettings(),
+        thinkingEnabled: true,
+      },
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+    const flashLiteThinkingOffExport = buildGeminiRequestExport({
+      settings: {
+        ...createAISettings(),
+        model: 'gemini-3.1-flash-lite-preview',
+      },
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+    const flashLiteThinkingOnExport = buildGeminiRequestExport({
+      settings: {
+        ...createAISettings(),
+        model: 'gemini-3.1-flash-lite-preview',
+        thinkingEnabled: true,
+      },
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+
+    expect(flashThinkingOnExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: -1 });
+    expect(flashLiteThinkingOffExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+    expect(flashLiteThinkingOnExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' });
+  });
+
   it('surfaces malformed Gemini HTTP bodies with a compact preview', async () => {
     const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce({
       ok: true,
@@ -521,6 +563,7 @@ function createAISettings(): AISettings {
   return {
     apiKey: 'test-key',
     model: 'gemini-2.5-flash',
+    thinkingEnabled: false,
   };
 }
 

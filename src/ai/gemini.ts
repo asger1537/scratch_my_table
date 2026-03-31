@@ -15,8 +15,30 @@ interface GeminiGenerateContentResponse {
 }
 
 type GeminiResponseJsonSchema = Record<string, unknown>;
+type GeminiThinkingConfig =
+  | {
+      thinkingBudget: number;
+    }
+  | {
+      thinkingLevel: 'minimal' | 'high';
+    };
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const GEMINI_MODEL_OPTIONS = [
+  {
+    value: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+  },
+  {
+    value: 'gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash-Lite',
+  },
+  {
+    value: 'gemini-3.1-flash-lite-preview',
+    label: 'Gemini 3.1 Flash-Lite Preview',
+  },
+] as const;
+const GEMINI_MODEL_OPTION_VALUES = new Set<string>(GEMINI_MODEL_OPTIONS.map((option) => option.value));
 const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
 const GEMINI_MAX_OUTPUT_TOKENS = 1024;
 const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
@@ -38,9 +60,7 @@ export interface GeminiRequestExport {
       responseJsonSchema: GeminiResponseJsonSchema;
       temperature: number;
       maxOutputTokens: number;
-      thinkingConfig?: {
-        thinkingBudget: number;
-      };
+      thinkingConfig?: GeminiThinkingConfig;
     };
   };
 }
@@ -109,7 +129,7 @@ export function buildGeminiRequestExport(input: GeminiDraftTurnInput): GeminiReq
   const systemInstructionText = buildGeminiSystemInstruction(input.context);
   const contents = buildGeminiContents(input.context.messages, input.userMessage);
   const normalizedModel = normalizeGeminiModel(input.settings.model);
-  const thinkingConfig = buildThinkingConfig(normalizedModel);
+  const thinkingConfig = buildThinkingConfig(normalizedModel, input.settings.thinkingEnabled);
 
   return {
     exportedAt: new Date().toISOString(),
@@ -220,13 +240,23 @@ function normalizeGeminiModel(model: string) {
   return model.trim().replace(/^models\//, '') || DEFAULT_GEMINI_MODEL;
 }
 
-function buildThinkingConfig(model: string) {
+export function normalizeGeminiModelSelection(model: string) {
+  const normalizedModel = normalizeGeminiModel(model);
+  return GEMINI_MODEL_OPTION_VALUES.has(normalizedModel) ? normalizedModel : DEFAULT_GEMINI_MODEL;
+}
+
+function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThinkingConfig | undefined {
   const normalizedModel = model.toLowerCase();
 
   if (normalizedModel.startsWith('gemini-2.5-flash')) {
-    // Workflow drafting is latency-sensitive and the output is tightly schema-bound.
     return {
-      thinkingBudget: 0,
+      thinkingBudget: thinkingEnabled ? -1 : 0,
+    };
+  }
+
+  if (normalizedModel.startsWith('gemini-3') && normalizedModel.includes('flash')) {
+    return {
+      thinkingLevel: thinkingEnabled ? 'high' : 'minimal',
     };
   }
 

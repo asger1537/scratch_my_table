@@ -11,6 +11,7 @@ export type WorkflowStepInput =
 export interface AISettings {
   apiKey: string;
   model: string;
+  thinkingEnabled: boolean;
 }
 
 export interface AIMessage {
