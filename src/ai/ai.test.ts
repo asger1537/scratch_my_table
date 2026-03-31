@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { appendDraftStepsToWorkflow, assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, parseGeminiWorkflowResponse, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
+import { appendDraftStepsToWorkflow, assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, generateGeminiDraftTurn, parseGeminiWorkflowResponse, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
@@ -45,7 +45,51 @@ describe('AI workflow copilot helpers', () => {
     ]);
     expect(requestExport.requestBody.systemInstruction.parts[0]?.text).toBe(requestExport.systemInstructionText);
     expect(requestExport.requestBody.contents).toEqual(requestExport.contents);
+    expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(1024);
+    expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as {
+      oneOf?: Array<Record<string, unknown>>;
+    };
+    const draftResponseSchema = responseJsonSchema.oneOf?.[1];
+    const draftStepSchemas = (draftResponseSchema?.properties as {
+      steps?: { items?: { oneOf?: Array<Record<string, unknown>> } };
+    } | undefined)?.steps?.items?.oneOf;
+
+    expect(draftStepSchemas).toHaveLength(10);
+    expect(
+      draftStepSchemas?.every((variant) => {
+        const required = Array.isArray(variant.required) ? variant.required : [];
+        const properties = variant.properties as Record<string, unknown> | undefined;
+        const typeProperty = properties?.type as { const?: string } | undefined;
+
+        return required.includes('type') && !required.includes('id') && !properties?.id && typeof typeProperty?.const === 'string';
+      }),
+    ).toBe(true);
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
+  });
+
+  it('surfaces malformed Gemini HTTP bodies with a compact preview', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}',
+    } as Response);
+
+    await expect(
+      generateGeminiDraftTurn(
+        {
+          settings: createAISettings(),
+          context: createPromptContext(),
+          userMessage: {
+            role: 'user',
+            text: 'Normalize the email column.',
+            timestamp: '2026-03-31T09:00:00.000Z',
+          },
+          phase: 'initial',
+        },
+        fetchFn,
+      ),
+    ).rejects.toThrow('Gemini returned an invalid JSON HTTP response body.');
   });
 
   it('parses clarify and draft Gemini responses and rejects malformed payloads', () => {
@@ -361,17 +405,20 @@ function createAISettings(): AISettings {
 }
 
 function createGeminiResponse(text: string): Response {
+  const payload = {
+    candidates: [
+      {
+        content: {
+          parts: [{ text }],
+        },
+      },
+    ],
+  };
+
   return {
     ok: true,
     status: 200,
-    json: async () => ({
-      candidates: [
-        {
-          content: {
-            parts: [{ text }],
-          },
-        },
-      ],
-    }),
+    text: async () => JSON.stringify(payload),
+    json: async () => payload,
   } as Response;
 }

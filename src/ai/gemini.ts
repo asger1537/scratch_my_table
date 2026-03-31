@@ -14,59 +14,12 @@ interface GeminiGenerateContentResponse {
   };
 }
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+type GeminiResponseJsonSchema = Record<string, unknown>;
 
-const GEMINI_RESPONSE_JSON_SCHEMA = {
-  oneOf: [
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        mode: {
-          type: 'string',
-          const: 'clarify',
-        },
-        assistantMessage: {
-          type: 'string',
-        },
-        assumptions: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-        },
-      },
-      required: ['mode', 'assistantMessage', 'assumptions'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        mode: {
-          type: 'string',
-          const: 'draft',
-        },
-        assistantMessage: {
-          type: 'string',
-        },
-        assumptions: {
-          type: 'array',
-          items: {
-            type: 'string',
-          },
-        },
-        steps: {
-          type: 'array',
-          minItems: 1,
-          items: {
-            type: 'object',
-          },
-        },
-      },
-      required: ['mode', 'assistantMessage', 'assumptions', 'steps'],
-    },
-  ],
-};
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
+const GEMINI_MAX_OUTPUT_TOKENS = 1024;
+const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
 
 export interface GeminiRequestExport {
   exportedAt: string;
@@ -82,8 +35,12 @@ export interface GeminiRequestExport {
     contents: ReturnType<typeof buildGeminiContents>;
     generationConfig: {
       responseMimeType: 'application/json';
-      responseJsonSchema: typeof GEMINI_RESPONSE_JSON_SCHEMA;
+      responseJsonSchema: GeminiResponseJsonSchema;
       temperature: number;
+      maxOutputTokens: number;
+      thinkingConfig?: {
+        thinkingBudget: number;
+      };
     };
   };
 }
@@ -92,9 +49,14 @@ export async function generateGeminiDraftTurn(
   input: GeminiDraftTurnInput,
   fetchFn: typeof fetch = fetch,
 ): Promise<GeminiDraftTurnResult> {
+  const requestExport = buildGeminiRequestExport(input);
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => {
+    abortController.abort();
+  }, GEMINI_REQUEST_TIMEOUT_MS);
+
   try {
     emitLogEvent(input, 'request_started', 'Gemini request started.');
-    const requestExport = buildGeminiRequestExport(input);
     const response = await fetchFn(requestExport.requestUrl, {
       method: 'POST',
       headers: {
@@ -102,16 +64,12 @@ export async function generateGeminiDraftTurn(
         'x-goog-api-key': input.settings.apiKey,
       },
       body: JSON.stringify(requestExport.requestBody),
+      signal: abortController.signal,
     });
-    const payload = (await response.json()) as GeminiGenerateContentResponse;
+    const payload = parseGeminiHttpResponseBody(await response.text());
 
     if (!response.ok) {
-      const errorMessage = payload.error?.message ?? `Gemini request failed with status ${response.status}.`;
-
-      emitLogEvent(input, 'request_failed', errorMessage, {
-        error: errorMessage,
-      });
-      throw new Error(errorMessage);
+      throw new Error(payload.error?.message ?? `Gemini request failed with status ${response.status}.`);
     }
 
     const rawText = extractGeminiText(payload);
@@ -129,10 +87,21 @@ export async function generateGeminiDraftTurn(
       rawText,
     };
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      const timeoutMessage = `Gemini request timed out after ${Math.floor(GEMINI_REQUEST_TIMEOUT_MS / 1000)} seconds.`;
+
+      emitLogEvent(input, 'request_failed', timeoutMessage, {
+        error: timeoutMessage,
+      });
+      throw new Error(timeoutMessage);
+    }
+
     emitLogEvent(input, 'request_failed', error instanceof Error ? error.message : 'Gemini request failed.', {
       error: error instanceof Error ? error.message : 'Gemini request failed.',
     });
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -140,6 +109,7 @@ export function buildGeminiRequestExport(input: GeminiDraftTurnInput): GeminiReq
   const systemInstructionText = buildGeminiSystemInstruction(input.context);
   const contents = buildGeminiContents(input.context.messages, input.userMessage);
   const normalizedModel = normalizeGeminiModel(input.settings.model);
+  const thinkingConfig = buildThinkingConfig(normalizedModel);
 
   return {
     exportedAt: new Date().toISOString(),
@@ -157,6 +127,8 @@ export function buildGeminiRequestExport(input: GeminiDraftTurnInput): GeminiReq
         responseMimeType: 'application/json',
         responseJsonSchema: GEMINI_RESPONSE_JSON_SCHEMA,
         temperature: 0.2,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        ...(thinkingConfig ? { thinkingConfig } : {}),
       },
     },
   };
@@ -226,6 +198,19 @@ function stripJsonCodeFence(value: string) {
   return trimmed;
 }
 
+function parseGeminiHttpResponseBody(rawBody: string): GeminiGenerateContentResponse {
+  try {
+    return JSON.parse(rawBody) as GeminiGenerateContentResponse;
+  } catch {
+    const compactPreview = rawBody.replace(/\s+/g, ' ').trim().slice(0, 280);
+    throw new Error(
+      compactPreview === ''
+        ? 'Gemini returned an invalid empty HTTP response body.'
+        : `Gemini returned an invalid JSON HTTP response body. Preview: ${compactPreview}`,
+    );
+  }
+}
+
 function buildGeminiUrl(model: string) {
   const normalizedModel = normalizeGeminiModel(model);
   return `https://generativelanguage.googleapis.com/v1beta/models/${normalizedModel}:generateContent`;
@@ -233,6 +218,323 @@ function buildGeminiUrl(model: string) {
 
 function normalizeGeminiModel(model: string) {
   return model.trim().replace(/^models\//, '') || DEFAULT_GEMINI_MODEL;
+}
+
+function buildThinkingConfig(model: string) {
+  const normalizedModel = model.toLowerCase();
+
+  if (normalizedModel.startsWith('gemini-2.5-flash')) {
+    // Workflow drafting is latency-sensitive and the output is tightly schema-bound.
+    return {
+      thinkingBudget: 0,
+    };
+  }
+
+  return undefined;
+}
+
+function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
+  const stringSchema = {
+    type: 'string',
+    minLength: 1,
+  };
+  const stringArraySchema = {
+    type: 'array',
+    minItems: 1,
+    items: stringSchema,
+  };
+  const scalarSchema = {
+    type: ['string', 'number', 'boolean', 'null'],
+  };
+  const expressionSchema = {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      kind: {
+        type: 'string',
+        enum: ['value', 'literal', 'column', 'call'],
+      },
+      value: scalarSchema,
+      columnId: stringSchema,
+      name: stringSchema,
+      args: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+        },
+      },
+    },
+    required: ['kind'],
+  };
+  const cellFormatPatchSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      fillColor: {
+        type: 'string',
+      },
+    },
+  };
+  const cellPatchSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      value: expressionSchema,
+      format: cellFormatPatchSchema,
+    },
+    anyOf: [
+      {
+        required: ['value'],
+      },
+      {
+        required: ['format'],
+      },
+    ],
+  };
+  const columnSpecSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      columnId: stringSchema,
+      displayName: stringSchema,
+    },
+    required: ['columnId', 'displayName'],
+  };
+  const sortKeySchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      columnId: stringSchema,
+      direction: {
+        type: 'string',
+        enum: ['asc', 'desc'],
+      },
+    },
+    required: ['columnId', 'direction'],
+  };
+  const ruleCaseSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      when: expressionSchema,
+      then: cellPatchSchema,
+    },
+    required: ['when', 'then'],
+  };
+  const draftStepSchemas = [
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'comment',
+        },
+        text: stringSchema,
+      },
+      required: ['type', 'text'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'scopedRule',
+        },
+        columnIds: stringArraySchema,
+        rowCondition: expressionSchema,
+        cases: {
+          type: 'array',
+          minItems: 1,
+          items: ruleCaseSchema,
+        },
+        defaultPatch: cellPatchSchema,
+      },
+      required: ['type', 'columnIds'],
+      anyOf: [
+        {
+          required: ['cases'],
+        },
+        {
+          required: ['defaultPatch'],
+        },
+      ],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'dropColumns',
+        },
+        columnIds: stringArraySchema,
+      },
+      required: ['type', 'columnIds'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'renameColumn',
+        },
+        columnId: stringSchema,
+        newDisplayName: stringSchema,
+      },
+      required: ['type', 'columnId', 'newDisplayName'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'deriveColumn',
+        },
+        newColumn: columnSpecSchema,
+        expression: expressionSchema,
+      },
+      required: ['type', 'newColumn', 'expression'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'filterRows',
+        },
+        mode: {
+          type: 'string',
+          enum: ['keep', 'drop'],
+        },
+        condition: expressionSchema,
+      },
+      required: ['type', 'mode', 'condition'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'splitColumn',
+        },
+        columnId: stringSchema,
+        delimiter: stringSchema,
+        outputColumns: {
+          type: 'array',
+          minItems: 2,
+          items: columnSpecSchema,
+        },
+      },
+      required: ['type', 'columnId', 'delimiter', 'outputColumns'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'combineColumns',
+        },
+        columnIds: {
+          type: 'array',
+          minItems: 2,
+          items: stringSchema,
+        },
+        separator: {
+          type: 'string',
+        },
+        newColumn: columnSpecSchema,
+      },
+      required: ['type', 'columnIds', 'separator', 'newColumn'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'deduplicateRows',
+        },
+        columnIds: stringArraySchema,
+      },
+      required: ['type', 'columnIds'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'sortRows',
+        },
+        sorts: {
+          type: 'array',
+          minItems: 1,
+          items: sortKeySchema,
+        },
+      },
+      required: ['type', 'sorts'],
+    },
+  ];
+
+  return {
+    oneOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          mode: {
+            type: 'string',
+            const: 'clarify',
+          },
+          assistantMessage: {
+            type: 'string',
+          },
+          assumptions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+        },
+        required: ['mode', 'assistantMessage', 'assumptions'],
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          mode: {
+            type: 'string',
+            const: 'draft',
+          },
+          assistantMessage: {
+            type: 'string',
+          },
+          assumptions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+          steps: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              oneOf: draftStepSchemas,
+            },
+          },
+        },
+        required: ['mode', 'assistantMessage', 'assumptions', 'steps'],
+      },
+    ],
+  };
 }
 
 function emitLogEvent(

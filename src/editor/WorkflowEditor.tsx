@@ -80,6 +80,7 @@ const SCHEMA_AFFECTING_CHANGE_DELAY_MS = 150;
 const SEMANTIC_CHANGE_DELAY_MS = 1000;
 const SCHEMA_PROJECTION_DELAY_MS = 700;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
+const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 
 export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, onWorkspaceChange }: WorkflowEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +97,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     onWorkspaceChange,
   });
   const activeToolboxCategoryIdRef = useRef<string | null>(null);
+  const lastToolboxSearchPointerDownAtRef = useRef(0);
   const toolboxSearchQueryRef = useRef('');
   const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow));
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
@@ -221,9 +223,17 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         if (nextCategoryId) {
           syncActiveToolboxCategory(nextCategoryId);
         } else {
-          queueMicrotask(() => {
-            restoreActiveToolboxSelection();
-          });
+          // Preserve the open flyout when focus moves to the external category search UI.
+          const shouldRestoreFromSearchUi =
+            performance.now() - lastToolboxSearchPointerDownAtRef.current <= TOOLBOX_SEARCH_RESTORE_WINDOW_MS;
+
+          if (shouldRestoreFromSearchUi) {
+            queueMicrotask(() => {
+              restoreActiveToolboxSelection();
+            });
+          } else {
+            syncActiveToolboxCategory(null);
+          }
         }
         return;
       }
@@ -366,6 +376,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
 
   function handleToolboxSearchPointerDown(event: MouseEvent<HTMLDivElement | HTMLInputElement>) {
     event.stopPropagation();
+    lastToolboxSearchPointerDownAtRef.current = performance.now();
 
     const workspace = workspaceRef.current;
 
