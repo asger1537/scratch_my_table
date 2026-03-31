@@ -2,8 +2,8 @@ import type { Workflow, WorkflowStep } from '../workflow';
 
 import type { WorkflowStepInput } from './types';
 
-export function assignWorkflowStepIds(workflow: Workflow, stepInputs: WorkflowStepInput[]): WorkflowStep[] {
-  const usedIds = new Set(workflow.steps.map((step) => step.id));
+export function assignWorkflowStepIds(stepInputs: WorkflowStepInput[]): WorkflowStep[] {
+  const usedIds = new Set<string>();
   const nextCounterByType = new Map<string, number>();
 
   return stepInputs.map((stepInput) => {
@@ -26,10 +26,10 @@ export function assignWorkflowStepIds(workflow: Workflow, stepInputs: WorkflowSt
   });
 }
 
-export function appendDraftStepsToWorkflow(workflow: Workflow, draftSteps: WorkflowStep[]): Workflow {
+export function replaceWorkflowSteps(workflow: Workflow, draftSteps: WorkflowStep[]): Workflow {
   return {
     ...workflow,
-    steps: [...workflow.steps, ...draftSteps],
+    steps: draftSteps,
   };
 }
 

@@ -1,6 +1,6 @@
 import { validateWorkflowSemantics, type Workflow } from '../workflow';
 
-import { appendDraftStepsToWorkflow, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
+import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
 import type { AIDraft, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
 
 export interface GeminiContent {
@@ -123,12 +123,58 @@ const CURATED_EXAMPLES = [
       assumptions: [],
     },
   },
+  {
+    user: 'Update the existing email fallback so cells turn yellow when Email (2) was used.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will update the existing email fallback rule so it also colors those cells yellow.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+                format: {
+                  fillColor: '#FFF2CC',
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+      ],
+    },
+  },
 ];
 
 export function buildGeminiSystemInstruction(context: AIPromptContext): string {
   const availableSchema = getAvailableSchemaContextWorkflow(context);
   const workflowSummary = summarizeWorkflowSteps(context.workflow);
+  const workflowSteps = context.workflow.steps.length > 0 ? JSON.stringify(stripWorkflowStepIds(context.workflow.steps), null, 2) : '(no steps yet)';
   const draftSummary = context.draft ? JSON.stringify(stripWorkflowStepIds(context.draft.steps), null, 2) : '(no draft yet)';
+  const currentIssues = context.currentIssues.length > 0
+    ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
+    : ['- (none)'];
+  const workflowContextNote = context.workflowContextSource === 'lastValidSnapshot'
+    ? 'The canonical workflow summary below is the last valid snapshot because the live block workspace currently has issues. Use the live workspace snapshot and issue list to infer the intended fix. Applying the draft will replace the broken workspace with the drafted workflow.'
+    : 'The canonical workflow summary below reflects the current valid workflow context.';
+  const draftSemanticsNote = context.draft
+    ? 'There is an existing AI draft. Return the FULL updated workflow step list that should replace that AI draft.'
+    : 'There is no AI draft yet. Return the FULL updated workflow step list that should replace the current workflow.';
 
   return [
     'You are an expert Scratch My Table copilot.',
@@ -136,9 +182,13 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     'Return JSON only. Do not use markdown fences.',
     'Never return a workflow envelope or step IDs. Return only the structured response object.',
     'If the request is ambiguous or missing a required choice, return mode "clarify" and ask a short targeted question.',
-    'If you can act, return mode "draft" and include the FULL updated draft step list that should replace the current AI draft.',
+    'If you can act, return mode "draft" and include the FULL updated workflow step list.',
     'Never return mode "draft" with an empty steps array. If you cannot produce at least one valid workflow step, return mode "clarify" instead.',
-    'The draft is append-only relative to the existing workflow. Do not rewrite existing workflow steps.',
+    'The returned steps are a full workflow replacement candidate.',
+    'You may rewrite, reorder, insert, or remove steps as needed.',
+    'If a later step drops a column, any logic that depends on that column must happen before the drop or be folded into an earlier step.',
+    workflowContextNote,
+    draftSemanticsNote,
     '',
     'Response contract:',
     '- mode: "clarify" or "draft"',
@@ -171,13 +221,22 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- math: add, subtract, multiply, divide, modulo, round, floor, ceil, abs',
     '- date/time: now, datePart, dateDiff, dateAdd',
     '',
-    'Schema currently available to appended steps:',
+    'Schema currently available to the returned workflow steps:',
     ...availableSchema.map((column) => `- ${column.columnId} | ${column.displayName} | ${column.logicalType}`),
+    '',
+    'Current block workspace snapshot:',
+    context.workspacePromptSnapshot || '(live workspace snapshot unavailable)',
+    '',
+    'Current workflow/editor issues:',
+    ...currentIssues,
+    '',
+    'Current workflow steps without IDs:',
+    workflowSteps,
     '',
     'Current workflow summary:',
     ...workflowSummary.map((line) => `- ${line}`),
     '',
-    'Current AI draft steps without IDs:',
+    'Current AI draft workflow steps without IDs:',
     draftSummary,
     '',
     'Curated examples:',
@@ -201,8 +260,10 @@ export function buildRepairUserMessage(
 ) {
   return [
     'Your previous draft did not validate locally.',
-    'Rewrite the FULL updated draft so it satisfies these issues.',
+    'Rewrite the FULL updated workflow step list so it satisfies these issues.',
     'Use only the available schema and allowed canonical step/function names.',
+    'You may rewrite, reorder, insert, or remove earlier steps.',
+    'If a validation issue says a column does not exist, do not reference it after it has been dropped. Move that logic before the drop or fold it into an earlier step.',
     'Do not ask a clarification question in this repair turn. Return mode "draft".',
     'Return at least one workflow step. Do not return an empty steps array.',
     '',
@@ -224,7 +285,7 @@ export function buildRepairUserMessage(
 }
 
 function getAvailableSchemaContextWorkflow(context: AIPromptContext) {
-  const workflowForSchema = context.draft ? appendDraftStepsToWorkflow(context.workflow, context.draft.steps) : context.workflow;
+  const workflowForSchema = context.draft ? replaceWorkflowSteps(context.workflow, context.draft.steps) : context.workflow;
   const validation = validateWorkflowSemantics(workflowForSchema, context.table);
 
   return validation.valid ? validation.finalSchema.columns : context.table.schema.columns;

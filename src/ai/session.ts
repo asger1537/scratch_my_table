@@ -1,6 +1,6 @@
 import type { WorkflowValidationIssue } from '../workflow';
 
-import { appendDraftStepsToWorkflow, assignWorkflowStepIds } from './draft';
+import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
 import type {
@@ -251,8 +251,8 @@ async function validateDraftResponse(
     };
   }
 
-  const steps = assignWorkflowStepIds(context.workflow, stepInputs);
-  const candidateWorkflow = appendDraftStepsToWorkflow(context.workflow, steps);
+  const steps = assignWorkflowStepIds(stepInputs);
+  const candidateWorkflow = replaceWorkflowSteps(context.workflow, steps);
   const issues = await validateCandidateWorkflow(candidateWorkflow);
 
   return {

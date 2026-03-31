@@ -70,11 +70,19 @@ export interface AIDraft {
   validationIssues: WorkflowValidationIssue[];
 }
 
+export interface AIPromptIssue {
+  code: string;
+  message: string;
+}
+
 export interface AIPromptContext {
   table: Table;
   workflow: Workflow;
   draft: AIDraft | null;
   messages: AIMessage[];
+  currentIssues: AIPromptIssue[];
+  workflowContextSource: 'current' | 'lastValidSnapshot';
+  workspacePromptSnapshot: string;
 }
 
 export interface GeminiDraftTurnInput {

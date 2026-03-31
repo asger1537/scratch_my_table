@@ -1,4 +1,4 @@
-export { assignWorkflowStepIds, appendDraftStepsToWorkflow, stripWorkflowStepIds } from './draft';
+export { assignWorkflowStepIds, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
 export { appendAIDevLog } from './devLog';
 export { DEFAULT_GEMINI_MODEL, buildGeminiRequestExport, generateGeminiDraftTurn, parseGeminiWorkflowResponse } from './gemini';
 export type { GeminiRequestExport } from './gemini';

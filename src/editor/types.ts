@@ -11,3 +11,7 @@ export interface WorkspaceWorkflowResult {
   workflow: Workflow | null;
   issues: EditorIssue[];
 }
+
+export interface EditorWorkspaceChange extends WorkspaceWorkflowResult {
+  workspacePromptSnapshot: string;
+}

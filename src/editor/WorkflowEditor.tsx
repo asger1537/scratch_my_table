@@ -8,6 +8,7 @@ import type { Workflow } from '../workflow';
 import type { AuthoringWorkflowMetadata } from './authoring';
 import { BLOCK_TYPES, registerWorkflowBlocks } from './blocks';
 import {
+  createWorkspacePromptSnapshot,
   createDefaultWorkflow,
   getWorkspaceMetadata,
   projectWorkspaceStepSchemas,
@@ -22,20 +23,20 @@ import {
   getWorkflowToolboxDefinition,
   registerWorkflowToolboxCategoryCallbacks,
 } from './toolbox';
-import type { WorkspaceWorkflowResult } from './types';
+import type { EditorWorkspaceChange } from './types';
 
 interface WorkflowEditorProps {
   table: Table;
   loadWorkflow: Workflow | null;
   loadVersion: number;
   extraColumnIds: string[];
-  onWorkspaceChange: (result: WorkspaceWorkflowResult) => void;
+  onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
 interface DeferredWorkspaceInputs {
   table: Table;
   extraColumnIds: string[];
-  onWorkspaceChange: (result: WorkspaceWorkflowResult) => void;
+  onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
 type ToolboxWithItemLookup = Blockly.IToolbox & {
@@ -190,7 +191,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
       }
 
       const { table: currentTable, extraColumnIds: currentExtraColumnIds, onWorkspaceChange: handleWorkspaceChange } = latestInputsRef.current;
-      const workflowResult = workspaceToWorkflow(workspace);
+      const workflowResult = buildEditorWorkspaceChange(workspace);
       const nextExtraColumnIds = workflowResult.workflow
         ? collectWorkflowColumnIds(workflowResult.workflow)
         : currentExtraColumnIds;
@@ -370,7 +371,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
 
       setMetadata(nextMetadata);
       setWorkspaceMetadata(workspace, nextMetadata);
-      onWorkspaceChange(workspaceToWorkflow(workspace));
+      onWorkspaceChange(buildEditorWorkspaceChange(workspace));
     };
   }
 
@@ -445,14 +446,14 @@ function loadWorkspace(
   workspace: Blockly.Workspace,
   table: Table,
   workflow: Workflow,
-  onWorkspaceChange: (result: WorkspaceWorkflowResult) => void,
+  onWorkspaceChange: (result: EditorWorkspaceChange) => void,
   suppressChangesRef: MutableRefObject<boolean>,
 ) {
   suppressChangesRef.current = true;
   setEditorSchemaColumns(table.schema.columns, collectWorkflowColumnIds(workflow));
   workflowToWorkspace(workspace, workflow);
   suppressChangesRef.current = false;
-  onWorkspaceChange(workspaceToWorkflow(workspace));
+  onWorkspaceChange(buildEditorWorkspaceChange(workspace));
 }
 
 function syncEditorSchema(workspace: Blockly.Workspace, table: Table, extraColumnIds: string[]) {
@@ -490,6 +491,13 @@ function getDefaultMetadata(table: Table, workflow: Workflow | null): AuthoringW
     workflowId: seedWorkflow.workflowId,
     name: seedWorkflow.name,
     description: seedWorkflow.description,
+  };
+}
+
+function buildEditorWorkspaceChange(workspace: Blockly.Workspace): EditorWorkspaceChange {
+  return {
+    ...workspaceToWorkflow(workspace),
+    workspacePromptSnapshot: createWorkspacePromptSnapshot(workspace),
   };
 }
 

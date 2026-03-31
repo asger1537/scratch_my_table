@@ -10,6 +10,7 @@ export {
   workflowToAuthoringWorkflow,
 } from './authoring';
 export {
+  createWorkspacePromptSnapshot,
   createDefaultWorkflow,
   createHeadlessWorkflowWorkspace,
   getWorkspaceMetadata,
@@ -23,4 +24,4 @@ export {
 } from './mapping';
 export { collectWorkflowColumnIds, getSchemaColumnOptions, setEditorSchemaColumns } from './schemaOptions';
 export { formatColumnSelectionSummary, getSelectableColumnTypeGroups } from './FieldColumnMultiSelect';
-export type { EditorIssue, WorkspaceWorkflowResult } from './types';
+export type { EditorIssue, EditorWorkspaceChange, WorkspaceWorkflowResult } from './types';

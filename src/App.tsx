@@ -1,11 +1,12 @@
 import { ChangeEvent, DragEvent, startTransition, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { DEFAULT_GEMINI_MODEL, appendAIDevLog, appendDraftStepsToWorkflow, buildGeminiRequestExport, runGeminiDraftTurn, summarizeDraftStepsForDisplay, type AIDebugTrace, type AIDraft, type AIMessage, type AIProgressEvent, type AISettings, type GeminiClientLogEvent } from './ai';
+import { DEFAULT_GEMINI_MODEL, appendAIDevLog, buildGeminiRequestExport, replaceWorkflowSteps, runGeminiDraftTurn, summarizeDraftStepsForDisplay, type AIDebugTrace, type AIDraft, type AIMessage, type AIProgressEvent, type AISettings, type GeminiClientLogEvent } from './ai';
 import {
   WorkflowEditor,
   collectWorkflowColumnIds,
   createDefaultWorkflow,
   parseWorkflowJson,
+  type EditorWorkspaceChange,
   type EditorIssue,
   workflowToJson,
 } from './editor';
@@ -36,8 +37,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isUploadDragActive, setIsUploadDragActive] = useState(false);
   const [authoredWorkflow, setAuthoredWorkflow] = useState<Workflow | null>(null);
+  const [lastValidWorkflow, setLastValidWorkflow] = useState<Workflow | null>(null);
   const [editorIssues, setEditorIssues] = useState<EditorIssue[]>([]);
   const [validationIssues, setValidationIssues] = useState<WorkflowValidationIssue[]>([]);
+  const [workspacePromptSnapshot, setWorkspacePromptSnapshot] = useState('');
   const [loadWorkflow, setLoadWorkflow] = useState<Workflow | null>(null);
   const [workflowLoadVersion, setWorkflowLoadVersion] = useState(0);
   const [workflowJsonError, setWorkflowJsonError] = useState<string | null>(null);
@@ -211,10 +214,15 @@ export default function App() {
     setExecutionResult(null);
   }
 
-  function handleEditorWorkspaceChange(result: { workflow: Workflow | null; issues: EditorIssue[] }) {
+  function handleEditorWorkspaceChange(result: EditorWorkspaceChange) {
     startTransition(() => {
       setAuthoredWorkflow(result.workflow);
       setEditorIssues(result.issues);
+      setWorkspacePromptSnapshot(result.workspacePromptSnapshot);
+
+      if (result.workflow) {
+        setLastValidWorkflow(result.workflow);
+      }
     });
   }
 
@@ -355,8 +363,10 @@ export default function App() {
 
   function resetWorkflowEditor(nextWorkflow: Workflow | null) {
     setAuthoredWorkflow(nextWorkflow);
+    setLastValidWorkflow(nextWorkflow);
     setEditorIssues([]);
     setValidationIssues([]);
+    setWorkspacePromptSnapshot('');
     setLoadWorkflow(nextWorkflow);
     setWorkflowLoadVersion((version) => version + 1);
     setWorkflowJsonError(null);
@@ -373,7 +383,9 @@ export default function App() {
   }
 
   async function handleSendAIPrompt() {
-    if (!activeTable || !authoredWorkflow || isAILoading) {
+    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+
+    if (!activeTable || !aiContextWorkflow || isAILoading) {
       return;
     }
 
@@ -399,7 +411,7 @@ export default function App() {
       kind: 'turn_start',
       prompt: userText,
       model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
-      workflowId: authoredWorkflow.workflowId,
+      workflowId: aiContextWorkflow.workflowId,
       activeTableId: activeTable.tableId,
     });
 
@@ -411,9 +423,15 @@ export default function App() {
         },
         context: {
           table: activeTable,
-          workflow: authoredWorkflow,
+          workflow: aiContextWorkflow,
           draft: aiDraft,
           messages: aiMessages,
+          currentIssues: mergeWorkflowIssues(editorIssues, validationIssues).map((issue) => ({
+            code: issue.code,
+            message: issue.message,
+          })),
+          workflowContextSource: authoredWorkflow ? 'current' : 'lastValidSnapshot',
+          workspacePromptSnapshot,
         },
         userText,
         validateCandidateWorkflow,
@@ -487,7 +505,9 @@ export default function App() {
   }
 
   async function handleApplyAIDraft() {
-    if (!activeTable || !authoredWorkflow || !aiDraft || isAILoading) {
+    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+
+    if (!activeTable || !aiContextWorkflow || !aiDraft || isAILoading) {
       return;
     }
 
@@ -495,7 +515,7 @@ export default function App() {
     setAIError(null);
 
     try {
-      const candidateWorkflow = appendDraftStepsToWorkflow(authoredWorkflow, aiDraft.steps);
+      const candidateWorkflow = replaceWorkflowSteps(aiContextWorkflow, aiDraft.steps);
       const issues = await validateCandidateWorkflow(candidateWorkflow);
 
       if (issues.length > 0) {
@@ -522,7 +542,9 @@ export default function App() {
   }
 
   function handleDownloadAIPrompt() {
-    if (!activeTable || !authoredWorkflow) {
+    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+
+    if (!activeTable || !aiContextWorkflow) {
       return;
     }
 
@@ -539,9 +561,15 @@ export default function App() {
       },
       context: {
         table: activeTable,
-        workflow: authoredWorkflow,
+        workflow: aiContextWorkflow,
         draft: aiDraft,
         messages: aiMessages,
+        currentIssues: mergeWorkflowIssues(editorIssues, validationIssues).map((issue) => ({
+          code: issue.code,
+          message: issue.message,
+        })),
+        workflowContextSource: authoredWorkflow ? 'current' : 'lastValidSnapshot',
+        workspacePromptSnapshot,
       },
       userMessage: {
         role: 'user',
@@ -553,15 +581,22 @@ export default function App() {
 
     downloadBlob(
       new Blob([JSON.stringify(requestExport, null, 2)], { type: 'application/json;charset=utf-8' }),
-      buildAIPromptExportFileName(authoredWorkflow),
+      buildAIPromptExportFileName(aiContextWorkflow),
     );
   }
 
   const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
   const allWorkflowIssues = mergeWorkflowIssues(editorIssues, validationIssues);
+  const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
   const workflowExtraColumnIds = deferredAuthoredWorkflow ? collectWorkflowColumnIds(deferredAuthoredWorkflow) : [];
   const canRunWorkflow = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
-  const canUseAI = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
+  const canUseAI = Boolean(activeTable && aiContextWorkflow);
+  const aiUsesLastValidWorkflow = Boolean(!authoredWorkflow && aiContextWorkflow);
+  const aiWorkflowIssueNotice = allWorkflowIssues.length === 0
+    ? null
+    : aiUsesLastValidWorkflow
+      ? 'The current block workspace has issues. AI will receive the live block snapshot and the issue list, and it will draft from the last valid workflow snapshot. Applying the draft will replace the broken workspace.'
+      : 'The current workflow has issues. AI will receive the live block snapshot and the issue list when drafting.';
   const aiDraftSummary = summarizeDraftStepsForDisplay(aiDraft);
 
   return (
@@ -774,7 +809,7 @@ export default function App() {
           aiMessages={aiMessages}
           aiPromptValue={aiPromptValue}
           aiSettings={aiSettings}
-          canApplyDraft={Boolean(aiDraft && aiDraftIssues.length === 0 && canUseAI && !isAILoading)}
+          canApplyDraft={Boolean(aiDraft && aiDraftIssues.length === 0 && aiContextWorkflow && !isAILoading)}
           canDiscardDraft={Boolean(aiDraft || aiDraftIssues.length > 0)}
           canDownloadPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '')}
           canSendPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '' && !isAILoading)}
@@ -791,6 +826,7 @@ export default function App() {
           }}
           onSettingsChange={setAISettings}
           workflowReady={canUseAI}
+          workflowIssueNotice={aiWorkflowIssueNotice}
         />
       ) : null}
     </main>
@@ -990,6 +1026,7 @@ function AIAssistantModal({
   onSendPrompt,
   onSettingsChange,
   workflowReady,
+  workflowIssueNotice,
 }: {
   aiDraft: AIDraft | null;
   aiDraftIssues: WorkflowValidationIssue[];
@@ -1013,6 +1050,7 @@ function AIAssistantModal({
   onSendPrompt: () => void;
   onSettingsChange: (settings: AISettings) => void;
   workflowReady: boolean;
+  workflowIssueNotice: string | null;
 }) {
   return (
     <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="ai-assistant-title">
@@ -1055,7 +1093,8 @@ function AIAssistantModal({
           </label>
         </div>
 
-        {!workflowReady ? <div className="empty-panel">Fix current workflow issues before asking AI to append more steps.</div> : null}
+        {!workflowReady ? <div className="empty-panel">Load a table and workflow before asking AI to draft workflow changes.</div> : null}
+        {workflowIssueNotice ? <div className="empty-panel">{workflowIssueNotice}</div> : null}
         {aiError ? <pre className="json-error-panel">{aiError}</pre> : null}
 
         <div className="ai-assistant-layout">
@@ -1063,7 +1102,7 @@ function AIAssistantModal({
             <div className="panel-header">
               <div>
                 <h2>Conversation</h2>
-                <p>The assistant can clarify ambiguous requests before proposing a draft.</p>
+                <p>The assistant can clarify ambiguous requests before proposing a draft workflow.</p>
               </div>
             </div>
 
@@ -1105,7 +1144,7 @@ function AIAssistantModal({
               <textarea
                 className="json-viewer ai-assistant-compose__input"
                 onChange={(event) => onPromptChange(event.target.value)}
-                placeholder="Describe the workflow steps you want to add"
+                placeholder="Describe the workflow changes you want"
                 value={aiPromptValue}
               />
               <div className="workflow-import-actions">
@@ -1123,7 +1162,7 @@ function AIAssistantModal({
             <div className="panel-header">
               <div>
                 <h2>Draft</h2>
-                <p>Canonical draft steps that would be appended to the current workflow.</p>
+                <p>Canonical draft workflow steps that would replace the current workflow when applied.</p>
               </div>
             </div>
 

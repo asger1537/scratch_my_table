@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { appendDraftStepsToWorkflow, assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, generateGeminiDraftTurn, parseGeminiWorkflowResponse, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
+import { assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, generateGeminiDraftTurn, parseGeminiWorkflowResponse, replaceWorkflowSteps, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
@@ -11,11 +11,33 @@ describe('AI workflow copilot helpers', () => {
     const instruction = buildGeminiSystemInstruction(context);
 
     expect(instruction).toContain('col_email | Email | string');
+    expect(instruction).toContain('Current block workspace snapshot:');
+    expect(instruction).toContain('Current workflow/editor issues:');
+    expect(instruction).toContain('Current workflow steps without IDs:');
     expect(instruction).toContain('Current workflow summary:');
     expect(instruction).toContain('scopedRule on col_email');
     expect(instruction).toContain('Never return mode "draft" with an empty steps array.');
     expect(instruction).toContain('If Email is empty, use Email (2), then drop Email (2).');
+    expect(instruction).toContain('The returned steps are a full workflow replacement candidate.');
     expect(instruction).not.toContain('alice@example.com');
+  });
+
+  it('includes live workspace issues when the canonical workflow falls back to the last valid snapshot', () => {
+    const context = createPromptContext();
+
+    context.workflowContextSource = 'lastValidSnapshot';
+    context.currentIssues = [
+      {
+        code: 'missingColumns',
+        message: "Block 'scoped_rule_cases_step' must target at least one column.",
+      },
+    ];
+
+    const instruction = buildGeminiSystemInstruction(context);
+
+    expect(instruction).toContain('last valid snapshot');
+    expect(instruction).toContain("missingColumns: Block 'scoped_rule_cases_step' must target at least one column.");
+    expect(instruction).toContain('"type": "scoped_rule_cases_step"');
   });
 
   it('builds a replayable Gemini request export without including the API key in the payload', () => {
@@ -115,7 +137,7 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
-  it('assigns deterministic draft step ids and appends draft steps instead of replacing the workflow', () => {
+  it('assigns deterministic draft step ids and replaces the workflow step list', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_ai',
@@ -133,7 +155,7 @@ describe('AI workflow copilot helpers', () => {
         },
       ],
     };
-    const draftSteps = assignWorkflowStepIds(workflow, [
+    const draftSteps = assignWorkflowStepIds([
       {
         type: 'filterRows',
         mode: 'keep',
@@ -147,17 +169,94 @@ describe('AI workflow copilot helpers', () => {
         },
       },
     ]);
-    const appendedWorkflow = appendDraftStepsToWorkflow(workflow, draftSteps);
+    const replacedWorkflow = replaceWorkflowSteps(workflow, draftSteps);
 
     expect(draftSteps).toEqual([
       expect.objectContaining({
-        id: 'step_filter_rows_2',
+        id: 'step_filter_rows_1',
         type: 'filterRows',
       }),
     ]);
-    expect(appendedWorkflow.steps).toHaveLength(2);
-    expect(appendedWorkflow.steps[0].id).toBe('step_filter_rows_1');
-    expect(appendedWorkflow.steps[1].id).toBe('step_filter_rows_2');
+    expect(replacedWorkflow.steps).toHaveLength(1);
+    expect(replacedWorkflow.workflowId).toBe('wf_ai');
+    expect(replacedWorkflow.steps[0].id).toBe('step_filter_rows_1');
+  });
+
+  it('validates AI drafts as full workflow replacements instead of appending them', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          '{"mode":"draft","assistantMessage":"I will update the existing fallback rule so it colors those cells yellow.","assumptions":[],"steps":[{"type":"scopedRule","columnIds":["col_email"],"cases":[{"when":{"kind":"call","name":"isEmpty","args":[{"kind":"value"}]},"then":{"value":{"kind":"column","columnId":"col_email_2"},"format":{"fillColor":"#FFF2CC"}}}]},{"type":"dropColumns","columnIds":["col_email_2"]}]}',
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([]);
+    const context = createPromptContext();
+
+    context.workflow.steps = [
+      {
+        id: 'step_scoped_rule_1',
+        type: 'scopedRule',
+        columnIds: ['col_email'],
+        cases: [
+          {
+            when: {
+              kind: 'call',
+              name: 'isEmpty',
+              args: [{ kind: 'value' }],
+            },
+            then: {
+              value: {
+                kind: 'column',
+                columnId: 'col_email_2',
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'step_drop_columns_1',
+        type: 'dropColumns',
+        columnIds: ['col_email_2'],
+      },
+    ];
+    context.table.schema.columns.push({
+      columnId: 'col_email_2',
+      displayName: 'Email (2)',
+      logicalType: 'string',
+      nullable: true,
+      sourceIndex: 2,
+      missingCount: 2,
+    });
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context,
+      userText: 'Color cells yellow when Email (2) was used.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(validateCandidateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [
+          expect.objectContaining({ id: 'step_scoped_rule_1', type: 'scopedRule' }),
+          expect.objectContaining({ id: 'step_drop_columns_1', type: 'dropColumns' }),
+        ],
+      }),
+    );
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        repaired: false,
+        draft: expect.objectContaining({
+          steps: [
+            expect.objectContaining({ id: 'step_scoped_rule_1', type: 'scopedRule' }),
+            expect.objectContaining({ id: 'step_drop_columns_1', type: 'dropColumns' }),
+          ],
+        }),
+      }),
+    );
   });
 
   it('repairs one invalid Gemini draft turn and keeps the validated draft only after the retry passes', async () => {
@@ -314,7 +413,7 @@ describe('AI workflow copilot helpers', () => {
         }),
         draft: expect.objectContaining({
           steps: [
-            expect.objectContaining({ id: 'step_scoped_rule_2', type: 'scopedRule' }),
+            expect.objectContaining({ id: 'step_scoped_rule_1', type: 'scopedRule' }),
             expect.objectContaining({ id: 'step_drop_columns_1', type: 'dropColumns' }),
           ],
         }),
@@ -355,6 +454,27 @@ function createPromptContext(): AIPromptContext {
     workflow,
     draft: null,
     messages: [],
+    currentIssues: [],
+    workflowContextSource: 'current',
+    workspacePromptSnapshot: `${JSON.stringify(
+      {
+        metadata: {
+          workflowId: 'wf_ai',
+          name: 'AI test',
+          description: '',
+        },
+        topBlocks: [
+          {
+            type: 'scoped_rule_cases_step',
+            fields: {
+              COLUMN_IDS: 'col_email',
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
   };
 }
 

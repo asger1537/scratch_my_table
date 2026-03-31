@@ -246,6 +246,39 @@ export function workflowToJson(workflow: Workflow) {
   return `${JSON.stringify(workflow, null, 2)}\n`;
 }
 
+export function createWorkspacePromptSnapshot(workspace: Blockly.Workspace) {
+  registerWorkflowBlocks();
+
+  const metadata = getWorkspaceMetadata(workspace);
+  const topBlocks = sortBlocksByPosition(workspace.getTopBlocks(false));
+  const serializedBlocks = topBlocks
+    .map((block) =>
+      sanitizePromptBlockState(
+        Blockly.serialization.blocks.save(block, {
+          addCoordinates: false,
+          addInputBlocks: true,
+          addNextBlocks: true,
+          doFullSerialization: false,
+          saveIds: false,
+        }) as Record<string, unknown> | null,
+      ),
+    )
+    .filter((block): block is Record<string, unknown> => block !== null);
+
+  return `${JSON.stringify(
+    {
+      metadata: {
+        workflowId: metadata.workflowId,
+        name: metadata.name,
+        description: metadata.description,
+      },
+      topBlocks: serializedBlocks,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep[]; issues: EditorIssue[] } {
   const steps: AuthoringStep[] = [];
   const issues: EditorIssue[] = [];
@@ -264,6 +297,102 @@ function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep
   }
 
   return { steps, issues };
+}
+
+function sanitizePromptBlockState(state: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!state) {
+    return null;
+  }
+
+  const sanitized: Record<string, unknown> = {
+    type: state.type,
+  };
+  const fields = sanitizePromptValue(state.fields);
+  const extraState = sanitizePromptValue(state.extraState);
+  const inputs = sanitizePromptInputs(state.inputs);
+  const next = sanitizePromptConnection(state.next);
+
+  if (fields && typeof fields === 'object' && !Array.isArray(fields) && Object.keys(fields).length > 0) {
+    sanitized.fields = fields;
+  }
+
+  if (extraState !== undefined) {
+    sanitized.extraState = extraState;
+  }
+
+  if (inputs && Object.keys(inputs).length > 0) {
+    sanitized.inputs = inputs;
+  }
+
+  if (next) {
+    sanitized.next = next;
+  }
+
+  return sanitized;
+}
+
+function sanitizePromptInputs(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const sanitizedEntries = Object.entries(value).flatMap(([key, connection]) => {
+    const sanitizedConnection = sanitizePromptConnection(connection);
+    return sanitizedConnection ? [[key, sanitizedConnection] as const] : [];
+  });
+
+  return sanitizedEntries.length > 0 ? Object.fromEntries(sanitizedEntries) : null;
+}
+
+function sanitizePromptConnection(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const connection = value as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = {};
+  const block = sanitizePromptBlockState(connection.block as Record<string, unknown> | null);
+  const shadow = sanitizePromptBlockState(connection.shadow as Record<string, unknown> | null);
+
+  if (block) {
+    sanitized.block = block;
+  }
+
+  if (shadow) {
+    sanitized.shadow = shadow;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+}
+
+function sanitizePromptValue(value: unknown): unknown {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'number'
+    || typeof value === 'boolean'
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const sanitizedItems = value
+      .map((item) => sanitizePromptValue(item))
+      .filter((item) => item !== undefined);
+
+    return sanitizedItems.length > 0 ? sanitizedItems : undefined;
+  }
+
+  if (typeof value !== 'object') {
+    return undefined;
+  }
+
+  const sanitizedEntries = Object.entries(value).flatMap(([key, nestedValue]) => {
+    const sanitizedNestedValue = sanitizePromptValue(nestedValue);
+    return sanitizedNestedValue === undefined ? [] : [[key, sanitizedNestedValue] as const];
+  });
+
+  return sanitizedEntries.length > 0 ? Object.fromEntries(sanitizedEntries) : undefined;
 }
 
 function getOrderedStepBlocks(workspace: Blockly.Workspace) {
