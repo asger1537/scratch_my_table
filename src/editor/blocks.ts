@@ -7,7 +7,6 @@ import { FieldSearchDropdown } from './FieldSearchDropdown';
 import { getSchemaColumnOptions } from './schemaOptions';
 
 const TRANSFORM_COLOR = '#b04a1f';
-const FORMAT_COLOR = '#8f5d2d';
 const TABLE_OPERATION_COLOR = '#8c3a18';
 const COMMENT_COLOR = '#7a6f62';
 const SUPPORT_COLOR = '#6b6a5c';
@@ -17,15 +16,26 @@ const DATE_COLOR = '#2a9d8f';
 const MATH_COLOR = '#6b3a8c';
 const LOGIC_COLOR = '#355070';
 const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
-const CHECKBOX_TRUE = 'TRUE';
-const CHECKBOX_FALSE = 'FALSE';
+export const CHECKBOX_TRUE = 'TRUE';
+export const CHECKBOX_FALSE = 'FALSE';
+export const WORKFLOW_TOOLBOX_COLOURS = {
+  scopedRules: TRANSFORM_COLOR,
+  tableOperations: TABLE_OPERATION_COLOR,
+  comments: COMMENT_COLOR,
+  lists: SUPPORT_COLOR,
+  values: VALUE_COLOR,
+  functions: FUNCTION_COLOR,
+  dateTime: DATE_COLOR,
+  math: MATH_COLOR,
+  logic: LOGIC_COLOR,
+} as const;
 const CREATE_COLUMN_INPUT_NAMES = {
   mode: 'CREATE_MODE',
   copySource: 'COPY_COLUMN_ID',
   copySourceRow: 'COPY_COLUMN_ROW',
   expression: 'EXPRESSION',
 } as const;
-const SCOPED_RULE_INPUT_NAMES = {
+export const SCOPED_RULE_INPUT_NAMES = {
   cases: 'CASES',
   singleValueEnabled: 'SINGLE_VALUE_ENABLED',
   singleValue: 'SINGLE_VALUE',
@@ -549,140 +559,6 @@ export function registerWorkflowBlocks() {
     },
   };
   createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
-}
-
-export function getWorkflowToolboxDefinition(): Blockly.utils.toolbox.ToolboxInfo {
-  return {
-    kind: 'categoryToolbox',
-    contents: [
-      {
-        kind: 'category',
-        name: 'Scoped rules',
-        colour: TRANSFORM_COLOR,
-        contents: [
-          {
-            kind: 'block',
-            type: BLOCK_TYPES.scopedRuleCasesStep,
-            fields: {
-              [SCOPED_RULE_INPUT_NAMES.defaultValueEnabled]: CHECKBOX_TRUE,
-              [SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled]: CHECKBOX_FALSE,
-            },
-          },
-          { kind: 'block', type: BLOCK_TYPES.ruleCaseItem },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Formatting',
-        colour: FORMAT_COLOR,
-        contents: [
-          {
-            kind: 'block',
-            type: BLOCK_TYPES.scopedRuleCasesStep,
-            fields: {
-              [SCOPED_RULE_INPUT_NAMES.defaultValueEnabled]: CHECKBOX_FALSE,
-              [SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled]: CHECKBOX_TRUE,
-            },
-          },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Table operations',
-        colour: TABLE_OPERATION_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.dropColumnsStep },
-          { kind: 'block', type: BLOCK_TYPES.renameColumnStep },
-          { kind: 'block', type: BLOCK_TYPES.deriveColumnStep },
-          { kind: 'block', type: BLOCK_TYPES.filterRowsStep },
-          { kind: 'block', type: BLOCK_TYPES.splitColumnStep },
-          { kind: 'block', type: BLOCK_TYPES.combineColumnsStep },
-          { kind: 'block', type: BLOCK_TYPES.deduplicateRowsStep },
-          { kind: 'block', type: BLOCK_TYPES.sortRowsStep },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Comments',
-        colour: COMMENT_COLOR,
-        contents: [{ kind: 'block', type: BLOCK_TYPES.commentStep }],
-      },
-      {
-        kind: 'category',
-        name: 'Values',
-        colour: VALUE_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.currentValueExpression },
-          { kind: 'block', type: BLOCK_TYPES.literalString },
-          { kind: 'block', type: BLOCK_TYPES.literalNumber },
-          { kind: 'block', type: BLOCK_TYPES.literalBoolean },
-          { kind: 'block', type: BLOCK_TYPES.columnExpression },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Functions',
-        colour: FUNCTION_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.trimFunction },
-          { kind: 'block', type: BLOCK_TYPES.lowerFunction },
-          { kind: 'block', type: BLOCK_TYPES.upperFunction },
-          { kind: 'block', type: BLOCK_TYPES.collapseWhitespaceFunction },
-          { kind: 'block', type: BLOCK_TYPES.substringFunction },
-          { kind: 'block', type: BLOCK_TYPES.replaceFunction },
-          { kind: 'block', type: BLOCK_TYPES.extractRegexFunction },
-          { kind: 'block', type: BLOCK_TYPES.replaceRegexFunction },
-          { kind: 'block', type: BLOCK_TYPES.splitFunction },
-          { kind: 'block', type: BLOCK_TYPES.firstFunction },
-          { kind: 'block', type: BLOCK_TYPES.lastFunction },
-          { kind: 'block', type: BLOCK_TYPES.atIndexFunction },
-          { kind: 'block', type: BLOCK_TYPES.coalesceFunction },
-          { kind: 'block', type: BLOCK_TYPES.concatFunction },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Date & time',
-        colour: DATE_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.nowFunction },
-          { kind: 'block', type: BLOCK_TYPES.datePartFunction },
-          { kind: 'block', type: BLOCK_TYPES.dateDiffFunction },
-          { kind: 'block', type: BLOCK_TYPES.dateAddFunction },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Math',
-        colour: MATH_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.arithmeticFunction },
-          { kind: 'block', type: BLOCK_TYPES.mathRoundingFunction },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Logic',
-        colour: LOGIC_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.comparisonFunction },
-          { kind: 'block', type: BLOCK_TYPES.predicateFunction },
-          { kind: 'block', type: BLOCK_TYPES.logicalBinaryFunction },
-          { kind: 'block', type: BLOCK_TYPES.switchFunction },
-          { kind: 'block', type: BLOCK_TYPES.notFunction },
-        ],
-      },
-      {
-        kind: 'category',
-        name: 'Lists',
-        colour: SUPPORT_COLOR,
-        contents: [
-          { kind: 'block', type: BLOCK_TYPES.outputColumnItem },
-          { kind: 'block', type: BLOCK_TYPES.sortItem },
-        ],
-      },
-    ],
-  };
 }
 
 function createStepBlock(type: string, colour: string, buildFields: (block: Blockly.Block) => void) {

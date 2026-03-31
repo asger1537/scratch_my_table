@@ -1,4 +1,4 @@
-import { type ChangeEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, type MouseEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
 
 import * as Blockly from 'blockly';
 
@@ -6,7 +6,7 @@ import type { Table } from '../domain/model';
 import type { Workflow } from '../workflow';
 
 import type { AuthoringWorkflowMetadata } from './authoring';
-import { BLOCK_TYPES, getWorkflowToolboxDefinition, registerWorkflowBlocks } from './blocks';
+import { BLOCK_TYPES, registerWorkflowBlocks } from './blocks';
 import {
   createDefaultWorkflow,
   getWorkspaceMetadata,
@@ -16,6 +16,12 @@ import {
   workspaceToWorkflow,
 } from './mapping';
 import { collectWorkflowColumnIds, setEditorSchemaColumns } from './schemaOptions';
+import {
+  getSelectedWorkflowToolboxCategoryId,
+  getWorkflowToolboxCategory,
+  getWorkflowToolboxDefinition,
+  registerWorkflowToolboxCategoryCallbacks,
+} from './toolbox';
 import type { WorkspaceWorkflowResult } from './types';
 
 interface WorkflowEditorProps {
@@ -31,6 +37,12 @@ interface DeferredWorkspaceInputs {
   extraColumnIds: string[];
   onWorkspaceChange: (result: WorkspaceWorkflowResult) => void;
 }
+
+type ToolboxWithItemLookup = Blockly.IToolbox & {
+  getSelectedItem(): Blockly.ISelectableToolboxItem | null;
+  getToolboxItemById(id: string): Blockly.IToolboxItem | null;
+  setSelectedItem(newItem: Blockly.IToolboxItem | null): void;
+};
 
 const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.commentStep,
@@ -67,6 +79,7 @@ const ORDER_SENSITIVE_BLOCK_TYPES = new Set<string>([
 const SCHEMA_AFFECTING_CHANGE_DELAY_MS = 150;
 const SEMANTIC_CHANGE_DELAY_MS = 1000;
 const SCHEMA_PROJECTION_DELAY_MS = 700;
+const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 
 export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, onWorkspaceChange }: WorkflowEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -82,8 +95,12 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     extraColumnIds,
     onWorkspaceChange,
   });
+  const activeToolboxCategoryIdRef = useRef<string | null>(null);
+  const toolboxSearchQueryRef = useRef('');
   const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow));
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
+  const [activeToolboxCategoryId, setActiveToolboxCategoryId] = useState<string | null>(null);
+  const [toolboxSearchQuery, setToolboxSearchQuery] = useState('');
   const isFullscreen = isFallbackFullscreen;
 
   latestInputsRef.current = {
@@ -91,6 +108,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     extraColumnIds,
     onWorkspaceChange,
   };
+  toolboxSearchQueryRef.current = toolboxSearchQuery;
 
   useEffect(() => {
     registerWorkflowBlocks();
@@ -114,6 +132,33 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     });
 
     workspaceRef.current = workspace;
+    registerWorkflowToolboxCategoryCallbacks(workspace, () => toolboxSearchQueryRef.current);
+
+    const restoreActiveToolboxSelection = () => {
+      const categoryId = activeToolboxCategoryIdRef.current;
+      const toolbox = workspace.getToolbox() as ToolboxWithItemLookup | null;
+
+      if (!categoryId || !toolbox || toolbox.getSelectedItem()) {
+        return;
+      }
+
+      const toolboxItem = toolbox.getToolboxItemById(categoryId);
+
+      if (toolboxItem) {
+        toolbox.setSelectedItem(toolboxItem);
+      }
+    };
+
+    const syncActiveToolboxCategory = (categoryId: string | null) => {
+      if (activeToolboxCategoryIdRef.current === categoryId) {
+        return;
+      }
+
+      activeToolboxCategoryIdRef.current = categoryId;
+      toolboxSearchQueryRef.current = '';
+      setActiveToolboxCategoryId(categoryId);
+      setToolboxSearchQuery('');
+    };
 
     const clearScheduledWork = () => {
       if (debounceTimerRef.current !== null) {
@@ -168,6 +213,21 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         return;
       }
 
+      if (event.type === TOOLBOX_ITEM_SELECT_EVENT) {
+        const nextCategoryId = getWorkflowToolboxCategory((event as { newItem?: string }).newItem)
+          ? (event as { newItem?: string }).newItem ?? null
+          : getSelectedWorkflowToolboxCategoryId(workspace);
+
+        if (nextCategoryId) {
+          syncActiveToolboxCategory(nextCategoryId);
+        } else {
+          queueMicrotask(() => {
+            restoreActiveToolboxSelection();
+          });
+        }
+        return;
+      }
+
       if (event.isUiEvent) {
         return;
       }
@@ -203,6 +263,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
     syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
+    syncActiveToolboxCategory(getSelectedWorkflowToolboxCategoryId(workspace));
     resizeWorkspace(workspace, true);
 
     return () => {
@@ -265,6 +326,16 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     resizeWorkspace(workspace);
   }, [isFullscreen]);
 
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+
+    if (!workspace || !activeToolboxCategoryId) {
+      return;
+    }
+
+    workspace.refreshToolboxSelection();
+  }, [activeToolboxCategoryId, toolboxSearchQuery]);
+
   async function handleToggleFullscreen() {
     if (isFallbackFullscreen) {
       setIsFallbackFullscreen(false);
@@ -293,6 +364,31 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     };
   }
 
+  function handleToolboxSearchPointerDown(event: MouseEvent<HTMLDivElement | HTMLInputElement>) {
+    event.stopPropagation();
+
+    const workspace = workspaceRef.current;
+
+    if (!workspace) {
+      return;
+    }
+
+    const categoryId = activeToolboxCategoryIdRef.current;
+    const toolbox = workspace.getToolbox() as ToolboxWithItemLookup | null;
+
+    if (!categoryId || !toolbox || toolbox.getSelectedItem()) {
+      return;
+    }
+
+    const toolboxItem = toolbox.getToolboxItemById(categoryId);
+
+    if (toolboxItem) {
+      toolbox.setSelectedItem(toolboxItem);
+    }
+  }
+
+  const activeToolboxCategory = getWorkflowToolboxCategory(activeToolboxCategoryId);
+
   return (
     <div className={`workflow-editor-shell${isFallbackFullscreen ? ' workflow-editor-shell--fullscreen' : ''}`} ref={shellRef}>
       <button
@@ -316,6 +412,19 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
           <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
         </label>
       </div>
+      {activeToolboxCategory ? (
+        <div className="workflow-editor-toolbox-search" onMouseDown={handleToolboxSearchPointerDown}>
+          <span className="workflow-editor-toolbox-search__label">{activeToolboxCategory.name}</span>
+          <input
+            className="workflow-editor-toolbox-search__input"
+            onChange={(event) => setToolboxSearchQuery(event.target.value)}
+            onMouseDown={handleToolboxSearchPointerDown}
+            placeholder={`Search ${activeToolboxCategory.name}`}
+            type="search"
+            value={toolboxSearchQuery}
+          />
+        </div>
+      ) : null}
       <div className="workflow-editor-canvas" ref={containerRef} />
     </div>
   );

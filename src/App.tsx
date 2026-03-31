@@ -1,5 +1,6 @@
 import { ChangeEvent, DragEvent, startTransition, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { DEFAULT_GEMINI_MODEL, appendAIDevLog, appendDraftStepsToWorkflow, buildGeminiRequestExport, runGeminiDraftTurn, summarizeDraftStepsForDisplay, type AIDebugTrace, type AIDraft, type AIMessage, type AIProgressEvent, type AISettings, type GeminiClientLogEvent } from './ai';
 import {
   WorkflowEditor,
   collectWorkflowColumnIds,
@@ -8,8 +9,8 @@ import {
   type EditorIssue,
   workflowToJson,
 } from './editor';
-import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
-import type { ValidationWorkerResponse, ValidationWorkerTableSnapshot } from './workflow/validationWorker';
+import { executeWorkflow, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
+import { createValidationWorkerTableSnapshot, validateWorkflowWithWorker } from './workflow/validationWorkerClient';
 import { getActiveTable, getCellStyle, getOrderedRows, getReadableTextColor, setActiveTable, type ImportWarning, type Table, type Workbook } from './domain/model';
 import {
   buildCsvExportFileName,
@@ -21,13 +22,14 @@ import {
 
 const PREVIEW_ROW_LIMIT = 50;
 const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
+const GEMINI_API_KEY_STORAGE_KEY = 'scratch_my_table.gemini_api_key';
+const GEMINI_MODEL_STORAGE_KEY = 'scratch_my_table.gemini_model';
 
 export default function App() {
   const uploadDragDepthRef = useRef(0);
   const workflowImportInputRef = useRef<HTMLInputElement | null>(null);
   const workflowImportDragDepthRef = useRef(0);
   const validationDebounceTimerRef = useRef<number | null>(null);
-  const validationWorkerRef = useRef<Worker | null>(null);
   const validationRequestIdRef = useRef(0);
   const [workbook, setWorkbookState] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,6 +46,19 @@ export default function App() {
   const [workflowImportPasteValue, setWorkflowImportPasteValue] = useState('');
   const [isWorkflowImportDragActive, setIsWorkflowImportDragActive] = useState(false);
   const [executionResult, setExecutionResult] = useState<WorkflowExecutionResult | null>(null);
+  const [isAIDialogOpen, setIsAIDialogOpen] = useState(false);
+  const [aiSettings, setAISettings] = useState<AISettings>(() => ({
+    apiKey: readStoredValue(GEMINI_API_KEY_STORAGE_KEY),
+    model: readStoredValue(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL,
+  }));
+  const [aiMessages, setAIMessages] = useState<AIMessage[]>([]);
+  const [aiPromptValue, setAIPromptValue] = useState('');
+  const [aiDraft, setAIDraft] = useState<AIDraft | null>(null);
+  const [aiDraftIssues, setAIDraftIssues] = useState<WorkflowValidationIssue[]>([]);
+  const [aiDebugTrace, setAIDebugTrace] = useState<AIDebugTrace | null>(null);
+  const [aiProgressEvents, setAIProgressEvents] = useState<AIProgressEvent[]>([]);
+  const [aiError, setAIError] = useState<string | null>(null);
+  const [isAILoading, setIsAILoading] = useState(false);
 
   const activeTable = getActiveTable(workbook);
   const previewRows = activeTable ? getOrderedRows(activeTable).slice(0, PREVIEW_ROW_LIMIT) : [];
@@ -53,16 +68,15 @@ export default function App() {
   const authoredWorkflowJson = deferredAuthoredWorkflow ? workflowToJson(deferredAuthoredWorkflow) : '';
 
   useEffect(() => {
+    const abortController = new AbortController();
+
     const cancelScheduledValidation = () => {
       if (validationDebounceTimerRef.current !== null) {
         window.clearTimeout(validationDebounceTimerRef.current);
         validationDebounceTimerRef.current = null;
       }
 
-      if (validationWorkerRef.current) {
-        validationWorkerRef.current.terminate();
-        validationWorkerRef.current = null;
-      }
+      abortController.abort();
     };
 
     cancelScheduledValidation();
@@ -72,56 +86,49 @@ export default function App() {
       return cancelScheduledValidation;
     }
 
-    const tableSnapshot: ValidationWorkerTableSnapshot = {
-      tableId: activeTable.tableId,
-      sourceName: activeTable.sourceName,
-      schema: {
-        columns: activeTable.schema.columns.map((column) => ({ ...column })),
-      },
-    };
+    const tableSnapshot = createValidationWorkerTableSnapshot(activeTable);
     const requestId = validationRequestIdRef.current + 1;
 
     validationRequestIdRef.current = requestId;
 
     validationDebounceTimerRef.current = window.setTimeout(() => {
       validationDebounceTimerRef.current = null;
-      const worker = new Worker(new URL('./workflow/validation.worker.ts', import.meta.url), { type: 'module' });
+      void validateWorkflowWithWorker(authoredWorkflow, tableSnapshot, abortController.signal)
+        .then((issues) => {
+          if (requestId !== validationRequestIdRef.current) {
+            return;
+          }
 
-      validationWorkerRef.current = worker;
-
-      worker.onmessage = (event: MessageEvent<ValidationWorkerResponse>) => {
-        if (event.data.requestId !== validationRequestIdRef.current) {
-          return;
-        }
-
-        startTransition(() => {
-          setValidationIssues(event.data.issues);
+          startTransition(() => {
+            setValidationIssues(issues);
+          });
+        })
+        .catch((caughtError) => {
+          if (isAbortError(caughtError)) {
+            return;
+          }
         });
-
-        worker.terminate();
-
-        if (validationWorkerRef.current === worker) {
-          validationWorkerRef.current = null;
-        }
-      };
-
-      worker.onerror = () => {
-        worker.terminate();
-
-        if (validationWorkerRef.current === worker) {
-          validationWorkerRef.current = null;
-        }
-      };
-
-      worker.postMessage({
-        requestId,
-        workflow: authoredWorkflow,
-        table: tableSnapshot,
-      });
     }, 150);
 
     return cancelScheduledValidation;
   }, [activeTable, authoredWorkflow, editorIssues]);
+
+  useEffect(() => {
+    window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, aiSettings.apiKey);
+    window.localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, aiSettings.model);
+  }, [aiSettings]);
+
+  useEffect(() => {
+    setIsAIDialogOpen(false);
+    setAIMessages([]);
+    setAIDraft(null);
+    setAIDraftIssues([]);
+    setAIDebugTrace(null);
+    setAIProgressEvents([]);
+    setAIError(null);
+    setAIPromptValue('');
+    setIsAILoading(false);
+  }, [activeTable?.tableId]);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -297,6 +304,16 @@ export default function App() {
     workflowImportInputRef.current?.click();
   }
 
+  function handleOpenAIDialog() {
+    setAIError(null);
+    setIsAIDialogOpen(true);
+  }
+
+  function handleCloseAIDialog() {
+    setAIError(null);
+    setIsAIDialogOpen(false);
+  }
+
   async function handleImportWorkflowPaste() {
     await importWorkflowJsonText(workflowImportPasteValue);
   }
@@ -346,10 +363,206 @@ export default function App() {
     setExecutionResult(null);
   }
 
+  async function validateCandidateWorkflow(candidateWorkflow: Workflow) {
+    if (!activeTable) {
+      return [];
+    }
+
+    const tableSnapshot = createValidationWorkerTableSnapshot(activeTable);
+    return validateWorkflowWithWorker(candidateWorkflow, tableSnapshot);
+  }
+
+  async function handleSendAIPrompt() {
+    if (!activeTable || !authoredWorkflow || isAILoading) {
+      return;
+    }
+
+    if (aiSettings.apiKey.trim() === '') {
+      setAIError('Enter a Gemini API key before sending a prompt.');
+      return;
+    }
+
+    const userText = aiPromptValue.trim();
+
+    if (userText === '') {
+      return;
+    }
+
+    setIsAILoading(true);
+    setAIError(null);
+    setAIProgressEvents([]);
+    const turnId = createAITurnId();
+    const turnStartedAt = Date.now();
+
+    void appendAIDevLog({
+      turnId,
+      kind: 'turn_start',
+      prompt: userText,
+      model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+      workflowId: authoredWorkflow.workflowId,
+      activeTableId: activeTable.tableId,
+    });
+
+    try {
+      const outcome = await runGeminiDraftTurn({
+        settings: {
+          apiKey: aiSettings.apiKey.trim(),
+          model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+        },
+        context: {
+          table: activeTable,
+          workflow: authoredWorkflow,
+          draft: aiDraft,
+          messages: aiMessages,
+        },
+        userText,
+        validateCandidateWorkflow,
+        onProgress: (event) => {
+          setAIProgressEvents((current) => [...current, event]);
+          console.info(`[AI] ${event.stage}: ${event.message}`);
+          void appendAIDevLog({
+            turnId,
+            kind: 'progress',
+            stage: event.stage,
+            message: event.message,
+            timestamp: event.timestamp,
+          });
+        },
+        onGeminiLogEvent: (event) => {
+          logGeminiClientEvent(turnId, event);
+        },
+      });
+
+      setAIMessages((current) => [...current, outcome.userMessage, outcome.assistantMessage]);
+      setAIDebugTrace(outcome.debugTrace);
+      setAIPromptValue('');
+
+      void appendAIDevLog({
+        turnId,
+        kind: 'turn_result',
+        outcomeKind: outcome.kind,
+        repaired: outcome.repaired,
+        durationMs: Date.now() - turnStartedAt,
+        assistantMessage: outcome.assistantMessage.text,
+        debugTrace: outcome.debugTrace,
+        ...(outcome.kind === 'draft'
+          ? { draftStepCount: outcome.draft.steps.length }
+          : outcome.kind === 'invalidDraft'
+            ? { validationIssues: outcome.validationIssues }
+            : {}),
+      });
+
+      if (outcome.kind === 'draft') {
+        setAIDraft(outcome.draft);
+        setAIDraftIssues([]);
+        return;
+      }
+
+      if (outcome.kind === 'invalidDraft') {
+        setAIDraftIssues(outcome.validationIssues);
+        return;
+      }
+
+      setAIDraftIssues([]);
+    } catch (caughtError) {
+      console.error('[AI] error', caughtError);
+      void appendAIDevLog({
+        turnId,
+        kind: 'turn_error',
+        durationMs: Date.now() - turnStartedAt,
+        error: caughtError instanceof Error ? caughtError.message : 'Gemini request failed.',
+      });
+      setAIProgressEvents((current) => [
+        ...current,
+        {
+          stage: 'error',
+          message: caughtError instanceof Error ? caughtError.message : 'Gemini request failed.',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      setAIError(caughtError instanceof Error ? caughtError.message : 'Gemini request failed.');
+    } finally {
+      setIsAILoading(false);
+    }
+  }
+
+  async function handleApplyAIDraft() {
+    if (!activeTable || !authoredWorkflow || !aiDraft || isAILoading) {
+      return;
+    }
+
+    setIsAILoading(true);
+    setAIError(null);
+
+    try {
+      const candidateWorkflow = appendDraftStepsToWorkflow(authoredWorkflow, aiDraft.steps);
+      const issues = await validateCandidateWorkflow(candidateWorkflow);
+
+      if (issues.length > 0) {
+        setAIDraftIssues(issues);
+        setAIError('The current draft no longer validates against the latest workflow context.');
+        return;
+      }
+
+      resetWorkflowEditor(candidateWorkflow);
+      setAIDraft(null);
+      setAIDraftIssues([]);
+      setIsAIDialogOpen(false);
+    } catch (caughtError) {
+      setAIError(caughtError instanceof Error ? caughtError.message : 'Failed to apply the AI draft.');
+    } finally {
+      setIsAILoading(false);
+    }
+  }
+
+  function handleDiscardAIDraft() {
+    setAIDraft(null);
+    setAIDraftIssues([]);
+    setAIError(null);
+  }
+
+  function handleDownloadAIPrompt() {
+    if (!activeTable || !authoredWorkflow) {
+      return;
+    }
+
+    const userText = aiPromptValue.trim();
+
+    if (userText === '') {
+      return;
+    }
+
+    const requestExport = buildGeminiRequestExport({
+      settings: {
+        apiKey: aiSettings.apiKey.trim(),
+        model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+      },
+      context: {
+        table: activeTable,
+        workflow: authoredWorkflow,
+        draft: aiDraft,
+        messages: aiMessages,
+      },
+      userMessage: {
+        role: 'user',
+        text: userText,
+        timestamp: new Date().toISOString(),
+      },
+      phase: 'initial',
+    });
+
+    downloadBlob(
+      new Blob([JSON.stringify(requestExport, null, 2)], { type: 'application/json;charset=utf-8' }),
+      buildAIPromptExportFileName(authoredWorkflow),
+    );
+  }
+
   const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
   const allWorkflowIssues = mergeWorkflowIssues(editorIssues, validationIssues);
   const workflowExtraColumnIds = deferredAuthoredWorkflow ? collectWorkflowColumnIds(deferredAuthoredWorkflow) : [];
   const canRunWorkflow = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
+  const canUseAI = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
+  const aiDraftSummary = summarizeDraftStepsForDisplay(aiDraft);
 
   return (
     <main className="app-shell">
@@ -435,6 +648,9 @@ export default function App() {
                   </button>
                   <button onClick={handleOpenWorkflowImportDialog} type="button">
                     Import workflow JSON
+                  </button>
+                  <button disabled={!canUseAI} onClick={handleOpenAIDialog} type="button">
+                    Ask AI
                   </button>
                   <button disabled={!canRunWorkflow} onClick={handleRunWorkflow} type="button">
                     Run workflow
@@ -545,6 +761,37 @@ export default function App() {
             </div>
           </section>
         </div>
+      ) : null}
+
+      {isAIDialogOpen ? (
+        <AIAssistantModal
+          aiDraft={aiDraft}
+          aiDraftIssues={aiDraftIssues}
+          aiDebugTrace={aiDebugTrace}
+          aiProgressEvents={aiProgressEvents}
+          aiDraftSummary={aiDraftSummary}
+          aiError={aiError}
+          aiMessages={aiMessages}
+          aiPromptValue={aiPromptValue}
+          aiSettings={aiSettings}
+          canApplyDraft={Boolean(aiDraft && aiDraftIssues.length === 0 && canUseAI && !isAILoading)}
+          canDiscardDraft={Boolean(aiDraft || aiDraftIssues.length > 0)}
+          canDownloadPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '')}
+          canSendPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '' && !isAILoading)}
+          isLoading={isAILoading}
+          onApplyDraft={() => {
+            void handleApplyAIDraft();
+          }}
+          onClose={handleCloseAIDialog}
+          onDiscardDraft={handleDiscardAIDraft}
+          onDownloadPrompt={handleDownloadAIPrompt}
+          onPromptChange={setAIPromptValue}
+          onSendPrompt={() => {
+            void handleSendAIPrompt();
+          }}
+          onSettingsChange={setAISettings}
+          workflowReady={canUseAI}
+        />
       ) : null}
     </main>
   );
@@ -720,6 +967,270 @@ function RunResultPanel({
   );
 }
 
+function AIAssistantModal({
+  aiDraft,
+  aiDraftIssues,
+  aiDebugTrace,
+  aiProgressEvents,
+  aiDraftSummary,
+  aiError,
+  aiMessages,
+  aiPromptValue,
+  aiSettings,
+  canApplyDraft,
+  canDiscardDraft,
+  canDownloadPrompt,
+  canSendPrompt,
+  isLoading,
+  onApplyDraft,
+  onClose,
+  onDiscardDraft,
+  onDownloadPrompt,
+  onPromptChange,
+  onSendPrompt,
+  onSettingsChange,
+  workflowReady,
+}: {
+  aiDraft: AIDraft | null;
+  aiDraftIssues: WorkflowValidationIssue[];
+  aiDebugTrace: AIDebugTrace | null;
+  aiProgressEvents: AIProgressEvent[];
+  aiDraftSummary: string;
+  aiError: string | null;
+  aiMessages: AIMessage[];
+  aiPromptValue: string;
+  aiSettings: AISettings;
+  canApplyDraft: boolean;
+  canDiscardDraft: boolean;
+  canDownloadPrompt: boolean;
+  canSendPrompt: boolean;
+  isLoading: boolean;
+  onApplyDraft: () => void;
+  onClose: () => void;
+  onDiscardDraft: () => void;
+  onDownloadPrompt: () => void;
+  onPromptChange: (value: string) => void;
+  onSendPrompt: () => void;
+  onSettingsChange: (settings: AISettings) => void;
+  workflowReady: boolean;
+}) {
+  return (
+    <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="ai-assistant-title">
+      <div className="workflow-import-modal__scrim" onClick={onClose} />
+      <section className="workflow-import-modal__panel ai-assistant-modal__panel">
+        <div className="panel-header">
+          <div>
+            <h2 id="ai-assistant-title">Ask AI</h2>
+            <p>Describe the next workflow steps in natural language. The assistant builds a separate draft and only updates the live workflow when you apply it.</p>
+          </div>
+        </div>
+
+        <div className="ai-assistant-settings">
+          <label className="workflow-meta-field">
+            <span>Gemini API key</span>
+            <input
+              onChange={(event) =>
+                onSettingsChange({
+                  ...aiSettings,
+                  apiKey: event.target.value,
+                })
+              }
+              placeholder="Paste your Gemini API key"
+              type="password"
+              value={aiSettings.apiKey}
+            />
+          </label>
+          <label className="workflow-meta-field">
+            <span>Model</span>
+            <input
+              onChange={(event) =>
+                onSettingsChange({
+                  ...aiSettings,
+                  model: event.target.value,
+                })
+              }
+              placeholder={DEFAULT_GEMINI_MODEL}
+              value={aiSettings.model}
+            />
+          </label>
+        </div>
+
+        {!workflowReady ? <div className="empty-panel">Fix current workflow issues before asking AI to append more steps.</div> : null}
+        {aiError ? <pre className="json-error-panel">{aiError}</pre> : null}
+
+        <div className="ai-assistant-layout">
+          <section className="ai-assistant-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Conversation</h2>
+                <p>The assistant can clarify ambiguous requests before proposing a draft.</p>
+              </div>
+            </div>
+
+            <div className="ai-chat-log">
+              {aiMessages.length === 0 ? (
+                <div className="empty-panel">Start with a natural-language request like “remove rows with invalid emails”.</div>
+              ) : (
+                aiMessages.map((message, index) => (
+                  <article className={`ai-chat-message ai-chat-message--${message.role}`} key={`${message.timestamp}-${index}`}>
+                    <strong>{message.role === 'assistant' ? 'AI' : 'You'}</strong>
+                    <p>{message.text}</p>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <div className="ai-assistant-activity">
+              <div className="panel-header">
+                <div>
+                  <h2>Activity</h2>
+                  <p>Live client-side AI turn stages. These are mirrored to the browser console as <code>[AI]</code> logs and, in dev mode, appended to <code>.logs/ai-debug.log</code>.</p>
+                </div>
+              </div>
+              {aiProgressEvents.length === 0 ? (
+                <div className="empty-panel">No AI activity yet.</div>
+              ) : (
+                <ul className="ai-activity-log">
+                  {aiProgressEvents.map((event, index) => (
+                    <li className="ai-activity-log__item" key={`${event.timestamp}-${event.stage}-${index}`}>
+                      <strong>{formatTime(event.timestamp)}</strong>
+                      <span>{event.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="ai-assistant-compose">
+              <textarea
+                className="json-viewer ai-assistant-compose__input"
+                onChange={(event) => onPromptChange(event.target.value)}
+                placeholder="Describe the workflow steps you want to add"
+                value={aiPromptValue}
+              />
+              <div className="workflow-import-actions">
+                <button disabled={!canDownloadPrompt} onClick={onDownloadPrompt} type="button">
+                  Download prompt
+                </button>
+                <button disabled={!canSendPrompt} onClick={onSendPrompt} type="button">
+                  {isLoading ? 'Thinking...' : 'Send'}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="ai-assistant-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Draft</h2>
+                <p>Canonical draft steps that would be appended to the current workflow.</p>
+              </div>
+            </div>
+
+            {aiDraft ? (
+              <div className="ai-draft-summary">
+                <strong>{aiDraft.steps.length} draft step{aiDraft.steps.length === 1 ? '' : 's'}</strong>
+                <p>{aiDraft.assistantMessage}</p>
+                {aiDraft.assumptions.length > 0 ? (
+                  <ul className="issue-list">
+                    {aiDraft.assumptions.map((assumption, index) => (
+                      <li className="issue-item" key={`${assumption}-${index}`}>
+                        <strong>Assumption</strong>
+                        <p>{assumption}</p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : (
+              <div className="empty-panel">No accepted draft yet.</div>
+            )}
+
+            {aiDraftIssues.length > 0 ? (
+              <ul className="issue-list">
+                {aiDraftIssues.map((issue, index) => (
+                  <li className="issue-item" key={`${issue.code}-${issue.path}-${index}`}>
+                    <strong>{issue.code}</strong>
+                    <p>{issue.message}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+
+            <textarea className="json-viewer ai-draft-viewer" readOnly value={aiDraftSummary} />
+
+            {aiDebugTrace ? (
+              <details className="ai-debug-trace">
+                <summary>AI debug trace</summary>
+                <dl className="result-stats ai-debug-trace__stats">
+                  <div>
+                    <dt>Outcome</dt>
+                    <dd>{aiDebugTrace.outcomeKind}</dd>
+                  </div>
+                  <div>
+                    <dt>Repaired</dt>
+                    <dd>{aiDebugTrace.repaired ? 'yes' : 'no'}</dd>
+                  </div>
+                  <div>
+                    <dt>Initial mode</dt>
+                    <dd>{aiDebugTrace.initialResponse.mode}</dd>
+                  </div>
+                  <div>
+                    <dt>Repair mode</dt>
+                    <dd>{aiDebugTrace.repairResponse?.mode ?? 'none'}</dd>
+                  </div>
+                </dl>
+                <div className="ai-debug-trace__section">
+                  <strong>Initial raw response</strong>
+                  <textarea className="json-viewer ai-debug-trace__viewer" readOnly value={aiDebugTrace.initialRawText} />
+                </div>
+                {aiDebugTrace.initialValidationIssues.length > 0 ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Initial validation issues</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.initialValidationIssues, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
+                {aiDebugTrace.repairRawText ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Repair raw response</strong>
+                    <textarea className="json-viewer ai-debug-trace__viewer" readOnly value={aiDebugTrace.repairRawText} />
+                  </div>
+                ) : null}
+                {aiDebugTrace.repairValidationIssues.length > 0 ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Repair validation issues</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.repairValidationIssues, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
+              </details>
+            ) : null}
+          </section>
+        </div>
+
+        <div className="workflow-import-actions">
+          <button disabled={!canDiscardDraft} onClick={onDiscardDraft} type="button">
+            Discard draft
+          </button>
+          <button onClick={onClose} type="button">
+            Close
+          </button>
+          <button disabled={!canApplyDraft} onClick={onApplyDraft} type="button">
+            Apply draft
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function PreviewPanel({
   allowFullscreen = false,
   headerControls,
@@ -863,4 +1374,68 @@ function downloadBlob(blob: Blob, fileName: string) {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+function buildAIPromptExportFileName(workflow: Workflow) {
+  const baseName = workflow.workflowId.trim() || 'workflow';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${baseName}-ai-prompt-${timestamp}.json`;
+}
+
+function readStoredValue(key: string) {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.localStorage.getItem(key) ?? '';
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function formatTime(timestamp: string) {
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return timestamp;
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function createAITurnId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `ai-turn-${Date.now()}`;
+}
+
+function logGeminiClientEvent(turnId: string, event: GeminiClientLogEvent) {
+  const prefix = `[AI][${event.phase}] ${event.kind}`;
+
+  if (event.rawText) {
+    console.info(`${prefix}: ${event.message}`, event.rawText);
+  } else if (event.error) {
+    console.warn(`${prefix}: ${event.message}`, event.error);
+  } else {
+    console.info(`${prefix}: ${event.message}`);
+  }
+
+  void appendAIDevLog({
+    turnId,
+    kind: 'gemini_client',
+    phase: event.phase,
+    eventKind: event.kind,
+    message: event.message,
+    timestamp: event.timestamp,
+    ...(event.responseMode ? { responseMode: event.responseMode } : {}),
+    ...(event.rawText ? { rawText: event.rawText } : {}),
+    ...(event.error ? { error: event.error } : {}),
+  });
 }

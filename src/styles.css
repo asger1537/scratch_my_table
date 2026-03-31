@@ -349,6 +349,7 @@ code {
   display: grid;
   place-items: center;
   padding: 1.5rem;
+  overflow: auto;
 }
 
 .workflow-import-modal__scrim {
@@ -365,6 +366,8 @@ code {
   display: grid;
   gap: 1rem;
   padding: 1.25rem;
+  max-height: calc(100vh - 3rem);
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 1rem;
   background: #fffdf9;
@@ -414,6 +417,152 @@ code {
 .workflow-import-paste {
   display: grid;
   gap: 0.9rem;
+}
+
+.ai-assistant-modal__panel {
+  width: min(72rem, 100%);
+}
+
+.ai-assistant-settings {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ai-assistant-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  align-items: start;
+}
+
+.ai-assistant-panel {
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+  min-width: 0;
+}
+
+.ai-chat-log {
+  display: grid;
+  gap: 0.8rem;
+  min-height: 18rem;
+  max-height: 28rem;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.ai-chat-message {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: #fff8f3;
+}
+
+.ai-chat-message strong,
+.ai-chat-message p {
+  margin: 0;
+}
+
+.ai-chat-message p {
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+
+.ai-chat-message--assistant {
+  background: #fffaf4;
+}
+
+.ai-chat-message--user {
+  background: #f6ebe2;
+}
+
+.ai-assistant-compose {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.ai-assistant-activity {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.ai-activity-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.ai-activity-log__item {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fffaf4;
+}
+
+.ai-activity-log__item strong,
+.ai-activity-log__item span {
+  margin: 0;
+}
+
+.ai-activity-log__item strong {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ai-assistant-compose__input {
+  min-height: 7rem;
+}
+
+.ai-draft-summary {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.ai-draft-summary strong,
+.ai-draft-summary p {
+  margin: 0;
+}
+
+.ai-draft-viewer {
+  min-height: 12rem;
+}
+
+.ai-debug-trace {
+  display: grid;
+  gap: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  padding: 0.85rem 0.95rem;
+  background: #fffaf4;
+}
+
+.ai-debug-trace summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.ai-debug-trace__stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ai-debug-trace__section {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ai-debug-trace__viewer {
+  min-height: 6rem;
 }
 
 .workflow-import-actions {
@@ -520,6 +669,32 @@ code {
 
 .workflow-meta-field--wide {
   grid-column: span 1;
+}
+
+.workflow-editor-toolbox-search {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.workflow-editor-toolbox-search__label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.workflow-editor-toolbox-search__input {
+  min-width: min(28rem, 100%);
+  max-width: 100%;
+  flex: 1 1 20rem;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fffdf9;
+  padding: 0.7rem 0.9rem;
+  color: var(--ink);
 }
 
 .workflow-editor-canvas {
@@ -911,7 +1086,25 @@ code {
     padding-right: 0;
   }
 
+  .workflow-editor-toolbox-search {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .workflow-editor-toolbox-search__input {
+    min-width: 0;
+  }
+
   .workflow-import-options {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-assistant-settings,
+  .ai-assistant-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-debug-trace__stats {
     grid-template-columns: 1fr;
   }
 
