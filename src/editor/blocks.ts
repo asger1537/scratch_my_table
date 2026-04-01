@@ -16,10 +16,9 @@ const DATE_COLOR = '#2a9d8f';
 const MATH_COLOR = '#6b3a8c';
 const LOGIC_COLOR = '#355070';
 const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
-export const CHECKBOX_TRUE = 'TRUE';
-export const CHECKBOX_FALSE = 'FALSE';
 export const WORKFLOW_TOOLBOX_COLOURS = {
   scopedRules: TRANSFORM_COLOR,
+  cellActions: SUPPORT_COLOR,
   tableOperations: TABLE_OPERATION_COLOR,
   comments: COMMENT_COLOR,
   lists: SUPPORT_COLOR,
@@ -37,11 +36,13 @@ const CREATE_COLUMN_INPUT_NAMES = {
 } as const;
 export const SCOPED_RULE_INPUT_NAMES = {
   cases: 'CASES',
-  defaultValue: 'DEFAULT_VALUE',
-  defaultColor: 'DEFAULT_COLOR',
+  defaultActions: 'DEFAULT_ACTIONS',
 } as const;
 const RULE_CASE_INPUT_NAMES = {
   when: 'WHEN',
+  actions: 'ACTIONS',
+} as const;
+const CELL_ACTION_INPUT_NAMES = {
   value: 'VALUE',
   color: 'COLOR',
 } as const;
@@ -92,6 +93,8 @@ export const BLOCK_TYPES = {
   commentStep: 'comment_step',
   scopedRuleCasesStep: 'scoped_rule_cases_step',
   ruleCaseItem: 'rule_case_item',
+  setValueActionItem: 'set_value_action_item',
+  highlightActionItem: 'highlight_action_item',
   dropColumnsStep: 'drop_columns_step',
   renameColumnStep: 'rename_column_step',
   deriveColumnStep: 'derive_column_step',
@@ -157,11 +160,7 @@ export function registerWorkflowBlocks() {
       this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
       this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.cases).setCheck('RULE_CASE_ITEM').appendField('cases');
       this.appendDummyInput('DEFAULT_HEADER').appendField('otherwise default to');
-      this.appendValueInput(SCOPED_RULE_INPUT_NAMES.defaultValue).setCheck('EXPRESSION').appendField('set value');
-      this.appendValueInput(SCOPED_RULE_INPUT_NAMES.defaultColor)
-        .setCheck('COLOR_LITERAL')
-        .appendField('highlight')
-        .appendField('with');
+      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'AUTHORING_STEP');
       this.setNextStatement(true, 'AUTHORING_STEP');
       this.setColour(TRANSFORM_COLOR);
@@ -170,19 +169,36 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.ruleCaseItem] = {
     init() {
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when');
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.value)
-        .setCheck('EXPRESSION')
-        .appendField('then set value')
-        .appendField('to');
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.color)
-        .setCheck('COLOR_LITERAL')
-        .appendField('highlight')
-        .appendField('with');
+      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('case: when');
+      this.appendStatementInput(RULE_CASE_INPUT_NAMES.actions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'RULE_CASE_ITEM');
       this.setNextStatement(true, 'RULE_CASE_ITEM');
       this.setColour(SUPPORT_COLOR);
       this.setInputsInline(false);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.setValueActionItem] = {
+    init() {
+      this.appendValueInput(CELL_ACTION_INPUT_NAMES.value)
+        .setCheck('EXPRESSION')
+        .appendField('set value')
+        .appendField('to');
+      this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
+      this.setNextStatement(true, 'CELL_ACTION_ITEM');
+      this.setColour(SUPPORT_COLOR);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.highlightActionItem] = {
+    init() {
+      this.appendValueInput(CELL_ACTION_INPUT_NAMES.color)
+        .setCheck('COLOR_LITERAL')
+        .appendField('highlight')
+        .appendField('with');
+      this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
+      this.setNextStatement(true, 'CELL_ACTION_ITEM');
+      this.setColour(SUPPORT_COLOR);
     },
   };
 

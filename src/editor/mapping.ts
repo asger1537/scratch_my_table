@@ -466,11 +466,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
         return { step: undefined as never, issue: rowCondition.issue };
       }
 
-      const defaultPatch = readAuthoringCellPatch(block, {
-        valueInput: 'DEFAULT_VALUE',
-        colorInput: 'DEFAULT_COLOR',
-        required: false,
-      });
+      const defaultPatch = readAuthoringCellPatchActions(block, 'DEFAULT_ACTIONS');
 
       if ('issue' in defaultPatch) {
         return { step: undefined as never, issue: defaultPatch.issue };
@@ -482,7 +478,10 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
         return { step: undefined as never, issue: cases.issue };
       }
 
-      if (cases.cases.length === 0 && !isAuthoringCellPatchEnabled(defaultPatch.patch)) {
+      const hasEffectiveCases = cases.cases.some((ruleCase) => isAuthoringCellPatchEnabled(ruleCase.then));
+      const hasDefaultPatch = isAuthoringCellPatchEnabled(defaultPatch.patch);
+
+      if (!hasEffectiveCases && !hasDefaultPatch) {
         return {
           step: undefined as never,
           issue: {
@@ -502,12 +501,12 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
           rowCondition: rowCondition.expression,
-          mode: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch) ? 'single' : 'cases',
-          singlePatch: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch)
+          mode: cases.caseCount === 0 && hasDefaultPatch ? 'single' : 'cases',
+          singlePatch: cases.caseCount === 0 && hasDefaultPatch
             ? defaultPatch.patch
             : createEmptyAuthoringCellPatch(),
           cases: cases.cases,
-          defaultPatch: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch)
+          defaultPatch: cases.caseCount === 0 && hasDefaultPatch
             ? createEmptyAuthoringCellPatch()
             : defaultPatch.patch,
         },
@@ -707,65 +706,64 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
   return readExpression(expressionBlock);
 }
 
-function readAuthoringCellPatch(
+function readAuthoringCellPatchActions(
   block: Blockly.Block,
-  fields: {
-    valueEnabledField?: string;
-    valueInput: string;
-    formatEnabledField?: string;
-    colorField?: string;
-    colorInput?: string;
-    required: boolean;
-  },
-): { patch: AuthoringCellPatch } | { issue: EditorIssue } {
-  const valueEnabled = fields.valueEnabledField
-    ? isCheckboxFieldChecked(block, fields.valueEnabledField)
-    : Boolean(block.getInputTargetBlock(fields.valueInput));
+  inputName: string,
+): { patch: AuthoringCellPatch; actionCount: number } | { issue: EditorIssue } {
+  let valueEnabled = false;
   let value: WorkflowExpression | undefined;
-  let fillColor: string | undefined;
   let formatEnabled = false;
+  let fillColor: string | undefined;
+  let actionCount = 0;
+  let current = block.getInputTargetBlock(inputName);
 
-  if (valueEnabled) {
-    const expression = readRequiredExpression(block, fields.valueInput);
+  while (current) {
+    actionCount += 1;
 
-    if ('issue' in expression) {
-      return expression;
+    if (current.type === BLOCK_TYPES.setValueActionItem) {
+      if (valueEnabled) {
+        return {
+          issue: duplicateCellActionIssue(block, current, 'set value'),
+        };
+      }
+
+      const expression = readRequiredExpression(current, 'VALUE');
+
+      if ('issue' in expression) {
+        return expression;
+      }
+
+      valueEnabled = true;
+      value = expression.expression;
+      current = current.getNextBlock();
+      continue;
     }
 
-    value = expression.expression;
-  }
+    if (current.type === BLOCK_TYPES.highlightActionItem) {
+      if (formatEnabled) {
+        return {
+          issue: duplicateCellActionIssue(block, current, 'highlight'),
+        };
+      }
 
-  if (fields.colorInput) {
-    const colorLiteral = readOptionalColorLiteral(block, fields.colorInput);
+      const colorLiteral = readRequiredColorLiteral(current, 'COLOR');
 
-    if ('issue' in colorLiteral) {
-      return colorLiteral;
+      if ('issue' in colorLiteral) {
+        return colorLiteral;
+      }
+
+      formatEnabled = true;
+      fillColor = colorLiteral.fillColor;
+      current = current.getNextBlock();
+      continue;
     }
 
-    fillColor = colorLiteral.fillColor;
-    formatEnabled = fields.formatEnabledField
-      ? isCheckboxFieldChecked(block, fields.formatEnabledField)
-      : Boolean(fillColor);
-
-    if (formatEnabled && !fillColor) {
-      return {
-        issue: missingInputIssue(block, fields.colorInput),
-      };
-    }
-  } else if (fields.colorField) {
-    fillColor = getFieldString(block, fields.colorField);
-    formatEnabled = fields.formatEnabledField
-      ? isCheckboxFieldChecked(block, fields.formatEnabledField)
-      : Boolean(fillColor);
-  }
-
-  if (!valueEnabled && !formatEnabled && fields.required) {
     return {
       issue: {
-        code: 'missingPatch',
-        message: `Block '${block.type}' must define a value change or fill color.`,
-        blockId: block.id,
-        blockType: block.type,
+        code: 'invalidCellActionBlock',
+        message: `Block '${block.type}' contains unsupported action block '${current.type}'.`,
+        blockId: current.id,
+        blockType: current.type,
       },
     };
   }
@@ -777,6 +775,7 @@ function readAuthoringCellPatch(
       formatEnabled,
       ...(fillColor ? { fillColor } : {}),
     },
+    actionCount,
   };
 }
 
@@ -801,11 +800,32 @@ function readOptionalColorLiteral(block: Blockly.Block, inputName: string): { fi
   return { fillColor: getFieldString(colorBlock, 'VALUE') };
 }
 
-function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[] } | { issue: EditorIssue } {
+function readRequiredColorLiteral(block: Blockly.Block, inputName: string): { fillColor: string } | { issue: EditorIssue } {
+  const colorLiteral = readOptionalColorLiteral(block, inputName);
+
+  if ('issue' in colorLiteral) {
+    return colorLiteral;
+  }
+
+  if (!colorLiteral.fillColor) {
+    return {
+      issue: missingInputIssue(block, inputName),
+    };
+  }
+
+  return {
+    fillColor: colorLiteral.fillColor,
+  };
+}
+
+function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[]; caseCount: number } | { issue: EditorIssue } {
   const cases: AuthoringRuleCase[] = [];
+  let caseCount = 0;
   let current = block.getInputTargetBlock(inputName);
 
   while (current) {
+    caseCount += 1;
+
     if (current.type !== BLOCK_TYPES.ruleCaseItem) {
       return {
         issue: {
@@ -823,11 +843,7 @@ function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases
       return when;
     }
 
-    const then = readAuthoringCellPatch(current, {
-      valueInput: 'VALUE',
-      colorInput: 'COLOR',
-      required: true,
-    });
+    const then = readAuthoringCellPatchActions(current, 'ACTIONS');
 
     if ('issue' in then) {
       return then;
@@ -840,7 +856,7 @@ function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases
     current = current.getNextBlock();
   }
 
-  return { cases };
+  return { cases, caseCount };
 }
 
 function isAuthoringCellPatchEnabled(patch: AuthoringCellPatch) {
@@ -1525,10 +1541,11 @@ function createScopedRuleBlock(workspace: Blockly.Workspace, step: AuthoringScop
     connectValueBlock(block, 'ROW_CONDITION', createExpressionBlock(workspace, step.rowCondition));
   }
 
-  setAuthoringCellPatchFields(block, {
-    valueInput: 'DEFAULT_VALUE',
-    colorInput: 'DEFAULT_COLOR',
-  }, step.mode === 'single' ? step.singlePatch : step.defaultPatch, workspace);
+  connectStatementChain(
+    block,
+    'DEFAULT_ACTIONS',
+    createCellActionBlocks(workspace, step.mode === 'single' ? step.singlePatch : step.defaultPatch),
+  );
 
   if (step.mode === 'cases' && step.cases.length > 0) {
     connectStatementChain(block, 'CASES', step.cases.map((ruleCase) => createRuleCaseBlock(workspace, ruleCase)));
@@ -1541,44 +1558,29 @@ function createRuleCaseBlock(workspace: Blockly.Workspace, ruleCase: AuthoringRu
   const block = createBlock(workspace, BLOCK_TYPES.ruleCaseItem);
 
   connectValueBlock(block, 'WHEN', createExpressionBlock(workspace, ruleCase.when));
-  setAuthoringCellPatchFields(block, {
-    valueInput: 'VALUE',
-    colorInput: 'COLOR',
-  }, ruleCase.then, workspace);
+  connectStatementChain(block, 'ACTIONS', createCellActionBlocks(workspace, ruleCase.then));
 
   return block;
 }
 
-function setAuthoringCellPatchFields(
-  block: Blockly.Block,
-  fields: {
-    valueEnabledField?: string;
-    valueInput: string;
-    formatEnabledField?: string;
-    colorField?: string;
-    colorInput?: string;
-  },
-  patch: AuthoringCellPatch,
-  workspace: Blockly.Workspace,
-) {
-  if (fields.valueEnabledField) {
-    block.setFieldValue(patch.valueEnabled ? 'TRUE' : 'FALSE', fields.valueEnabledField);
-  }
-  if (fields.formatEnabledField) {
-    block.setFieldValue(patch.formatEnabled ? 'TRUE' : 'FALSE', fields.formatEnabledField);
-  }
-
-  if (fields.colorField) {
-    block.setFieldValue(patch.fillColor ?? '#fff2cc', fields.colorField);
-  }
+function createCellActionBlocks(workspace: Blockly.Workspace, patch: AuthoringCellPatch) {
+  const blocks: Blockly.Block[] = [];
 
   if (patch.valueEnabled && patch.value) {
-    connectValueBlock(block, fields.valueInput, createExpressionBlock(workspace, patch.value));
+    const setValueBlock = createBlock(workspace, BLOCK_TYPES.setValueActionItem);
+
+    connectValueBlock(setValueBlock, 'VALUE', createExpressionBlock(workspace, patch.value));
+    blocks.push(setValueBlock);
   }
 
-  if (fields.colorInput && patch.formatEnabled && patch.fillColor) {
-    connectValueBlock(block, fields.colorInput, createColorLiteralBlock(workspace, patch.fillColor));
+  if (patch.formatEnabled && patch.fillColor) {
+    const highlightBlock = createBlock(workspace, BLOCK_TYPES.highlightActionItem);
+
+    connectValueBlock(highlightBlock, 'COLOR', createColorLiteralBlock(workspace, patch.fillColor));
+    blocks.push(highlightBlock);
   }
+
+  return blocks;
 }
 
 function createRenameColumnBlock(workspace: Blockly.Workspace, step: AuthoringRenameColumnStep, isTopBlock: boolean) {
@@ -2047,10 +2049,6 @@ function getFieldString(block: Blockly.Block, fieldName: string) {
   return String(block.getFieldValue(fieldName) ?? '');
 }
 
-function isCheckboxFieldChecked(block: Blockly.Block, fieldName: string) {
-  return getFieldString(block, fieldName).toUpperCase() === 'TRUE';
-}
-
 function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
   const mode = getCreateColumnMode(block);
 
@@ -2127,6 +2125,15 @@ function missingInputIssue(block: Blockly.Block, inputName: string): EditorIssue
     message: `Block '${block.type}' is missing required input '${inputName}'.`,
     blockId: block.id,
     blockType: block.type,
+  };
+}
+
+function duplicateCellActionIssue(containerBlock: Blockly.Block, actionBlock: Blockly.Block, actionLabel: string): EditorIssue {
+  return {
+    code: 'duplicateCellAction',
+    message: `Block '${containerBlock.type}' cannot define more than one '${actionLabel}' action.`,
+    blockId: actionBlock.id,
+    blockType: actionBlock.type,
   };
 }
 

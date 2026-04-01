@@ -1595,46 +1595,34 @@ function applyScopedRuleStep(
     const stylesByColumnId = cloneStylesByColumnId(row.stylesByColumnId);
 
     step.columnIds.forEach((columnId) => {
-      const currentValue = row.cellsByColumnId[columnId] ?? null;
-      const patch = selectScopedRulePatch(step, row, currentValue, runTimestamp);
+      const originalValue = row.cellsByColumnId[columnId] ?? null;
+      const originalStyle = stylesByColumnId[columnId];
+      const resolvedPatch = resolveScopedRulePatch(step, row, originalValue, originalStyle, runTimestamp);
 
-      if (!patch) {
+      if (!resolvedPatch.matched) {
         return;
       }
 
       summary.matchedCellCount += 1;
-      let valueChanged = false;
-      let formatChanged = false;
+      const valueChanged = resolvedPatch.valueApplied && !Object.is(originalValue, resolvedPatch.nextValue);
+      const formatChanged =
+        resolvedPatch.formatApplied
+        && !Object.is(getComparableCellStyle(originalStyle), getComparableCellStyle(resolvedPatch.nextStyle));
 
-      if (patch.value) {
-        const nextValue = toCellValue(evaluateExpression(patch.value, {
-          runTimestamp,
-          row,
-          currentValue,
-        }));
-
-        if (!Object.is(currentValue, nextValue)) {
-          valueChanged = true;
-          summary.valueChangedCellCount += 1;
-        }
-
-        cellsByColumnId[columnId] = nextValue;
+      if (resolvedPatch.valueApplied) {
+        cellsByColumnId[columnId] = resolvedPatch.nextValue;
       }
 
-      if (patch.format?.fillColor) {
-        const previousStyle = getComparableCellStyle(stylesByColumnId[columnId]);
-        const nextStyle = {
-          ...stylesByColumnId[columnId],
-          fillColor: normalizeFillColor(patch.format.fillColor),
-        };
-        const nextComparableStyle = getComparableCellStyle(nextStyle);
+      if (resolvedPatch.formatApplied && resolvedPatch.nextStyle) {
+        stylesByColumnId[columnId] = resolvedPatch.nextStyle;
+      }
 
-        stylesByColumnId[columnId] = nextStyle;
+      if (valueChanged) {
+        summary.valueChangedCellCount += 1;
+      }
 
-        if (!Object.is(previousStyle, nextComparableStyle)) {
-          formatChanged = true;
-          summary.formatChangedCellCount += 1;
-        }
+      if (formatChanged) {
+        summary.formatChangedCellCount += 1;
       }
 
       if (valueChanged || formatChanged) {
@@ -2366,23 +2354,74 @@ function getProjectedScopedRuleLogicalType(
   return mergeLogicalTypes(projectedTypes).logicalType;
 }
 
-function selectScopedRulePatch(
+function resolveScopedRulePatch(
   step: Extract<WorkflowStep, { type: 'scopedRule' }>,
   row: TableRow,
   currentValue: CellValue,
+  currentStyle: CellStyle | undefined,
   runTimestamp: string,
 ) {
+  let workingValue = currentValue;
+  let workingStyle = currentStyle ? { ...currentStyle } : undefined;
+  let matched = false;
+  let valueApplied = false;
+  let formatApplied = false;
+
   for (const ruleCase of step.cases ?? []) {
-    if (Boolean(evaluateExpression(ruleCase.when, {
+    if (!Boolean(evaluateExpression(ruleCase.when, {
       runTimestamp,
       row,
-      currentValue,
+      currentValue: workingValue,
     }))) {
-      return ruleCase.then;
+      continue;
+    }
+
+    matched = true;
+
+    if (ruleCase.then.value) {
+      workingValue = toCellValue(evaluateExpression(ruleCase.then.value, {
+        runTimestamp,
+        row,
+        currentValue: workingValue,
+      }));
+      valueApplied = true;
+    }
+
+    if (ruleCase.then.format?.fillColor) {
+      workingStyle = {
+        ...workingStyle,
+        fillColor: normalizeFillColor(ruleCase.then.format.fillColor),
+      };
+      formatApplied = true;
     }
   }
 
-  return step.defaultPatch;
+  if (!matched && step.defaultPatch) {
+    if (step.defaultPatch.value) {
+      workingValue = toCellValue(evaluateExpression(step.defaultPatch.value, {
+        runTimestamp,
+        row,
+        currentValue: workingValue,
+      }));
+      valueApplied = true;
+    }
+
+    if (step.defaultPatch.format?.fillColor) {
+      workingStyle = {
+        ...workingStyle,
+        fillColor: normalizeFillColor(step.defaultPatch.format.fillColor),
+      };
+      formatApplied = true;
+    }
+  }
+
+  return {
+    matched: matched || Boolean(step.defaultPatch),
+    valueApplied,
+    nextValue: workingValue,
+    formatApplied,
+    nextStyle: workingStyle,
+  };
 }
 
 function normalizeCellFormatPatch(format: WorkflowCellFormatPatch | undefined) {

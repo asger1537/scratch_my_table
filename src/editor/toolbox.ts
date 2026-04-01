@@ -35,6 +35,21 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     ],
   },
   {
+    id: 'category_cell_actions',
+    name: 'Cell actions',
+    colour: WORKFLOW_TOOLBOX_COLOURS.cellActions,
+    entries: [
+      {
+        type: BLOCK_TYPES.setValueActionItem,
+        searchText: 'cell actions set value update replace expression patch current cell',
+      },
+      {
+        type: BLOCK_TYPES.highlightActionItem,
+        searchText: 'cell actions highlight fill color format patch annotate emphasis',
+      },
+    ],
+  },
+  {
     id: 'category_table_operations',
     name: 'Table operations',
     colour: WORKFLOW_TOOLBOX_COLOURS.tableOperations,

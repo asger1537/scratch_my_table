@@ -59,6 +59,7 @@ describe('block-based workflow authoring', () => {
       BLOCK_TYPES.currentValueExpression,
       BLOCK_TYPES.lowerFunction,
       BLOCK_TYPES.scopedRuleCasesStep,
+      BLOCK_TYPES.setValueActionItem,
       BLOCK_TYPES.trimFunction,
     ]);
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
@@ -189,9 +190,11 @@ describe('block-based workflow authoring', () => {
     const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_vip'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
     const [topBlock] = workspace.getTopBlocks(false);
-    const defaultColorBlock = topBlock?.getInputTargetBlock('DEFAULT_COLOR');
+    const defaultActionBlock = topBlock?.getInputTargetBlock('DEFAULT_ACTIONS');
+    const defaultColorBlock = defaultActionBlock?.getInputTargetBlock('COLOR');
 
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(defaultActionBlock?.type).toBe(BLOCK_TYPES.highlightActionItem);
     expect(defaultColorBlock?.type).toBe(BLOCK_TYPES.literalColor);
     expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#fff2cc');
     expect(roundtrip.issues).toEqual([]);
@@ -233,6 +236,49 @@ describe('block-based workflow authoring', () => {
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('reconstructs scoped-rule action stacks in normalized order from canonical workflow patches', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_case_action_order',
+      name: 'Case action order',
+      steps: [
+        {
+          id: 'step_case_action_order',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          cases: [
+            {
+              when: call('isEmpty', value()),
+              then: {
+                value: literal('unknown'),
+                format: {
+                  fillColor: '#ff0000',
+                },
+              },
+            },
+          ],
+          defaultPatch: {
+            value: call('lower', value()),
+            format: {
+              fillColor: '#fff2cc',
+            },
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_status'], workflow);
+    const [topBlock] = workspace.getTopBlocks(false);
+    const ruleCaseBlock = topBlock?.getInputTargetBlock('CASES');
+    const firstCaseAction = ruleCaseBlock?.getInputTargetBlock('ACTIONS');
+    const defaultAction = topBlock?.getInputTargetBlock('DEFAULT_ACTIONS');
+
+    expect(firstCaseAction?.type).toBe(BLOCK_TYPES.setValueActionItem);
+    expect(firstCaseAction?.getNextBlock()?.type).toBe(BLOCK_TYPES.highlightActionItem);
+    expect(defaultAction?.type).toBe(BLOCK_TYPES.setValueActionItem);
+    expect(defaultAction?.getNextBlock()?.type).toBe(BLOCK_TYPES.highlightActionItem);
   });
 
   it('wraps long comment text into multiple display lines without truncating content', () => {
@@ -856,23 +902,71 @@ describe('block-based workflow authoring', () => {
     expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
   });
 
-  it('lays out rule-case actions with inline action phrasing and a dedicated color input', () => {
+  it('lays out scoped-rule cases and defaults with nested cell-action statements', () => {
     const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep) as {
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
     const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem) as {
-      inputList: Array<{ name: string }>;
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem) as {
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+    const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem) as {
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
 
-    expect(ruleCaseBlock.inputList.map((input) => input.name)).toEqual(['WHEN', 'VALUE', 'COLOR']);
-    expect(ruleCaseBlock.getInput('CASE_TOGGLE_ROW')).toBeNull();
-    expect(ruleCaseBlock.getInput('VALUE')?.connection?.getCheck()).toEqual(['EXPRESSION']);
-    expect(ruleCaseBlock.getInput('COLOR')?.connection?.getCheck()).toEqual(['COLOR_LITERAL']);
+    expect(ruleCaseBlock.inputList.map((input) => input.name)).toEqual(['WHEN', 'ACTIONS']);
+    expect(ruleCaseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('case: when');
+    expect(ruleCaseBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('do');
+    expect(ruleCaseBlock.getInput('ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
+    expect(scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
+    expect(setValueActionBlock.getInput('VALUE')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(highlightActionBlock.getInput('COLOR')?.connection?.getCheck()).toEqual(['COLOR_LITERAL']);
   });
 
-  it('compiles rule-case highlight colors from connected color literal blocks', () => {
+  it('compiles rule-case value actions from nested set-value blocks', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
     const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const valueBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    valueBlock.setFieldValue('fallback@example.com', 'VALUE');
+    whenBlock.setFieldValue('true', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(valueBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+    const step = result.workflow?.steps[0];
+
+    if (!step || step.kind !== 'scopedRule') {
+      throw new Error('Expected a scoped rule authoring step.');
+    }
+
+    expect(result.issues).toEqual([]);
+    expect(step.cases[0]).toEqual({
+      when: { kind: 'literal', value: true },
+      then: {
+        valueEnabled: true,
+        value: { kind: 'literal', value: 'fallback@example.com' },
+        formatEnabled: false,
+      },
+    });
+  });
+
+  it('compiles rule-case highlight colors from nested highlight action blocks', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
     const colorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
     const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
 
@@ -882,7 +976,8 @@ describe('block-based workflow authoring', () => {
 
     scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
     ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
-    ruleCaseBlock.getInput('COLOR')?.connection?.connect(colorBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(highlightActionBlock.previousConnection!);
+    highlightActionBlock.getInput('COLOR')?.connection?.connect(colorBlock.outputConnection!);
 
     const result = workspaceToAuthoringWorkflow(workspace);
     const step = result.workflow?.steps[0];
@@ -902,7 +997,37 @@ describe('block-based workflow authoring', () => {
     });
   });
 
-  it('treats empty rule-case sockets as disabled actions', () => {
+  it('drops empty rule-case action stacks when another action keeps the scoped rule effective', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const emptyRuleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const valueBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('true', 'VALUE');
+    valueBlock.setFieldValue('fallback@example.com', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(emptyRuleCaseBlock.previousConnection!);
+    emptyRuleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(valueBlock.outputConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+    expect(result.workflow?.steps[0]).toEqual({
+      id: 'step_scoped_rule_1',
+      type: 'scopedRule',
+      columnIds: ['col_email'],
+      defaultPatch: {
+        value: { kind: 'literal', value: 'fallback@example.com' },
+      },
+    });
+  });
+
+  it('treats empty rule-case action stacks as no-ops until the step-level validation runs', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
     const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
@@ -919,15 +1044,50 @@ describe('block-based workflow authoring', () => {
     expect(result.workflow).toBeNull();
     expect(result.issues).toEqual([
       {
-        code: 'missingPatch',
-        message: `Block '${BLOCK_TYPES.ruleCaseItem}' must define a value change or fill color.`,
-        blockId: ruleCaseBlock.id,
-        blockType: BLOCK_TYPES.ruleCaseItem,
+        code: 'missingRuleCases',
+        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
+        blockId: scopedRuleBlock.id,
+        blockType: BLOCK_TYPES.scopedRuleCasesStep,
       },
     ]);
   });
 
-  it('treats empty scoped-rule default sockets as no default patch', () => {
+  it('surfaces duplicate cell actions within a single rule case', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+    const firstHighlightBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const secondHighlightBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const firstColorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+    const secondColorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('true', 'VALUE');
+    firstColorBlock.setFieldValue('#ff2ccc', 'VALUE');
+    secondColorBlock.setFieldValue('#fff2cc', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(firstHighlightBlock.previousConnection!);
+    firstHighlightBlock.nextConnection?.connect(secondHighlightBlock.previousConnection!);
+    firstHighlightBlock.getInput('COLOR')?.connection?.connect(firstColorBlock.outputConnection!);
+    secondHighlightBlock.getInput('COLOR')?.connection?.connect(secondColorBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'duplicateCellAction',
+        message: `Block '${BLOCK_TYPES.ruleCaseItem}' cannot define more than one 'highlight' action.`,
+        blockId: secondHighlightBlock.id,
+        blockType: BLOCK_TYPES.highlightActionItem,
+      },
+    ]);
+  });
+
+  it('treats empty scoped-rule default action stacks as no default patch', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
 

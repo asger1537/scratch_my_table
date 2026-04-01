@@ -68,12 +68,16 @@ const SCHEMA_AFFECTING_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.deduplicateRowsStep,
   BLOCK_TYPES.sortRowsStep,
   BLOCK_TYPES.ruleCaseItem,
+  BLOCK_TYPES.setValueActionItem,
+  BLOCK_TYPES.highlightActionItem,
   BLOCK_TYPES.outputColumnItem,
   BLOCK_TYPES.sortItem,
 ]);
 const ORDER_SENSITIVE_BLOCK_TYPES = new Set<string>([
   ...STEP_BLOCK_TYPES,
   BLOCK_TYPES.ruleCaseItem,
+  BLOCK_TYPES.setValueActionItem,
+  BLOCK_TYPES.highlightActionItem,
   BLOCK_TYPES.outputColumnItem,
   BLOCK_TYPES.sortItem,
 ]);

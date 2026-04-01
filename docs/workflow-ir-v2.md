@@ -87,6 +87,7 @@ Expression kinds:
 Rules:
 
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`.
+  During `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied.
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
@@ -235,7 +236,8 @@ Rules:
 - `rowCondition` uses the shared expression AST and must resolve to a boolean value
 - if `rowCondition` is omitted, all rows are eligible
 - `cases[*].when` uses the shared expression AST and must resolve to a boolean value
-- cases are checked top to bottom and first match wins
+- cases are checked top to bottom and every matching case applies in order
+- later matching cases can refine the value or formatting produced by earlier matching cases
 - `defaultPatch`, if present, applies when no case matches
 - patches may contain:
   - `value` optional

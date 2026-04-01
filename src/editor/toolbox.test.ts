@@ -26,6 +26,7 @@ describe('workflow toolbox search', () => {
     const comparisonMatches = getWorkflowToolboxCategoryContents('category_logic', 'greater');
     const predicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'regex');
     const colorMatches = getWorkflowToolboxCategoryContents('category_values', 'highlight');
+    const cellActionMatches = getWorkflowToolboxCategoryContents('category_cell_actions', 'highlight');
 
     expect(comparisonMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.comparisonFunction })]),
@@ -35,6 +36,9 @@ describe('workflow toolbox search', () => {
     );
     expect(colorMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.literalColor })]),
+    );
+    expect(cellActionMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.highlightActionItem })]),
     );
   });
 
@@ -94,5 +98,16 @@ describe('workflow toolbox search', () => {
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.ruleCaseItem }),
       ]),
     );
+  });
+
+  it('exposes cell actions in their own toolbox category directly after scoped rules', () => {
+    const categoryIds = WORKFLOW_TOOLBOX_CATEGORIES.map((category) => category.id);
+    const cellActionsCategory = getWorkflowToolboxCategory('category_cell_actions');
+
+    expect(categoryIds.indexOf('category_cell_actions')).toBe(categoryIds.indexOf('category_scoped_rules') + 1);
+    expect(cellActionsCategory?.entries).toEqual([
+      expect.objectContaining({ type: BLOCK_TYPES.setValueActionItem }),
+      expect.objectContaining({ type: BLOCK_TYPES.highlightActionItem }),
+    ]);
   });
 });

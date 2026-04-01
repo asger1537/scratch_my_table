@@ -218,6 +218,54 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
   });
 
+  it('applies multiple matching scoped-rule cases in order so later matches can add formatting', () => {
+    const table = loadCsvTable('email,email_2\r\n,backup@example.com\r\n,\r\nprimary@example.com,\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_email_fallback_and_highlight',
+      name: 'Email fallback and highlight',
+      steps: [
+        {
+          id: 'step_email_rule',
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: call('isEmpty', value()),
+              then: {
+                value: column('col_email_2'),
+              },
+            },
+            {
+              when: call(
+                'and',
+                call('isEmpty', value()),
+                call('isEmpty', column('col_email_2')),
+              ),
+              then: {
+                value: value(),
+                format: {
+                  fillColor: '#ff0000',
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.changedRowCount).toBe(2);
+    expect(execution.changedCellCount).toBe(2);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('backup@example.com');
+    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_email).toBeUndefined();
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_email).toBeNull();
+    expect(execution.transformedTable?.rowsById.row_2.stylesByColumnId.col_email).toEqual({ fillColor: '#ff0000' });
+    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_email).toBeUndefined();
+  });
+
   it('structurally validates switch expressions', () => {
     const workflow = {
       version: 2,
