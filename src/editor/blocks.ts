@@ -37,25 +37,12 @@ const CREATE_COLUMN_INPUT_NAMES = {
 } as const;
 export const SCOPED_RULE_INPUT_NAMES = {
   cases: 'CASES',
-  singleValueEnabled: 'SINGLE_VALUE_ENABLED',
-  singleValue: 'SINGLE_VALUE',
-  singleFormatEnabled: 'SINGLE_FORMAT_ENABLED',
-  singleFormatRow: 'SINGLE_FORMAT_ROW',
-  singleColor: 'SINGLE_COLOR',
-  defaultValueEnabled: 'DEFAULT_VALUE_ENABLED',
-  defaultValueRow: 'DEFAULT_VALUE_ROW',
   defaultValue: 'DEFAULT_VALUE',
-  defaultFormatEnabled: 'DEFAULT_FORMAT_ENABLED',
-  defaultFormatRow: 'DEFAULT_FORMAT_ROW',
   defaultColor: 'DEFAULT_COLOR',
 } as const;
 const RULE_CASE_INPUT_NAMES = {
   when: 'WHEN',
-  valueEnabled: 'VALUE_ENABLED',
-  valueRow: 'VALUE_ROW',
   value: 'VALUE',
-  formatEnabled: 'FORMAT_ENABLED',
-  formatRow: 'FORMAT_ROW',
   color: 'COLOR',
 } as const;
 
@@ -68,12 +55,6 @@ export const CREATE_COLUMN_MODES = {
 export type CreateColumnMode = typeof CREATE_COLUMN_MODES[keyof typeof CREATE_COLUMN_MODES];
 type LogicalGroupBlock = Blockly.Block & {
   itemCount_?: number;
-  updateShape_?: () => void;
-};
-type ScopedRuleBlock = Blockly.Block & {
-  updateShape_?: () => void;
-};
-type RuleCaseBlock = Blockly.Block & {
   updateShape_?: () => void;
 };
 type SwitchGroupBlock = Blockly.Block & {
@@ -123,6 +104,7 @@ export const BLOCK_TYPES = {
   sortItem: 'sort_item',
   currentValueExpression: 'current_value_expression',
   literalString: 'literal_string',
+  literalColor: 'literal_color',
   literalNumber: 'literal_number',
   literalBoolean: 'literal_boolean',
   literalNull: 'literal_null',
@@ -168,48 +150,39 @@ export function registerWorkflowBlocks() {
   });
 
   Blockly.Blocks[BLOCK_TYPES.scopedRuleCasesStep] = {
-    init(this: ScopedRuleBlock) {
+    init() {
       this.appendDummyInput()
         .appendField('on columns')
         .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
       this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
       this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.cases).setCheck('RULE_CASE_ITEM').appendField('cases');
-      this.appendDummyInput('DEFAULT_TOGGLE_ROW')
-        .appendField('apply by default')
-        .appendField('set value')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_FALSE), SCOPED_RULE_INPUT_NAMES.defaultValueEnabled)
-        .appendField('fill color')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_FALSE), SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled);
-      this.appendValueInput(SCOPED_RULE_INPUT_NAMES.defaultValue).setCheck('EXPRESSION').appendField('default set value');
-      this.appendDummyInput(SCOPED_RULE_INPUT_NAMES.defaultFormatRow)
-        .appendField('default fill color')
-        .appendField(new FieldColorInput(), SCOPED_RULE_INPUT_NAMES.defaultColor);
+      this.appendDummyInput('DEFAULT_HEADER').appendField('otherwise default to');
+      this.appendValueInput(SCOPED_RULE_INPUT_NAMES.defaultValue).setCheck('EXPRESSION').appendField('set value');
+      this.appendValueInput(SCOPED_RULE_INPUT_NAMES.defaultColor)
+        .setCheck('COLOR_LITERAL')
+        .appendField('highlight')
+        .appendField('with');
       this.setPreviousStatement(true, 'AUTHORING_STEP');
       this.setNextStatement(true, 'AUTHORING_STEP');
       this.setColour(TRANSFORM_COLOR);
-      this.updateShape_ = () => updateScopedRuleCasesShape(this);
-      this.updateShape_();
     },
   };
 
   Blockly.Blocks[BLOCK_TYPES.ruleCaseItem] = {
-    init(this: RuleCaseBlock) {
+    init() {
       this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when');
-      this.appendDummyInput('CASE_TOGGLE_ROW')
-        .appendField('then')
-        .appendField('set value')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_TRUE), RULE_CASE_INPUT_NAMES.valueEnabled)
-        .appendField('fill color')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_FALSE), RULE_CASE_INPUT_NAMES.formatEnabled);
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.value).setCheck('EXPRESSION').appendField('set value');
-      this.appendDummyInput(RULE_CASE_INPUT_NAMES.formatRow)
-        .appendField('fill color')
-        .appendField(new FieldColorInput(), RULE_CASE_INPUT_NAMES.color);
+      this.appendValueInput(RULE_CASE_INPUT_NAMES.value)
+        .setCheck('EXPRESSION')
+        .appendField('then set value')
+        .appendField('to');
+      this.appendValueInput(RULE_CASE_INPUT_NAMES.color)
+        .setCheck('COLOR_LITERAL')
+        .appendField('highlight')
+        .appendField('with');
       this.setPreviousStatement(true, 'RULE_CASE_ITEM');
       this.setNextStatement(true, 'RULE_CASE_ITEM');
       this.setColour(SUPPORT_COLOR);
-      this.updateShape_ = () => updateRuleCaseShape(this);
-      this.updateShape_();
+      this.setInputsInline(false);
     },
   };
 
@@ -333,6 +306,16 @@ export function registerWorkflowBlocks() {
         .appendField('text')
         .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
       this.setOutput(true, ['EXPRESSION', 'LITERAL', 'NON_NULL_LITERAL', 'STRING_LITERAL']);
+      this.setColour(VALUE_COLOR);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.literalColor] = {
+    init() {
+      this.appendDummyInput()
+        .appendField('color')
+        .appendField(new FieldColorInput(), 'VALUE');
+      this.setOutput(true, ['COLOR_LITERAL', 'EXPRESSION', 'LITERAL', 'NON_NULL_LITERAL', 'STRING_LITERAL']);
       this.setColour(VALUE_COLOR);
     },
   };
@@ -889,48 +872,6 @@ function resizeSwitchGroup(block: SwitchGroupBlock, itemCount: number) {
   if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
     (block as Blockly.BlockSvg).render();
   }
-}
-
-function updateScopedRuleCasesShape(block: ScopedRuleBlock) {
-  const defaultValueEnabled = isChecked(block.getFieldValue(SCOPED_RULE_INPUT_NAMES.defaultValueEnabled));
-  const defaultFormatEnabled = isChecked(block.getFieldValue(SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled));
-
-  block.getInput('DEFAULT_TOGGLE_ROW')?.setVisible(true);
-  block.getInput(SCOPED_RULE_INPUT_NAMES.defaultValue)?.setVisible(defaultValueEnabled);
-  block.getInput(SCOPED_RULE_INPUT_NAMES.defaultFormatRow)?.setVisible(defaultFormatEnabled);
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function updateRuleCaseShape(block: RuleCaseBlock) {
-  const valueEnabled = isChecked(block.getFieldValue(RULE_CASE_INPUT_NAMES.valueEnabled));
-  const formatEnabled = isChecked(block.getFieldValue(RULE_CASE_INPUT_NAMES.formatEnabled));
-
-  block.getInput(RULE_CASE_INPUT_NAMES.value)?.setVisible(valueEnabled);
-  block.getInput(RULE_CASE_INPUT_NAMES.formatRow)?.setVisible(formatEnabled);
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function createShapeAwareCheckbox(block: { updateShape_?: () => void }, defaultValue: string) {
-  return new Blockly.FieldCheckbox(defaultValue === CHECKBOX_TRUE, (newValue) => {
-    queueMicrotask(() => {
-      block.updateShape_?.();
-    });
-    return normalizeCheckboxValue(newValue);
-  });
-}
-
-function normalizeCheckboxValue(value: unknown) {
-  return String(value).toUpperCase() === CHECKBOX_TRUE ? CHECKBOX_TRUE : CHECKBOX_FALSE;
-}
-
-function isChecked(value: unknown) {
-  return normalizeCheckboxValue(value) === CHECKBOX_TRUE;
 }
 
 function appendNewColumnFields(block: Blockly.Block) {

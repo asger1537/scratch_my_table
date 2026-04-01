@@ -2,9 +2,6 @@ import * as Blockly from 'blockly';
 
 import {
   BLOCK_TYPES,
-  CHECKBOX_FALSE,
-  CHECKBOX_TRUE,
-  SCOPED_RULE_INPUT_NAMES,
   WORKFLOW_TOOLBOX_COLOURS,
 } from './blocks';
 
@@ -29,10 +26,6 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     entries: [
       {
         type: BLOCK_TYPES.scopedRuleCasesStep,
-        fields: {
-          [SCOPED_RULE_INPUT_NAMES.defaultValueEnabled]: CHECKBOX_TRUE,
-          [SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled]: CHECKBOX_FALSE,
-        },
         searchText: 'scoped rule transform update cells value color format highlight case default apply',
       },
       {
@@ -69,6 +62,7 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     entries: [
       { type: BLOCK_TYPES.currentValueExpression, searchText: 'current value selected cell input value' },
       { type: BLOCK_TYPES.literalString, searchText: 'text string literal value characters' },
+      { type: BLOCK_TYPES.literalColor, searchText: 'color hex highlight fill swatch literal value' },
       { type: BLOCK_TYPES.literalNumber, searchText: 'number numeric literal integer decimal' },
       { type: BLOCK_TYPES.literalBoolean, searchText: 'boolean true false literal flag' },
       { type: BLOCK_TYPES.columnExpression, searchText: 'column value row lookup other column reference' },

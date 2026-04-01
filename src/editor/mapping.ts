@@ -1,6 +1,6 @@
 import * as Blockly from 'blockly';
 
-import { type Table } from '../domain/model';
+import { isValidFillColor, type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
 import { projectWorkflowStepSchema, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from '../workflow';
 
@@ -467,10 +467,8 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
       }
 
       const defaultPatch = readAuthoringCellPatch(block, {
-        valueEnabledField: 'DEFAULT_VALUE_ENABLED',
         valueInput: 'DEFAULT_VALUE',
-        formatEnabledField: 'DEFAULT_FORMAT_ENABLED',
-        colorField: 'DEFAULT_COLOR',
+        colorInput: 'DEFAULT_COLOR',
         required: false,
       });
 
@@ -712,16 +710,20 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
 function readAuthoringCellPatch(
   block: Blockly.Block,
   fields: {
-    valueEnabledField: string;
+    valueEnabledField?: string;
     valueInput: string;
-    formatEnabledField: string;
-    colorField: string;
+    formatEnabledField?: string;
+    colorField?: string;
+    colorInput?: string;
     required: boolean;
   },
 ): { patch: AuthoringCellPatch } | { issue: EditorIssue } {
-  const valueEnabled = isCheckboxFieldChecked(block, fields.valueEnabledField);
-  const formatEnabled = isCheckboxFieldChecked(block, fields.formatEnabledField);
+  const valueEnabled = fields.valueEnabledField
+    ? isCheckboxFieldChecked(block, fields.valueEnabledField)
+    : Boolean(block.getInputTargetBlock(fields.valueInput));
   let value: WorkflowExpression | undefined;
+  let fillColor: string | undefined;
+  let formatEnabled = false;
 
   if (valueEnabled) {
     const expression = readRequiredExpression(block, fields.valueInput);
@@ -731,6 +733,30 @@ function readAuthoringCellPatch(
     }
 
     value = expression.expression;
+  }
+
+  if (fields.colorInput) {
+    const colorLiteral = readOptionalColorLiteral(block, fields.colorInput);
+
+    if ('issue' in colorLiteral) {
+      return colorLiteral;
+    }
+
+    fillColor = colorLiteral.fillColor;
+    formatEnabled = fields.formatEnabledField
+      ? isCheckboxFieldChecked(block, fields.formatEnabledField)
+      : Boolean(fillColor);
+
+    if (formatEnabled && !fillColor) {
+      return {
+        issue: missingInputIssue(block, fields.colorInput),
+      };
+    }
+  } else if (fields.colorField) {
+    fillColor = getFieldString(block, fields.colorField);
+    formatEnabled = fields.formatEnabledField
+      ? isCheckboxFieldChecked(block, fields.formatEnabledField)
+      : Boolean(fillColor);
   }
 
   if (!valueEnabled && !formatEnabled && fields.required) {
@@ -749,9 +775,30 @@ function readAuthoringCellPatch(
       valueEnabled,
       ...(value ? { value } : {}),
       formatEnabled,
-      fillColor: getFieldString(block, fields.colorField),
+      ...(fillColor ? { fillColor } : {}),
     },
   };
+}
+
+function readOptionalColorLiteral(block: Blockly.Block, inputName: string): { fillColor?: string } | { issue: EditorIssue } {
+  const colorBlock = block.getInputTargetBlock(inputName);
+
+  if (!colorBlock) {
+    return { fillColor: undefined };
+  }
+
+  if (colorBlock.type !== BLOCK_TYPES.literalColor) {
+    return {
+      issue: {
+        code: 'invalidColorBlock',
+        message: `Block '${block.type}' must use a color block for '${inputName}'.`,
+        blockId: colorBlock.id,
+        blockType: colorBlock.type,
+      },
+    };
+  }
+
+  return { fillColor: getFieldString(colorBlock, 'VALUE') };
 }
 
 function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[] } | { issue: EditorIssue } {
@@ -777,10 +824,8 @@ function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases
     }
 
     const then = readAuthoringCellPatch(current, {
-      valueEnabledField: 'VALUE_ENABLED',
       valueInput: 'VALUE',
-      formatEnabledField: 'FORMAT_ENABLED',
-      colorField: 'COLOR',
+      colorInput: 'COLOR',
       required: true,
     });
 
@@ -827,6 +872,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
     case BLOCK_TYPES.currentValueExpression:
       return { expression: { kind: 'value' } };
     case BLOCK_TYPES.literalString:
+      return { expression: { kind: 'literal', value: getFieldString(block, 'VALUE') } };
+    case BLOCK_TYPES.literalColor:
       return { expression: { kind: 'literal', value: getFieldString(block, 'VALUE') } };
     case BLOCK_TYPES.literalNumber:
       return { expression: { kind: 'literal', value: Number(block.getFieldValue('VALUE') ?? 0) } };
@@ -1479,10 +1526,8 @@ function createScopedRuleBlock(workspace: Blockly.Workspace, step: AuthoringScop
   }
 
   setAuthoringCellPatchFields(block, {
-    valueEnabledField: 'DEFAULT_VALUE_ENABLED',
     valueInput: 'DEFAULT_VALUE',
-    formatEnabledField: 'DEFAULT_FORMAT_ENABLED',
-    colorField: 'DEFAULT_COLOR',
+    colorInput: 'DEFAULT_COLOR',
   }, step.mode === 'single' ? step.singlePatch : step.defaultPatch, workspace);
 
   if (step.mode === 'cases' && step.cases.length > 0) {
@@ -1497,10 +1542,8 @@ function createRuleCaseBlock(workspace: Blockly.Workspace, ruleCase: AuthoringRu
 
   connectValueBlock(block, 'WHEN', createExpressionBlock(workspace, ruleCase.when));
   setAuthoringCellPatchFields(block, {
-    valueEnabledField: 'VALUE_ENABLED',
     valueInput: 'VALUE',
-    formatEnabledField: 'FORMAT_ENABLED',
-    colorField: 'COLOR',
+    colorInput: 'COLOR',
   }, ruleCase.then, workspace);
 
   return block;
@@ -1509,20 +1552,32 @@ function createRuleCaseBlock(workspace: Blockly.Workspace, ruleCase: AuthoringRu
 function setAuthoringCellPatchFields(
   block: Blockly.Block,
   fields: {
-    valueEnabledField: string;
+    valueEnabledField?: string;
     valueInput: string;
-    formatEnabledField: string;
-    colorField: string;
+    formatEnabledField?: string;
+    colorField?: string;
+    colorInput?: string;
   },
   patch: AuthoringCellPatch,
   workspace: Blockly.Workspace,
 ) {
-  block.setFieldValue(patch.valueEnabled ? 'TRUE' : 'FALSE', fields.valueEnabledField);
-  block.setFieldValue(patch.formatEnabled ? 'TRUE' : 'FALSE', fields.formatEnabledField);
-  block.setFieldValue(patch.fillColor ?? '#fff2cc', fields.colorField);
+  if (fields.valueEnabledField) {
+    block.setFieldValue(patch.valueEnabled ? 'TRUE' : 'FALSE', fields.valueEnabledField);
+  }
+  if (fields.formatEnabledField) {
+    block.setFieldValue(patch.formatEnabled ? 'TRUE' : 'FALSE', fields.formatEnabledField);
+  }
+
+  if (fields.colorField) {
+    block.setFieldValue(patch.fillColor ?? '#fff2cc', fields.colorField);
+  }
 
   if (patch.valueEnabled && patch.value) {
     connectValueBlock(block, fields.valueInput, createExpressionBlock(workspace, patch.value));
+  }
+
+  if (fields.colorInput && patch.formatEnabled && patch.fillColor) {
+    connectValueBlock(block, fields.colorInput, createColorLiteralBlock(workspace, patch.fillColor));
   }
 }
 
@@ -1633,7 +1688,9 @@ function createLiteralBlock(workspace: Blockly.Workspace, value: string | number
   }
 
   if (typeof value === 'string') {
-    const block = createBlock(workspace, BLOCK_TYPES.literalString);
+    const block = isValidFillColor(value)
+      ? createBlock(workspace, BLOCK_TYPES.literalColor)
+      : createBlock(workspace, BLOCK_TYPES.literalString);
 
     block.setFieldValue(value, 'VALUE');
     return block;
@@ -1649,6 +1706,13 @@ function createLiteralBlock(workspace: Blockly.Workspace, value: string | number
   const block = createBlock(workspace, BLOCK_TYPES.literalBoolean);
 
   block.setFieldValue(value ? 'true' : 'false', 'VALUE');
+  return block;
+}
+
+function createColorLiteralBlock(workspace: Blockly.Workspace, value: string) {
+  const block = createBlock(workspace, BLOCK_TYPES.literalColor);
+
+  block.setFieldValue(value, 'VALUE');
   return block;
 }
 

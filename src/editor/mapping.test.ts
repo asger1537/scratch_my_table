@@ -74,7 +74,6 @@ describe('block-based workflow authoring', () => {
       valueEnabled: true,
       value: call('lower', call('trim', value())),
       formatEnabled: false,
-      fillColor: '#fff2cc',
     });
   });
 
@@ -190,9 +189,11 @@ describe('block-based workflow authoring', () => {
     const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_vip'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
     const [topBlock] = workspace.getTopBlocks(false);
+    const defaultColorBlock = topBlock?.getInputTargetBlock('DEFAULT_COLOR');
 
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
-    expect(topBlock?.getFieldValue('DEFAULT_COLOR')).toBe('#fff2cc');
+    expect(defaultColorBlock?.type).toBe(BLOCK_TYPES.literalColor);
+    expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#fff2cc');
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
   });
@@ -853,6 +854,96 @@ describe('block-based workflow authoring', () => {
     expect(predicateBlock.getInput('SECOND')).toBeTruthy();
     expect(logicalBlock.getInput('ITEM0')).toBeTruthy();
     expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
+  });
+
+  it('lays out rule-case actions with inline action phrasing and a dedicated color input', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem) as {
+      inputList: Array<{ name: string }>;
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+
+    expect(ruleCaseBlock.inputList.map((input) => input.name)).toEqual(['WHEN', 'VALUE', 'COLOR']);
+    expect(ruleCaseBlock.getInput('CASE_TOGGLE_ROW')).toBeNull();
+    expect(ruleCaseBlock.getInput('VALUE')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(ruleCaseBlock.getInput('COLOR')?.connection?.getCheck()).toEqual(['COLOR_LITERAL']);
+  });
+
+  it('compiles rule-case highlight colors from connected color literal blocks', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const colorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    colorBlock.setFieldValue('#ff2ccc', 'VALUE');
+    whenBlock.setFieldValue('true', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    ruleCaseBlock.getInput('COLOR')?.connection?.connect(colorBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+    const step = result.workflow?.steps[0];
+
+    if (!step || step.kind !== 'scopedRule') {
+      throw new Error('Expected a scoped rule authoring step.');
+    }
+
+    expect(result.issues).toEqual([]);
+    expect(step.cases[0]).toEqual({
+      when: { kind: 'literal', value: true },
+      then: {
+        valueEnabled: false,
+        formatEnabled: true,
+        fillColor: '#ff2ccc',
+      },
+    });
+  });
+
+  it('treats empty rule-case sockets as disabled actions', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('true', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingPatch',
+        message: `Block '${BLOCK_TYPES.ruleCaseItem}' must define a value change or fill color.`,
+        blockId: ruleCaseBlock.id,
+        blockType: BLOCK_TYPES.ruleCaseItem,
+      },
+    ]);
+  });
+
+  it('treats empty scoped-rule default sockets as no default patch', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingRuleCases',
+        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
+        blockId: scopedRuleBlock.id,
+        blockType: BLOCK_TYPES.scopedRuleCasesStep,
+      },
+    ]);
   });
 
   it('exposes schema-aware explicit column IDs for multi-select fields', async () => {

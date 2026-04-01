@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BLOCK_TYPES, CHECKBOX_FALSE, CHECKBOX_TRUE, SCOPED_RULE_INPUT_NAMES } from './blocks';
+import { BLOCK_TYPES } from './blocks';
 import {
   filterWorkflowToolboxEntries,
   getWorkflowToolboxCategory,
@@ -25,6 +25,7 @@ describe('workflow toolbox search', () => {
   it('finds generic logic blocks through keyword search', () => {
     const comparisonMatches = getWorkflowToolboxCategoryContents('category_logic', 'greater');
     const predicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'regex');
+    const colorMatches = getWorkflowToolboxCategoryContents('category_values', 'highlight');
 
     expect(comparisonMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.comparisonFunction })]),
@@ -32,9 +33,12 @@ describe('workflow toolbox search', () => {
     expect(predicateMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.predicateFunction })]),
     );
+    expect(colorMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.literalColor })]),
+    );
   });
 
-  it('preserves preset fields on filtered scoped rule entries', () => {
+  it('keeps the scoped rule block available on filtered searches', () => {
     const contents = getWorkflowToolboxCategoryContents('category_scoped_rules', 'highlight');
     const scopedRuleEntry = contents.find(
       (item): item is Extract<(typeof contents)[number], { kind: 'block' }> =>
@@ -45,10 +49,6 @@ describe('workflow toolbox search', () => {
       expect.objectContaining({
         kind: 'block',
         type: BLOCK_TYPES.scopedRuleCasesStep,
-        fields: {
-          [SCOPED_RULE_INPUT_NAMES.defaultValueEnabled]: CHECKBOX_TRUE,
-          [SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled]: CHECKBOX_FALSE,
-        },
       }),
     );
   });

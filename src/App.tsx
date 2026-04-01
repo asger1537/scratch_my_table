@@ -726,7 +726,6 @@ export default function App() {
 
             <section className="panel-stack">
               <ValidationPanel issues={allWorkflowIssues} jsonError={workflowJsonError} />
-              <WorkflowJsonPanel workflowJson={authoredWorkflowJson} />
               <RunResultPanel
                 executionResult={executionResult}
                 onExportCsv={() => {
@@ -944,18 +943,6 @@ function ValidationPanel({
           ))}
         </ul>
       )}
-    </section>
-  );
-}
-
-function WorkflowJsonPanel({ workflowJson }: { workflowJson: string }) {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <h2>Workflow JSON</h2>
-        <p>Canonical IR generated from the current block workspace.</p>
-      </div>
-      <textarea className="json-viewer" readOnly value={workflowJson} />
     </section>
   );
 }

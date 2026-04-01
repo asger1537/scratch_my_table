@@ -182,7 +182,7 @@ function compileStep(step: AuthoringStep, index: number, usedStepIds: Set<string
         id: stepId,
         type: 'scopedRule',
         columnIds: step.columnIds,
-        rowCondition: step.rowCondition,
+        ...(step.rowCondition ? { rowCondition: step.rowCondition } : {}),
         ...(cases && cases.length > 0 ? { cases } : {}),
         ...(defaultPatch ? { defaultPatch } : {}),
       };
