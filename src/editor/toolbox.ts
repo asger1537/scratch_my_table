@@ -130,7 +130,8 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     colour: WORKFLOW_TOOLBOX_COLOURS.logic,
     entries: [
       { type: BLOCK_TYPES.comparisonFunction, searchText: 'equals compare match not equals less greater less than greater than' },
-      { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex is empty predicate text logic' },
+      { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex predicate text logic binary' },
+      { type: BLOCK_TYPES.unaryPredicateFunction, searchText: 'is empty blank null missing predicate unary logic' },
       { type: BLOCK_TYPES.logicalBinaryFunction, searchText: 'and or logical group combine conditions boolean' },
       { type: BLOCK_TYPES.switchFunction, searchText: 'switch case match default choose branch conditional' },
       { type: BLOCK_TYPES.notFunction, searchText: 'not negate boolean invert logical' },

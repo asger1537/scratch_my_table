@@ -673,6 +673,29 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.predicateFunction);
   });
 
+  it('roundtrips isEmpty logic expressions through a dedicated unary predicate block', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_is_empty_roundtrip',
+      name: 'Is empty roundtrip',
+      steps: [
+        {
+          id: 'step_filter_empty_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('isEmpty', column('col_email')),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_email'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.unaryPredicateFunction);
+  });
+
   it('roundtrips symbolic comparator operators without semantic loss', () => {
     const workflow: Workflow = {
       version: 2,
@@ -883,21 +906,26 @@ describe('block-based workflow authoring', () => {
     const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
     const comparisonBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
     const predicateBlock = workspace.newBlock(BLOCK_TYPES.predicateFunction);
+    const unaryPredicateBlock = workspace.newBlock(BLOCK_TYPES.unaryPredicateFunction);
     const logicalBlock = workspace.newBlock(BLOCK_TYPES.logicalBinaryFunction);
 
     expect(transformBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
     expect(predicateBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(unaryPredicateBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
     expect(comparisonBlock.getFieldValue('OPERATOR')).toBe('eq');
     expect(predicateBlock.getFieldValue('OPERATOR')).toBe('contains');
+    expect(unaryPredicateBlock.getFieldValue('OPERATOR')).toBe('isEmpty');
     expect(logicalBlock.getFieldValue('OPERATOR')).toBe('and');
     expect(comparisonBlock.inputsInline).toBe(true);
     expect(predicateBlock.inputsInline).toBe(true);
+    expect(unaryPredicateBlock.inputsInline).toBe(true);
     expect(logicalBlock.inputsInline).toBe(false);
     expect(logicalBlock.getInput('HEADER')).toBeTruthy();
     expect(logicalBlock.getField('ADD_ITEM')).toBeTruthy();
     expect(logicalBlock.getField('REMOVE_ITEM')).toBeTruthy();
     expect(predicateBlock.getInput('FIRST')).toBeTruthy();
     expect(predicateBlock.getInput('SECOND')).toBeTruthy();
+    expect(unaryPredicateBlock.getInput('INPUT')).toBeTruthy();
     expect(logicalBlock.getInput('ITEM0')).toBeTruthy();
     expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
   });

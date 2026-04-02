@@ -1019,6 +1019,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readComparisonExpression(block);
     case BLOCK_TYPES.predicateFunction:
       return readPredicateExpression(block);
+    case BLOCK_TYPES.unaryPredicateFunction:
+      return readUnaryPredicateExpression(block);
     case BLOCK_TYPES.logicalBinaryFunction:
       return readLogicalBinaryExpression(block);
     default:
@@ -1035,7 +1037,7 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
 
 function readUnaryCall(
   block: Blockly.Block,
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'isEmpty' | 'not',
+  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'not',
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   return readFixedArityCall(block, name, ['INPUT']);
 }
@@ -1191,13 +1193,13 @@ function readComparisonExpression(block: Blockly.Block): { expression: WorkflowE
 }
 
 function readPredicateExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
-  const operator = getFieldString(block, 'OPERATOR') as 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
-
-  if (operator === 'isEmpty') {
-    return readFixedArityCall(block, operator, ['INPUT']);
-  }
+  const operator = getFieldString(block, 'OPERATOR') as 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex';
 
   return readFixedArityCall(block, operator, ['FIRST', 'SECOND']);
+}
+
+function readUnaryPredicateExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  return readFixedArityCall(block, getFieldString(block, 'OPERATOR') as 'isEmpty', ['INPUT']);
 }
 
 function readLogicalBinaryExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -1901,19 +1903,20 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'contains':
     case 'startsWith':
     case 'endsWith':
-    case 'matchesRegex':
-    case 'isEmpty': {
+    case 'matchesRegex': {
       const block = createBlock(workspace, BLOCK_TYPES.predicateFunction);
 
       block.setFieldValue(expression.name, 'OPERATOR');
 
-      if (expression.name === 'isEmpty') {
-        connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
-        return block;
-      }
-
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'isEmpty': {
+      const block = createBlock(workspace, BLOCK_TYPES.unaryPredicateFunction);
+
+      block.setFieldValue(expression.name, 'OPERATOR');
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
       return block;
     }
     case 'and':

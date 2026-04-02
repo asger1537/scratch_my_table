@@ -25,6 +25,7 @@ describe('workflow toolbox search', () => {
   it('finds generic logic blocks through keyword search', () => {
     const comparisonMatches = getWorkflowToolboxCategoryContents('category_logic', 'greater');
     const predicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'regex');
+    const unaryPredicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'empty');
     const colorMatches = getWorkflowToolboxCategoryContents('category_values', 'highlight');
     const cellActionMatches = getWorkflowToolboxCategoryContents('category_cell_actions', 'highlight');
 
@@ -33,6 +34,9 @@ describe('workflow toolbox search', () => {
     );
     expect(predicateMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.predicateFunction })]),
+    );
+    expect(unaryPredicateMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.unaryPredicateFunction })]),
     );
     expect(colorMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.literalColor })]),

@@ -62,11 +62,9 @@ type SwitchGroupBlock = Blockly.Block & {
   itemCount_?: number;
   updateShape_?: () => void;
 };
-type PredicateFunctionBlock = Blockly.Block & {
-  updateShape_?: (operator?: PredicateFunctionOperator) => void;
-};
 type ComparatorOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
-type PredicateFunctionOperator = 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
+type PredicateFunctionOperator = 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex';
+type UnaryPredicateFunctionOperator = 'isEmpty';
 const COMPARATOR_OPTIONS: Array<[string, ComparatorOperator]> = [
   ['=', 'eq'],
   ['≠', 'ne'],
@@ -80,6 +78,8 @@ const PREDICATE_FUNCTION_OPTIONS: Array<{ label: string; value: PredicateFunctio
   { label: 'starts with', value: 'startsWith', searchText: 'starts with begins prefix' },
   { label: 'ends with', value: 'endsWith', searchText: 'ends with suffix' },
   { label: 'matches regex', value: 'matchesRegex', searchText: 'matches regex pattern regular expression' },
+];
+const UNARY_PREDICATE_FUNCTION_OPTIONS: Array<{ label: string; value: UnaryPredicateFunctionOperator; searchText: string }> = [
   { label: 'is empty', value: 'isEmpty', searchText: 'is empty blank null missing' },
 ];
 
@@ -135,6 +135,7 @@ export const BLOCK_TYPES = {
   mathRoundingFunction: 'math_rounding_function',
   comparisonFunction: 'comparison_function',
   predicateFunction: 'predicate_function',
+  unaryPredicateFunction: 'unary_predicate_function',
   logicalBinaryFunction: 'logical_binary_function',
   notFunction: 'not_function',
 } as const;
@@ -510,12 +511,24 @@ export function registerWorkflowBlocks() {
   };
   createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
   Blockly.Blocks[BLOCK_TYPES.predicateFunction] = {
-    init(this: PredicateFunctionBlock) {
+    init() {
+      this.appendValueInput('FIRST').setCheck('EXPRESSION');
+      this.appendValueInput('SECOND')
+        .setCheck('EXPRESSION')
+        .appendField(createPredicateFunctionOperatorField('contains'), 'OPERATOR');
       this.setOutput(true, 'EXPRESSION');
       this.setInputsInline(true);
       this.setColour(LOGIC_COLOR);
-      this.updateShape_ = (operator?: PredicateFunctionOperator) => updatePredicateFunctionShape(this, operator);
-      this.updateShape_('contains');
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.unaryPredicateFunction] = {
+    init() {
+      this.appendValueInput('INPUT')
+        .setCheck('EXPRESSION')
+        .appendField(createUnaryPredicateFunctionOperatorField('isEmpty'), 'OPERATOR');
+      this.setOutput(true, 'EXPRESSION');
+      this.setInputsInline(true);
+      this.setColour(LOGIC_COLOR);
     },
   };
   Blockly.Blocks[BLOCK_TYPES.logicalBinaryFunction] = {
@@ -666,48 +679,22 @@ function updateLogicalGroupShape(block: LogicalGroupBlock) {
   block.setInputsInline(false);
 }
 
-function updatePredicateFunctionShape(block: PredicateFunctionBlock, operator = normalizePredicateFunctionOperator(block.getFieldValue('OPERATOR'))) {
-  const primaryConnection =
-    block.getInput('FIRST')?.connection?.targetConnection
-    ?? block.getInput('INPUT')?.connection?.targetConnection
-    ?? null;
-  const secondaryConnection = block.getInput('SECOND')?.connection?.targetConnection ?? null;
-
-  ['FIRST', 'SECOND', 'INPUT'].forEach((inputName) => {
-    if (block.getInput(inputName)) {
-      block.removeInput(inputName);
-    }
-  });
-
-  if (isUnaryPredicateFunctionOperator(operator)) {
-    block.appendValueInput('INPUT')
-      .setCheck('EXPRESSION')
-      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
-    primaryConnection?.reconnect(block, 'INPUT');
-  } else {
-    block.appendValueInput('FIRST').setCheck('EXPRESSION');
-    block.appendValueInput('SECOND')
-      .setCheck('EXPRESSION')
-      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
-    primaryConnection?.reconnect(block, 'FIRST');
-    secondaryConnection?.reconnect(block, 'SECOND');
-  }
-
-  block.setInputsInline(true);
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function createPredicateFunctionOperatorField(block: PredicateFunctionBlock, operator: PredicateFunctionOperator) {
+function createPredicateFunctionOperatorField(operator: PredicateFunctionOperator) {
   return new FieldSearchDropdown(
     operator,
     PREDICATE_FUNCTION_OPTIONS,
     (newValue) => {
-      const normalizedValue = normalizePredicateFunctionOperator(newValue);
-      block.updateShape_?.(normalizedValue);
-      return normalizedValue;
+      return normalizePredicateFunctionOperator(newValue);
+    },
+  );
+}
+
+function createUnaryPredicateFunctionOperatorField(operator: UnaryPredicateFunctionOperator) {
+  return new FieldSearchDropdown(
+    operator,
+    UNARY_PREDICATE_FUNCTION_OPTIONS,
+    (newValue) => {
+      return normalizeUnaryPredicateFunctionOperator(newValue);
     },
   );
 }
@@ -754,7 +741,6 @@ function normalizePredicateFunctionOperator(value: unknown): PredicateFunctionOp
     case 'startsWith':
     case 'endsWith':
     case 'matchesRegex':
-    case 'isEmpty':
     case 'contains':
       return value;
     default:
@@ -762,8 +748,8 @@ function normalizePredicateFunctionOperator(value: unknown): PredicateFunctionOp
   }
 }
 
-function isUnaryPredicateFunctionOperator(operator: PredicateFunctionOperator) {
-  return operator === 'isEmpty';
+function normalizeUnaryPredicateFunctionOperator(value: unknown): UnaryPredicateFunctionOperator {
+  return value === 'isEmpty' ? 'isEmpty' : 'isEmpty';
 }
 
 function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {

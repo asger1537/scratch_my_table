@@ -48,6 +48,8 @@ export default function App() {
   const workflowImportDragDepthRef = useRef(0);
   const validationDebounceTimerRef = useRef<number | null>(null);
   const validationRequestIdRef = useRef(0);
+  const runResultSectionRef = useRef<HTMLElement | null>(null);
+  const pendingRunResultScrollRef = useRef(false);
   const [workbook, setWorkbookState] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +153,26 @@ export default function App() {
     setAIPromptValue('');
     setIsAILoading(false);
   }, [activeTable?.tableId]);
+
+  useEffect(() => {
+    if (!pendingRunResultScrollRef.current || !executionResult) {
+      return;
+    }
+
+    const target = runResultSectionRef.current;
+
+    if (!target) {
+      return;
+    }
+
+    pendingRunResultScrollRef.current = false;
+    window.requestAnimationFrame(() => {
+      target.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, [executionResult]);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -266,6 +288,7 @@ export default function App() {
       return;
     }
 
+    pendingRunResultScrollRef.current = true;
     setExecutionResult(executeWorkflow(authoredWorkflow, activeTable));
   }
 
@@ -726,6 +749,11 @@ export default function App() {
 
             <section className="panel-stack">
               <ValidationPanel issues={allWorkflowIssues} jsonError={workflowJsonError} />
+            </section>
+          </section>
+
+          {executionResult ? (
+            <section className="panel-stack" ref={runResultSectionRef}>
               <RunResultPanel
                 executionResult={executionResult}
                 onExportCsv={() => {
@@ -735,16 +763,15 @@ export default function App() {
                   handleExportTableXlsx(resultTable);
                 }}
               />
+              {resultTable ? (
+                <PreviewPanel
+                  description={`Showing ${resultPreviewRows.length} of ${resultTable.rowOrder.length} transformed rows.`}
+                  previewRows={resultPreviewRows}
+                  table={resultTable}
+                  title="Run result"
+                />
+              ) : null}
             </section>
-          </section>
-
-          {resultTable ? (
-            <PreviewPanel
-              description={`Showing ${resultPreviewRows.length} of ${resultTable.rowOrder.length} transformed rows.`}
-              previewRows={resultPreviewRows}
-              table={resultTable}
-              title="Run result"
-            />
           ) : null}
         </>
       )}
@@ -924,24 +951,28 @@ function ValidationPanel({
   issues: Array<{ code: string; message: string }>;
   jsonError: string | null;
 }) {
+  const issueCount = issues.length + (jsonError ? 1 : 0);
+
   return (
-    <section className="panel">
-      <div className="panel-header">
+    <section className="panel panel--compact">
+      <div className="panel-header panel-header--compact">
         <h2>Validation</h2>
-        <p>Editor issues and schema-aware workflow validation against the active table.</p>
+        <p>{issueCount === 0 ? 'No issues' : `${issueCount} issue${issueCount === 1 ? '' : 's'}`}</p>
       </div>
       {jsonError ? <pre className="json-error-panel">{jsonError}</pre> : null}
       {issues.length === 0 ? (
-        <div className="empty-panel">No current workflow issues.</div>
+        <div className="empty-panel empty-panel--compact">No current workflow issues.</div>
       ) : (
-        <ul className="issue-list">
+        <div className="panel-scroll-region" style={{ maxHeight: '13rem' }}>
+          <ul className="issue-list issue-list--compact">
           {issues.map((issue, index) => (
-            <li className="issue-item" key={`${issue.code}-${index}`}>
+              <li className="issue-item issue-item--compact" key={`${issue.code}-${index}`}>
               <strong>{issue.code}</strong>
               <p>{issue.message}</p>
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>
       )}
     </section>
   );
@@ -956,17 +987,21 @@ function RunResultPanel({
   onExportCsv: () => void;
   onExportXlsx: () => void;
 }) {
+  if (!executionResult) {
+    return null;
+  }
+
   const canExport = Boolean(executionResult && executionResult.validationErrors.length === 0 && executionResult.transformedTable);
 
   return (
-    <section className="panel">
+    <section className="panel panel--compact">
       <div className="panel-header">
         <div>
-          <h2>Run result</h2>
-          <p>Basic execution metadata from the existing deterministic executor.</p>
+          <h2>Run summary</h2>
+          <p>Compact metadata for the latest workflow run.</p>
         </div>
         {canExport ? (
-          <div className="export-actions">
+          <div className="export-actions export-actions--compact">
             <button onClick={onExportCsv} type="button">
               Export CSV
             </button>
@@ -976,12 +1011,10 @@ function RunResultPanel({
           </div>
         ) : null}
       </div>
-      {!executionResult ? (
-        <div className="empty-panel">Run a valid workflow to see result metadata.</div>
-      ) : executionResult.validationErrors.length > 0 ? (
+      {executionResult.validationErrors.length > 0 ? (
         <div className="empty-panel">Run blocked by validation errors.</div>
       ) : (
-        <dl className="result-stats">
+        <dl className="result-stats result-stats--compact">
           <div>
             <dt>Changed rows</dt>
             <dd>{executionResult.changedRowCount}</dd>
