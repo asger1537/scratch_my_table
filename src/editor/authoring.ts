@@ -383,14 +383,14 @@ function normalizeDescription(description: string | undefined) {
 
 function normalizeWorkflowColor(value: string) {
   const normalized = value.trim().toLocaleLowerCase();
-  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '#fff2cc';
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '#ffeb9c';
 }
 
 function createEmptyAuthoringCellPatch(): AuthoringCellPatch {
   return {
     valueEnabled: false,
     formatEnabled: false,
-    fillColor: '#fff2cc',
+    fillColor: '#ffeb9c',
   };
 }
 
@@ -400,7 +400,7 @@ function compileAuthoringCellPatch(patch: AuthoringCellPatch): WorkflowCellPatch
     ...(patch.formatEnabled
       ? {
           format: {
-            fillColor: normalizeWorkflowColor(patch.fillColor ?? '#fff2cc'),
+            fillColor: normalizeWorkflowColor(patch.fillColor ?? '#ffeb9c'),
           },
         }
       : {}),
@@ -425,7 +425,7 @@ function workflowCellPatchToAuthoringPatch(patch: WorkflowCellPatch | undefined)
     valueEnabled: Boolean(patch?.value),
     ...(patch?.value ? { value: patch.value } : {}),
     formatEnabled: Boolean(patch?.format?.fillColor),
-    fillColor: normalizeWorkflowColor(patch?.format?.fillColor ?? '#fff2cc'),
+    fillColor: normalizeWorkflowColor(patch?.format?.fillColor ?? '#ffeb9c'),
   };
 }
 

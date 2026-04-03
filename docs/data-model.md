@@ -2,7 +2,7 @@
 
 ## Purpose
 
-V1 operates on one active table at a time. Imported files, authoring state, preview state, and run results all normalize to the same canonical model so validation and execution do not depend on UI shape.
+The app operates on one active table at a time. Imported files, authoring state, preview state, and run results all normalize to the same canonical model so validation and execution do not depend on UI shape.
 
 ## Core Entities
 
@@ -23,11 +23,11 @@ Rules:
 
 - A CSV file becomes a workbook with exactly one table.
 - An XLSX file becomes a workbook with one table per imported sheet.
-- V1 workflows run against `activeTableId` only.
+- Workflows run against `activeTableId` only.
 
 ### Active Table
 
-A `table` is the only runtime unit for V1 workflows.
+A `table` is the only runtime unit for workflow execution.
 
 Required fields:
 
@@ -71,7 +71,7 @@ Rules:
 
 A `column` is identified by `columnId`, not by `displayName`.
 
-V1 identifier rule:
+Identifier rules:
 
 - Imported columns receive deterministic IDs derived from the normalized import display name.
 - The format is `col_<slug>`, where the slug is lowercase and uses underscores between alphanumeric segments.
@@ -89,7 +89,7 @@ Required fields:
 - `rowId`: stable internal identifier
 - `cellsByColumnId`: map of `columnId` to cell value
 
-V1 identifier rule:
+Identifier rules:
 
 - Imported rows receive deterministic IDs based on source order, such as `row_1`, `row_2`, and `row_3`.
 - The `row ID` remains stable even if the row later moves in `rowOrder`.
@@ -108,14 +108,14 @@ Canonical cell values are JSON-compatible scalars:
 Rules:
 
 - Dates and datetimes are stored as ISO-8601 strings and distinguished by column `logicalType`.
-- A cell has no separate user-visible identifier in V1.
-- Formula text is not part of the canonical cell model for V1; only imported values are preserved.
+- A cell has no separate user-visible identifier.
+- Formula text is not part of the canonical cell model; only imported values are preserved.
 
 ### Selection
 
 A `selection` is transient authoring state, not the source of truth.
 
-V1 selection shapes:
+Selection shapes:
 
 - column selection: ordered `columnId[]`
 - row selection: ordered `rowId[]`
@@ -187,7 +187,7 @@ XLSX import rules:
 - Data rows begin immediately after the selected header row.
 - For multiline header cells, the first non-empty visual line is used to derive `displayName` and `columnId`.
 - The user selects exactly one sheet as the active table.
-- V1 ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
+- Import ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
 
 ## Stable Identity Requirements
 
@@ -216,7 +216,7 @@ Minimum warning object:
 - `columnId`: optional when warning is column-specific
 - `rowId`: optional when warning is cell-specific
 
-Required warning scenarios for V1:
+Required warning scenarios:
 
 - duplicate header names were normalized
 - blank header names were generated

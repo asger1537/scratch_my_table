@@ -98,13 +98,13 @@ describe('block-based workflow authoring', () => {
             valueEnabled: true,
             value: call('substring', value(), literal(0), literal(3)),
             formatEnabled: false,
-            fillColor: '#fff2cc',
+            fillColor: '#ffeb9c',
           },
           cases: [],
           defaultPatch: {
             valueEnabled: false,
             formatEnabled: false,
-            fillColor: '#fff2cc',
+            fillColor: '#ffeb9c',
           },
         },
       ],
@@ -180,7 +180,7 @@ describe('block-based workflow authoring', () => {
           rowCondition: call('equals', column('col_vip'), literal(true)),
           defaultPatch: {
             format: {
-              fillColor: '#fff2cc',
+              fillColor: '#ffeb9c',
             },
           },
         },
@@ -196,7 +196,7 @@ describe('block-based workflow authoring', () => {
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
     expect(defaultActionBlock?.type).toBe(BLOCK_TYPES.highlightActionItem);
     expect(defaultColorBlock?.type).toBe(BLOCK_TYPES.literalColor);
-    expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#fff2cc');
+    expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#ffeb9c');
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
   });
@@ -217,7 +217,7 @@ describe('block-based workflow authoring', () => {
               then: {
                 value: literal('unknown'),
                 format: {
-                  fillColor: '#fff2cc',
+                  fillColor: '#ffeb9c',
                 },
               },
             },
@@ -262,7 +262,7 @@ describe('block-based workflow authoring', () => {
           defaultPatch: {
             value: call('lower', value()),
             format: {
-              fillColor: '#fff2cc',
+              fillColor: '#ffeb9c',
             },
           },
         },
@@ -1093,7 +1093,7 @@ describe('block-based workflow authoring', () => {
     scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
     whenBlock.setFieldValue('true', 'VALUE');
     firstColorBlock.setFieldValue('#ff2ccc', 'VALUE');
-    secondColorBlock.setFieldValue('#fff2cc', 'VALUE');
+    secondColorBlock.setFieldValue('#ffeb9c', 'VALUE');
 
     scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
     ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
@@ -1272,7 +1272,7 @@ function buildAllStepsWorkflow(): Workflow {
         rowCondition: call('equals', column('col_vip'), literal(true)),
         defaultPatch: {
           format: {
-            fillColor: '#fff2cc',
+            fillColor: '#ffeb9c',
           },
         },
       },

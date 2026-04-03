@@ -59,7 +59,7 @@ Step types:
 - `deduplicateRows`
 - `sortRows`
 
-V1 capability mapping:
+Common capability mappings:
 
 - fill empty cells: `scopedRule` with `defaultPatch.value = coalesce(value, <literal>)`
 - trim / normalize text: `scopedRule` with `defaultPatch.value = lower(trim(value))`
@@ -88,6 +88,8 @@ Rules:
 
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`.
   During `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied.
+- `value` is represented exactly as `{ "kind": "value" }`.
+- `null` is represented as `{ "kind": "literal", "value": null }`.
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
@@ -279,7 +281,7 @@ Example:
           ]
         },
         "format": {
-          "fillColor": "#fff2cc"
+          "fillColor": "#ffeb9c"
         }
       }
     }

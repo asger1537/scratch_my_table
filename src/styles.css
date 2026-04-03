@@ -779,6 +779,22 @@ code {
   stroke: #d9c7b2;
 }
 
+.workflow-editor-canvas .blocklyToolbox {
+  padding: 0;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategoryGroup {
+  gap: 0;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategoryContainer {
+  margin: 0;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategory {
+  margin-bottom: 0;
+}
+
 .blockly-column-multiselect {
   width: min(22rem, 80vw);
   display: grid;

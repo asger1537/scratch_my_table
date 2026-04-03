@@ -133,12 +133,12 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 - File: `23-highlight-vip-fields.workflow.json`
 - Uses `scopedRule` with a format patch to highlight `status` and `balance` for rows where `VIP?` is `true`.
 
-## 24. Scoped Rule Single Action
+## 24. Scoped Rule With Default Patch
 
 - File: `24-scoped-rule-single-action.workflow.json`
-- Shows the compact single-action authoring shape: one `defaultPatch` that both normalizes VIP `status` cells and fills them with a highlight color.
+- Shows a default-only `scopedRule`: one `defaultPatch` both normalizes VIP `status` cells and fills them with a highlight color.
 
 ## 25. Scoped Rule Cases
 
 - File: `25-scoped-rule-cases.workflow.json`
-- Shows the cases-mode authoring shape: ordered `cases` with first-match-wins semantics plus a `defaultPatch` fallback for `status`.
+- Shows ordered `cases` with cumulative matching semantics plus a `defaultPatch` fallback for `status`.

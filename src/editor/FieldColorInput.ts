@@ -2,7 +2,7 @@ import * as Blockly from 'blockly';
 
 import { getReadableTextColor, isValidFillColor, normalizeFillColor } from '../domain/model';
 
-export const DEFAULT_COLOR = '#fff2cc';
+export const DEFAULT_COLOR = '#ffeb9c';
 export const RECENT_FILL_COLOR_STORAGE_KEY = 'scratch_my_table.recent_fill_colors';
 export const MAX_RECENT_FILL_COLORS = 8;
 export const FILL_COLOR_CHOICES = [

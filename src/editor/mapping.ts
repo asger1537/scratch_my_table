@@ -867,7 +867,7 @@ function createEmptyAuthoringCellPatch(): AuthoringCellPatch {
   return {
     valueEnabled: false,
     formatEnabled: false,
-    fillColor: '#fff2cc',
+    fillColor: '#ffeb9c',
   };
 }
 

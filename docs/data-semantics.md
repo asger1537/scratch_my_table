@@ -4,8 +4,6 @@
 
 ### Null vs Empty String
 
-V1 preserves `null` and empty string as different values.
-
 Rules:
 
 - `null` means the source cell had no value.
@@ -39,6 +37,9 @@ Expression node kinds:
 Rules:
 
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
+- during `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied
+- `value` is represented exactly as `{ "kind": "value" }`
+- `null` is represented as `{ "kind": "literal", "value": null }`
 - `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
 - `literal` may be `string`, `number`, `boolean`, or `null`
 - `call` applies one built-in pure function
@@ -103,7 +104,7 @@ Determinism rules:
 
 - Functions are pure and deterministic.
 - No function mutates other cells, rows, or schema.
-- V1 does not support user-defined functions, loops, or recursion.
+- Workflow IR v2 does not support user-defined functions, loops, or recursion.
 
 ## Cell Formatting Semantics
 
@@ -160,8 +161,6 @@ Rules:
 6. `columnId` is generated separately and does not depend on later renames.
 
 ## Formulas on Import
-
-V1 imports spreadsheet formulas as values only.
 
 Rules:
 

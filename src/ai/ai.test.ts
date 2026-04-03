@@ -18,6 +18,9 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('scopedRule on col_email');
     expect(instruction).toContain('Never return mode "draft" with an empty steps array.');
     expect(instruction).toContain('If Email is empty, use Email (2), then drop Email (2).');
+    expect(instruction).toContain('Use Email first, fall back to Email (2), and if both are empty color the final email cell red.');
+    expect(instruction).toContain('scopedRule cases are checked top to bottom and every matching case applies in order');
+    expect(instruction).toContain('null is represented as { "kind": "literal", "value": null }');
     expect(instruction).toContain('The returned steps are a full workflow replacement candidate.');
     expect(instruction).not.toContain('alice@example.com');
   });
@@ -229,7 +232,7 @@ describe('AI workflow copilot helpers', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","assistantMessage":"I will update the existing fallback rule so it colors those cells yellow.","assumptions":[],"steps":[{"type":"scopedRule","columnIds":["col_email"],"cases":[{"when":{"kind":"call","name":"isEmpty","args":[{"kind":"value"}]},"then":{"value":{"kind":"column","columnId":"col_email_2"},"format":{"fillColor":"#FFF2CC"}}}]},{"type":"dropColumns","columnIds":["col_email_2"]}]}',
+          '{"mode":"draft","assistantMessage":"I will update the existing fallback rule so it colors those cells yellow.","assumptions":[],"steps":[{"type":"scopedRule","columnIds":["col_email"],"cases":[{"when":{"kind":"call","name":"isEmpty","args":[{"kind":"value"}]},"then":{"value":{"kind":"column","columnId":"col_email_2"},"format":{"fillColor":"#FFEB9C"}}}]},{"type":"dropColumns","columnIds":["col_email_2"]}]}',
         ),
       );
     const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([]);

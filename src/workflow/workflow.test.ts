@@ -199,7 +199,7 @@ describe('workflow validation and execution', () => {
           rowCondition: call('equals', column('col_vip'), literal(true)),
           defaultPatch: {
             format: {
-              fillColor: '#fff2cc',
+              fillColor: '#ffeb9c',
             },
           },
         },
@@ -213,9 +213,9 @@ describe('workflow validation and execution', () => {
     expect(execution.validationErrors).toEqual([]);
     expect(execution.changedRowCount).toBe(2);
     expect(execution.changedCellCount).toBe(2);
-    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
+    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_status).toEqual({ fillColor: '#ffeb9c' });
     expect(execution.transformedTable?.rowsById.row_2.stylesByColumnId.col_status).toBeUndefined();
-    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
+    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#ffeb9c' });
   });
 
   it('treats whitespace-only strings as empty for isEmpty filters', () => {

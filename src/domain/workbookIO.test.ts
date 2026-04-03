@@ -182,15 +182,15 @@ describe('Milestone 1 normalization and export', () => {
       throw new Error('Expected active table for worksheet style test.');
     }
 
-    table.rowsById.row_1.stylesByColumnId.col_email = { fillColor: '#fff2cc' };
+    table.rowsById.row_1.stylesByColumnId.col_email = { fillColor: '#ffeb9c' };
 
     const sheet = buildWorksheetFromTable(table);
 
     expect(sheet.D2?.s).toEqual({
       fill: {
         patternType: 'solid',
-        fgColor: { rgb: 'FFFFF2CC' },
-        bgColor: { rgb: 'FFFFF2CC' },
+        fgColor: { rgb: 'FFFFEB9C' },
+        bgColor: { rgb: 'FFFFEB9C' },
       },
       font: {
         color: { rgb: 'FF1C1A17' },

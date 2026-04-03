@@ -89,6 +89,51 @@ const CURATED_EXAMPLES = [
     },
   },
   {
+    user: 'We just need one email column. Use Email first, fall back to Email (2), and if both are empty color the final email cell red.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will fill Email from Email (2) when needed, color the final email cell red when it is still empty, and then drop Email (2).',
+      assumptions: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+              },
+            },
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                format: {
+                  fillColor: '#FFC7CE',
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+      ],
+    },
+  },
+  {
     user: 'Highlight VIP status cells in yellow.',
     assistant: {
       mode: 'draft',
@@ -108,7 +153,7 @@ const CURATED_EXAMPLES = [
           },
           defaultPatch: {
             format: {
-              fillColor: '#FFF2CC',
+              fillColor: '#FFEB9C',
             },
           },
         },
@@ -146,7 +191,7 @@ const CURATED_EXAMPLES = [
                   columnId: 'col_email_2',
                 },
                 format: {
-                  fillColor: '#FFF2CC',
+                  fillColor: '#FFEB9C',
                 },
               },
             },
@@ -211,9 +256,13 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     'Expression AST rules:',
     '- expression kinds: value, literal, column, call',
     '- "value" is only valid inside scopedRule.cases[*].when, scopedRule.cases[*].then.value, and scopedRule.defaultPatch.value',
+    '- "value" is represented exactly as { "kind": "value" } with no extra properties',
+    '- null is represented as { "kind": "literal", "value": null }',
     '- filterRows.condition and scopedRule.rowCondition must resolve to boolean expressions',
     '- scopedRule is the only canonical cell-level step',
-    '- format patches currently support format.fillColor only, as a hex color like "#FFF2CC"',
+    '- scopedRule cases are checked top to bottom and every matching case applies in order',
+    '- later matching scopedRule cases see the current cell value after earlier matching cases have already applied',
+    '- format patches currently support format.fillColor only, as a hex color like "#FFEB9C"',
     '',
     'Built-in call names:',
     '- logic: equals, contains, startsWith, endsWith, matchesRegex, greaterThan, lessThan, and, or, not, isEmpty',

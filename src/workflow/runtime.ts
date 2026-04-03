@@ -636,7 +636,7 @@ function validateCellPatch(
     if (!patch.format.fillColor) {
       issues.push(makeIssue('invalidExpression', `Format patch in step '${stepId}' must define at least one formatting property.`, `${path}.format`, stepId));
     } else if (!isValidFillColor(patch.format.fillColor)) {
-      issues.push(makeIssue('invalidColor', `Step '${stepId}' must use a hex color like '#fff2cc'.`, `${path}.format.fillColor`, stepId));
+      issues.push(makeIssue('invalidColor', `Step '${stepId}' must use a hex color like '#ffeb9c'.`, `${path}.format.fillColor`, stepId));
     }
   }
 

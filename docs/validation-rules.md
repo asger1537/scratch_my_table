@@ -88,6 +88,8 @@ Workflow IR v2 uses one shared expression AST:
 Rules:
 
 - `value` is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
+- `value` is represented exactly as `{ "kind": "value" }`
+- `null` must be represented as `{ "kind": "literal", "value": null }`
 - `column` is valid anywhere row-scoped expressions are evaluated
 - `literal` is always structurally valid
 - `call` must use one supported built-in function name and the correct arity
@@ -164,7 +166,7 @@ Valid when:
 - every `cases[*].when` expression resolves to boolean
 - every `cases[*].then` and `defaultPatch`, if present, defines at least one of `value` or `format`
 - every patch `value`, if present, resolves to a scalar cell value
-- every `format.fillColor`, if present, is a valid 6-digit hex color such as `#fff2cc`
+- every `format.fillColor`, if present, is a valid 6-digit hex color such as `#ffeb9c`
 - all value-producing branches are type-compatible for each targeted column
 
 Rules:
@@ -172,7 +174,8 @@ Rules:
 - `rowCondition` is evaluated against the current row before any targeted cell work
 - `value` is evaluated as the current selected cell
 - `column` may read any existing column from the current row
-- cases are checked top to bottom and first match wins
+- cases are checked top to bottom and every matching case applies in order
+- later matching cases see the current cell value after earlier matching cases have already applied
 - `defaultPatch`, if present, applies when no case matches
 - patches may change value only, format only, or both
 - format-only rules do not change schema
@@ -185,7 +188,7 @@ Common capability mappings:
 - fill empty cells: `defaultPatch.value = coalesce(value, <literal>)`
 - fill empty trimmed text: `defaultPatch.value = coalesce(trim(value), <literal>)`
 - normalize text: `defaultPatch.value = lower(trim(value))`
-- highlight cells: `defaultPatch.format.fillColor = "#fff2cc"`
+- highlight cells: `defaultPatch.format.fillColor = "#ffeb9c"`
 - transform and highlight together: use both `then.value` and `then.format` in the same matching case
 
 Errors:
@@ -334,5 +337,5 @@ Errors:
 ## Incompatible-Type Behavior
 
 - Semantic incompatibility is a validation error, not a warning.
-- V1 does not silently cast target columns for in-place operations.
+- The runtime does not silently cast target columns for in-place operations.
 - Intentional stringification operations are `concat` and `combineColumns`.
