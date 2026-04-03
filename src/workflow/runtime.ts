@@ -816,6 +816,9 @@ function validateCallExpression(
     case 'trim':
     case 'lower':
     case 'upper':
+    case 'toNumber':
+    case 'toString':
+    case 'toBoolean':
     case 'collapseWhitespace': {
       const [input] = results;
 
@@ -824,7 +827,22 @@ function validateCallExpression(
         return { logicalType: 'unknown', valueKind: 'scalar', issues };
       }
 
-      if (input.valueKind !== 'scalar' || !isStringLikeType(input.logicalType)) {
+      if (input.valueKind !== 'scalar') {
+        issues.push(
+          makeIssue(
+            'invalidExpression',
+            `Function '${expression.name}' only accepts scalar inputs.`,
+            `${path}.args[0]`,
+            stepId,
+            { logicalType: input.logicalType, functionName: expression.name },
+          ),
+        );
+      }
+
+      if (
+        (expression.name === 'trim' || expression.name === 'lower' || expression.name === 'upper' || expression.name === 'collapseWhitespace')
+        && !isStringLikeType(input.logicalType)
+      ) {
         issues.push(
           makeIssue(
             'incompatibleType',
@@ -837,7 +855,15 @@ function validateCallExpression(
       }
 
       return {
-        logicalType: input.logicalType === 'string' ? 'string' : 'unknown',
+        logicalType: expression.name === 'toNumber'
+          ? 'number'
+          : expression.name === 'toBoolean'
+            ? 'boolean'
+            : expression.name === 'toString'
+              ? 'string'
+              : input.logicalType === 'string'
+                ? 'string'
+                : 'unknown',
         valueKind: 'scalar',
         issues,
       };
@@ -2034,6 +2060,15 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       const value = evaluateExpression(expression.args[0], context);
       return typeof value === 'string' ? value.toLocaleUpperCase() : value;
     }
+    case 'toNumber': {
+      return castToNumber(evaluateExpression(expression.args[0], context));
+    }
+    case 'toString': {
+      return castToString(evaluateExpression(expression.args[0], context));
+    }
+    case 'toBoolean': {
+      return castToBoolean(evaluateExpression(expression.args[0], context));
+    }
     case 'collapseWhitespace': {
       const value = evaluateExpression(expression.args[0], context);
       return typeof value === 'string' ? value.replace(/\s+/g, ' ') : value;
@@ -2674,6 +2709,71 @@ function isValidRegexPattern(pattern: string) {
 
 function toCellValue(value: ExpressionRuntimeValue): CellValue {
   return Array.isArray(value) ? null : value;
+}
+
+function castToNumber(value: ExpressionRuntimeValue): CellValue {
+  if (Array.isArray(value) || value === null) {
+    return null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+
+  const trimmed = value.trim();
+
+  if (trimmed === '') {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function castToString(value: ExpressionRuntimeValue): CellValue {
+  if (Array.isArray(value) || value === null) {
+    return null;
+  }
+
+  return typeof value === 'string' ? value : String(value);
+}
+
+function castToBoolean(value: ExpressionRuntimeValue): CellValue {
+  if (Array.isArray(value) || value === null) {
+    return null;
+  }
+
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+
+    if (value === 0) {
+      return false;
+    }
+
+    return null;
+  }
+
+  const normalized = value.trim().toLocaleLowerCase();
+
+  if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    return true;
+  }
+
+  if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    return false;
+  }
+
+  return null;
 }
 
 function isStringLikeType(logicalType: LogicalType) {

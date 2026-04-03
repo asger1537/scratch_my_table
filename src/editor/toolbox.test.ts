@@ -18,7 +18,24 @@ describe('workflow toolbox search', () => {
       expect.arrayContaining([
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.trimFunction }),
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.replaceRegexFunction }),
+        expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.toNumberFunction }),
       ]),
+    );
+  });
+
+  it('finds cast blocks through keyword search', () => {
+    const numberMatches = getWorkflowToolboxCategoryContents('category_functions', 'to number');
+    const stringMatches = getWorkflowToolboxCategoryContents('category_functions', 'stringify');
+    const booleanMatches = getWorkflowToolboxCategoryContents('category_functions', 'true false');
+
+    expect(numberMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.toNumberFunction })]),
+    );
+    expect(stringMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.toStringFunction })]),
+    );
+    expect(booleanMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.toBooleanFunction })]),
     );
   });
 

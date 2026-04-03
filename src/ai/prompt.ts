@@ -292,6 +292,7 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     'Built-in call names:',
     '- logic: equals, contains, startsWith, endsWith, matchesRegex, greaterThan, lessThan, and, or, not, isEmpty',
     '- string/list: trim, lower, upper, collapseWhitespace, substring, replace, extractRegex, replaceRegex, split, atIndex, first, last, coalesce, concat, switch',
+    '- casting: toNumber, toString, toBoolean',
     '- math: add, subtract, multiply, divide, modulo, round, floor, ceil, abs',
     '- date/time: now, datePart, dateDiff, dateAdd',
     '',

@@ -26,6 +26,7 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('must appear in JSON as "\\\\d+"');
     expect(instruction).toContain('Columns marked "mixed" contain incompatible runtime values.');
     expect(instruction).toContain('Combine First Name and Last Name into Full Name, then drop the originals.');
+    expect(instruction).toContain('casting: toNumber, toString, toBoolean');
     expect(instruction).not.toContain('alice@example.com');
   });
 
@@ -448,6 +449,97 @@ describe('AI workflow copilot helpers', () => {
           }),
         ],
       }),
+    );
+  });
+
+  it('compacts noisy structural validation explosions before repair and logging', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse('{"mode":"draft","assistantMessage":"First attempt.","assumptions":[],"steps":[{"type":"scopedRule","columnIds":["col_email"],"cases":[{"when":{"kind":"call","name":"and","args":[{"kind":"call","name":"isEmpty","args":[{"kind":"value"}]},{"kind":"call","name":"not","args":[{"kind":"call","name":"isEmpty","args":["col_email_2"]}]}]},"then":{"format":{"fillColor":"#FFEB9C"}}}]}]}'),
+      )
+      .mockResolvedValueOnce(
+        createGeminiResponse('{"mode":"clarify","assistantMessage":"Need clarification.","assumptions":[]}'),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([
+      {
+        code: 'schema.oneOf',
+        severity: 'error',
+        message: 'must match exactly one schema in oneOf',
+        path: '$',
+        phase: 'structural',
+      },
+      {
+        code: 'schema.type',
+        severity: 'error',
+        message: 'must be object',
+        path: 'steps[0].cases[0].when.args[1].args[0].args[0]',
+        phase: 'structural',
+      },
+      {
+        code: 'schema.required',
+        severity: 'error',
+        message: "must have required property 'kind'",
+        path: 'steps[0].cases[0].when.args[1].args[0].args[0].kind',
+        phase: 'structural',
+      },
+      {
+        code: 'schema.type',
+        severity: 'error',
+        message: 'must be object',
+        path: 'steps[0].cases[0].when.args[1].args[0].args[0]',
+        phase: 'structural',
+      },
+      {
+        code: 'schema.oneOf',
+        severity: 'error',
+        message: 'must match exactly one schema in oneOf',
+        path: 'steps[0].cases[0].when.args[1].args[0].args[0]',
+        phase: 'structural',
+      },
+    ]);
+    const progressEvents: Array<{ stage: string; message: string }> = [];
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Color fallback email cells yellow.',
+      validateCandidateWorkflow,
+      fetchFn,
+      onProgress: (event) => {
+        progressEvents.push({
+          stage: event.stage,
+          message: event.message,
+        });
+      },
+    });
+
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'invalidDraft',
+        repaired: true,
+        validationIssues: [
+          expect.objectContaining({
+            code: 'schema.type',
+            path: 'steps[0].cases[0].when.args[1].args[0].args[0]',
+          }),
+        ],
+        debugTrace: expect.objectContaining({
+          initialValidationIssues: [
+            expect.objectContaining({
+              code: 'schema.type',
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(progressEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          stage: 'repair_requested',
+          message: 'Initial draft failed validation with 5 issues; using 1 relevant issue. Requesting one repair.',
+        }),
+      ]),
     );
   });
 

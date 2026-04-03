@@ -481,6 +481,53 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.replaceRegexFunction);
   });
 
+  it('reconstructs explicit cast function trees', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_cast_roundtrip',
+      name: 'Cast roundtrip',
+      steps: [
+        {
+          id: 'step_value_number',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_value_number',
+            displayName: 'value_number',
+          },
+          expression: call('toNumber', column('col_value')),
+        },
+        {
+          id: 'step_value_string',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_value_string',
+            displayName: 'value_string',
+          },
+          expression: call('toString', column('col_value_number')),
+        },
+        {
+          id: 'step_flag_boolean',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_flag_boolean',
+            displayName: 'flag_boolean',
+          },
+          expression: call('toBoolean', column('col_flag')),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_value', 'col_value_number', 'col_value_string', 'col_flag', 'col_flag_boolean'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+    const blockTypes = workspace.getAllBlocks(false).map((block) => block.type);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(blockTypes).toContain(BLOCK_TYPES.toNumberFunction);
+    expect(blockTypes).toContain(BLOCK_TYPES.toStringFunction);
+    expect(blockTypes).toContain(BLOCK_TYPES.toBooleanFunction);
+  });
+
   it('reconstructs switch function trees with dynamic case inputs', () => {
     const workflow: Workflow = {
       version: 2,
@@ -1406,6 +1453,9 @@ function call(
     | 'trim'
     | 'lower'
     | 'upper'
+    | 'toNumber'
+    | 'toString'
+    | 'toBoolean'
     | 'collapseWhitespace'
     | 'substring'
     | 'replace'

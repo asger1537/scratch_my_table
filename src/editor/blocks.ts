@@ -115,6 +115,9 @@ export const BLOCK_TYPES = {
   trimFunction: 'trim_function',
   lowerFunction: 'lower_function',
   upperFunction: 'upper_function',
+  toNumberFunction: 'to_number_function',
+  toStringFunction: 'to_string_function',
+  toBooleanFunction: 'to_boolean_function',
   collapseWhitespaceFunction: 'collapse_whitespace_function',
   substringFunction: 'substring_function',
   replaceFunction: 'replace_function',
@@ -381,6 +384,9 @@ export function registerWorkflowBlocks() {
   createUnaryFunctionBlock(BLOCK_TYPES.trimFunction, 'trim', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.lowerFunction, 'lower', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.upperFunction, 'upper', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.toNumberFunction, 'to number', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.toStringFunction, 'to string', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.toBooleanFunction, 'to boolean', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last', FUNCTION_COLOR);

@@ -115,6 +115,32 @@ describe('workflow validation and execution', () => {
 
     expect(invalidValidation.valid).toBe(false);
     expect(invalidValidation.issues.some((issue) => issue.code === 'schema.maxItems')).toBe(true);
+
+    const unsupportedFunctionWorkflow = {
+      version: 2,
+      workflowId: 'wf_bad_cast_name',
+      name: 'Bad cast name',
+      steps: [
+        {
+          id: 'step_bad_cast_name',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad',
+            displayName: 'bad',
+          },
+          expression: {
+            kind: 'call',
+            name: 'toMaybe',
+            args: [column('col_email')],
+          },
+        },
+      ],
+    };
+
+    const unsupportedFunctionValidation = validateWorkflowStructure(unsupportedFunctionWorkflow);
+
+    expect(unsupportedFunctionValidation.valid).toBe(false);
+    expect(unsupportedFunctionValidation.issues.some((issue) => issue.code.startsWith('schema.'))).toBe(true);
   });
 
   it('structurally validates boolean expression filters', () => {
@@ -381,6 +407,49 @@ describe('workflow validation and execution', () => {
     });
   });
 
+  it('structurally validates explicit cast expressions', () => {
+    const workflow = {
+      version: 2,
+      workflowId: 'wf_cast_structure',
+      name: 'Cast structure',
+      steps: [
+        {
+          id: 'step_number',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total_number',
+            displayName: 'total_number',
+          },
+          expression: call('toNumber', column('col_total')),
+        },
+        {
+          id: 'step_string',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_total_text',
+            displayName: 'total_text',
+          },
+          expression: call('toString', column('col_total')),
+        },
+        {
+          id: 'step_boolean',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_paid_flag',
+            displayName: 'paid_flag',
+          },
+          expression: call('toBoolean', column('col_paid')),
+        },
+      ],
+    };
+
+    expect(validateWorkflowStructure(workflow)).toEqual({
+      valid: true,
+      workflow,
+      issues: [],
+    });
+  });
+
   it('runs every example workflow against Customers_Messy.xlsx', async () => {
     const workbookPath = path.resolve(process.cwd(), 'Customers_Messy.xlsx');
     const workbookBytes = await readFile(workbookPath);
@@ -622,6 +691,73 @@ describe('workflow validation and execution', () => {
 
     expect(invalidValueValidation.valid).toBe(false);
     expect(invalidValueValidation.issues.some((issue) => issue.code === 'invalidExpression')).toBe(true);
+  });
+
+  it('validates casts on mixed and unknown scalar sources but rejects list-valued cast inputs', () => {
+    const mixedTable = loadCsvTable('value,flag\r\n1,yes\r\nhello,0\r\n,maybe\r\n');
+    const validWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_cast_validation',
+      name: 'Cast validation',
+      steps: [
+        {
+          id: 'step_value_number',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_value_number',
+            displayName: 'value_number',
+          },
+          expression: call('toNumber', column('col_value')),
+        },
+        {
+          id: 'step_flag_boolean',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_flag_boolean',
+            displayName: 'flag_boolean',
+          },
+          expression: call('toBoolean', column('col_flag')),
+        },
+        {
+          id: 'step_value_string',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_value_string',
+            displayName: 'value_string',
+          },
+          expression: call('toString', column('col_value')),
+        },
+      ],
+    };
+
+    const validValidation = validateWorkflowSemantics(validWorkflow, mixedTable);
+
+    expect(mixedTable.schema.columns.find((column) => column.columnId === 'col_value')?.logicalType).toBe('mixed');
+    expect(validValidation.valid).toBe(true);
+
+    const invalidWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_cast_list_validation',
+      name: 'Cast list validation',
+      steps: [
+        {
+          id: 'step_bad_cast',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_cast',
+            displayName: 'bad_cast',
+          },
+          expression: call('toNumber', call('split', column('col_value'), literal(','))),
+        },
+      ],
+    };
+
+    const invalidValidation = validateWorkflowSemantics(invalidWorkflow, mixedTable);
+
+    expect(invalidValidation.valid).toBe(false);
+    expect(
+      invalidValidation.issues.some((issue) => issue.code === 'invalidExpression' && issue.path === 'steps[0].expression.args[0]'),
+    ).toBe(true);
   });
 
   it('renames a column display name without changing its stable column ID', () => {
@@ -1071,6 +1207,97 @@ describe('workflow validation and execution', () => {
     expect(row2?.col_days_diff).toBe(null);
   });
 
+  it('evaluates explicit casts deterministically and enables downstream numeric sorting', () => {
+    const table = loadCsvTable('value,flag,created_at\r\n 42 ,YES,2026-01-02\r\n0,no,2026-01-03\r\nhello,maybe,\r\n,1,2026-01-04\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_cast_runtime',
+      name: 'Cast runtime',
+      steps: [
+        {
+          id: 'step_value_number',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_value_number',
+            displayName: 'value_number',
+          },
+          expression: call('toNumber', column('col_value')),
+        },
+        {
+          id: 'step_flag_boolean',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_flag_boolean',
+            displayName: 'flag_boolean',
+          },
+          expression: call('toBoolean', column('col_flag')),
+        },
+        {
+          id: 'step_value_text',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_value_text',
+            displayName: 'value_text',
+          },
+          expression: call('toString', column('col_value_number')),
+        },
+        {
+          id: 'step_created_at_number',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_created_at_number',
+            displayName: 'created_at_number',
+          },
+          expression: call('toNumber', column('col_created_at')),
+        },
+        {
+          id: 'step_created_at_boolean',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_created_at_boolean',
+            displayName: 'created_at_boolean',
+          },
+          expression: call('toBoolean', column('col_created_at')),
+        },
+        {
+          id: 'step_sort_value_number',
+          type: 'sortRows',
+          sorts: [
+            {
+              columnId: 'col_value_number',
+              direction: 'asc',
+            },
+          ],
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+    const row2 = execution.transformedTable?.rowsById.row_2.cellsByColumnId;
+    const row1 = execution.transformedTable?.rowsById.row_1.cellsByColumnId;
+    const row3 = execution.transformedTable?.rowsById.row_3.cellsByColumnId;
+    const row4 = execution.transformedTable?.rowsById.row_4.cellsByColumnId;
+
+    expect(validation.valid).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowOrder).toEqual(['row_2', 'row_1', 'row_3', 'row_4']);
+    expect(row1?.col_value_number).toBe(42);
+    expect(row2?.col_value_number).toBe(0);
+    expect(row3?.col_value_number).toBe(null);
+    expect(row4?.col_value_number).toBe(null);
+    expect(row1?.col_flag_boolean).toBe(true);
+    expect(row2?.col_flag_boolean).toBe(false);
+    expect(row3?.col_flag_boolean).toBe(null);
+    expect(row4?.col_flag_boolean).toBe(true);
+    expect(row1?.col_value_text).toBe('42');
+    expect(row2?.col_value_text).toBe('0');
+    expect(row3?.col_value_text).toBe(null);
+    expect(row4?.col_value_text).toBe(null);
+    expect(row1?.col_created_at_number).toBe(null);
+    expect(row1?.col_created_at_boolean).toBe(null);
+  });
+
   it('filters rows with boolean call expressions and rejects incompatible comparators', async () => {
     const table = await readFixtureTable('orders-sample.csv');
     const workflow: Workflow = {
@@ -1457,6 +1684,9 @@ function call(
     | 'trim'
     | 'lower'
     | 'upper'
+    | 'toNumber'
+    | 'toString'
+    | 'toBoolean'
     | 'collapseWhitespace'
     | 'substring'
     | 'replace'

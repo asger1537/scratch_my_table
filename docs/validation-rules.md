@@ -98,7 +98,7 @@ Rules:
 Function rules:
 
 - `now` requires exactly 0 arguments
-- `trim`, `lower`, `upper`, `collapseWhitespace`, `first`, `last`, `isEmpty`, `not`, `round`, `floor`, `ceil`, and `abs` require exactly 1 argument
+- `trim`, `lower`, `upper`, `toNumber`, `toString`, `toBoolean`, `collapseWhitespace`, `first`, `last`, `isEmpty`, `not`, `round`, `floor`, `ceil`, and `abs` require exactly 1 argument
 - `substring` requires 3 arguments: string input, numeric start, numeric length
 - `replace`, `replaceRegex`, `dateDiff`, and `dateAdd` require 3 arguments
 - `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `add`, `subtract`, `multiply`, `divide`, `modulo`, and `datePart` require exactly 2 arguments
@@ -114,6 +114,7 @@ Type rules:
 - `dateDiff` requires two date, datetime, or string-like inputs plus a string literal unit and returns `number`
 - `dateAdd` requires a date, datetime, or string-like input, a numeric amount, and a string literal unit; it returns `datetime`
 - `trim`, `lower`, `upper`, `collapseWhitespace` require string-like inputs
+- `toNumber`, `toString`, and `toBoolean` require one scalar input; they accept mixed and unknown scalar sources and resolve to `number`, `string`, and `boolean`
 - `substring` requires string, number, number
 - `replace` requires string, string, string
 - `extractRegex` requires string-like inputs and returns `string`

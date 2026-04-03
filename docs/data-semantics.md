@@ -62,6 +62,9 @@ Built-in function semantics:
 - `trim(x)`: trims leading and trailing whitespace from string inputs
 - `lower(x)`: lowercases string inputs
 - `upper(x)`: uppercases string inputs
+- `toNumber(x)`: returns `x` unchanged for numeric inputs, `1` or `0` for booleans, parses trimmed finite numeric strings, and returns `null` for empty, invalid, or non-finite inputs
+- `toString(x)`: returns `null` for `null`, leaves strings unchanged, and stringifies numbers and booleans
+- `toBoolean(x)`: accepts booleans, numeric `1`/`0`, and trimmed case-insensitive `true`/`false`/`yes`/`no`/`1`/`0`; all other inputs return `null`
 - `collapseWhitespace(x)`: replaces one or more whitespace runs with one ASCII space
 - `substring(x, start, length)`: returns the selected string slice
 - `replace(x, from, to)`: replaces all exact `from` matches with `to`
@@ -105,6 +108,7 @@ Determinism rules:
 - Functions are pure and deterministic.
 - No function mutates other cells, rows, or schema.
 - Workflow IR v2 does not support user-defined functions, loops, or recursion.
+- Explicit casts are the intended way to normalize messy imported values before math, sorting, or boolean logic.
 
 ## Cell Formatting Semantics
 

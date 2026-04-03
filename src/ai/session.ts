@@ -95,6 +95,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     initialTurn.response.steps ?? [],
     options.validateCandidateWorkflow,
   );
+  const initialRelevantIssues = selectRelevantValidationIssues(initialValidation.issues);
 
   if (initialValidation.issues.length === 0) {
     emitProgress(options, 'complete', 'Initial AI draft validated successfully.');
@@ -121,12 +122,16 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     };
   }
 
-  emitProgress(options, 'repair_requested', `Initial draft failed validation with ${initialValidation.issues.length} issue${initialValidation.issues.length === 1 ? '' : 's'}. Requesting one repair.`);
+  emitProgress(
+    options,
+    'repair_requested',
+    `Initial draft failed validation with ${formatIssueSummary(initialValidation.issues.length, initialRelevantIssues.length)}. Requesting one repair.`,
+  );
   const repairUserMessage = createMessage(
     'user',
     buildRepairUserMessage(
       initialTurn.rawText,
-      initialValidation.issues.map((issue) => ({
+      initialRelevantIssues.map((issue) => ({
         code: issue.code,
         path: issue.path,
         message: issue.message,
@@ -163,13 +168,13 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
       assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
       response: repairTurn.response,
       repaired: true,
-      validationIssues: initialValidation.issues,
+      validationIssues: initialRelevantIssues,
       debugTrace: {
         outcomeKind: 'invalidDraft',
         repaired: true,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
-        initialValidationIssues: initialValidation.issues,
+        initialValidationIssues: initialRelevantIssues,
         repairRawText: repairTurn.rawText,
         repairResponse: repairTurn.response,
         repairValidationIssues: [],
@@ -183,25 +188,30 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     repairTurn.response.steps ?? [],
     options.validateCandidateWorkflow,
   );
+  const repairRelevantIssues = selectRelevantValidationIssues(repairedValidation.issues);
 
   if (repairedValidation.issues.length > 0) {
-    emitProgress(options, 'complete', `Repaired draft still failed validation with ${repairedValidation.issues.length} issue${repairedValidation.issues.length === 1 ? '' : 's'}.`);
+    emitProgress(
+      options,
+      'complete',
+      `Repaired draft still failed validation with ${formatIssueSummary(repairedValidation.issues.length, repairRelevantIssues.length)}.`,
+    );
     return {
       kind: 'invalidDraft',
       userMessage,
       assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
       response: repairTurn.response,
       repaired: true,
-      validationIssues: repairedValidation.issues,
+      validationIssues: repairRelevantIssues,
       debugTrace: {
         outcomeKind: 'invalidDraft',
         repaired: true,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
-        initialValidationIssues: initialValidation.issues,
+        initialValidationIssues: initialRelevantIssues,
         repairRawText: repairTurn.rawText,
         repairResponse: repairTurn.response,
-        repairValidationIssues: repairedValidation.issues,
+        repairValidationIssues: repairRelevantIssues,
       },
     };
   }
@@ -218,7 +228,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         repaired: true,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
-        initialValidationIssues: initialValidation.issues,
+        initialValidationIssues: initialRelevantIssues,
         repairRawText: repairTurn.rawText,
         repairResponse: repairTurn.response,
         repairValidationIssues: [],
@@ -268,6 +278,133 @@ function createMessage(role: AIMessage['role'], text: string): AIMessage {
     text,
     timestamp: new Date().toISOString(),
   };
+}
+
+function selectRelevantValidationIssues(issues: WorkflowValidationIssue[], limit = 12) {
+  if (issues.length <= 1) {
+    return issues;
+  }
+
+  const structuralIssues = issues.filter((issue) => issue.phase === 'structural');
+  const sourceIssues = structuralIssues.length > 0 ? structuralIssues : issues;
+  const dedupedIssues = dedupeIssues(sourceIssues);
+  const rankedIssues = [...dedupedIssues].sort((left, right) => compareIssues(left, right, structuralIssues.length > 0));
+  const selectedIssues: WorkflowValidationIssue[] = [];
+
+  for (const issue of rankedIssues) {
+    if (issue.phase === 'structural' && issue.code === 'schema.oneOf' && issue.path === '$' && rankedIssues.some((candidate) => candidate.path !== '$')) {
+      continue;
+    }
+
+    if (issue.phase === 'structural' && issue.code === 'schema.oneOf' && rankedIssues.some((candidate) => candidate !== issue && isSameOrDescendantPath(candidate.path, issue.path))) {
+      continue;
+    }
+
+    if (selectedIssues.some((selected) => isSameOrDescendantPath(issue.path, selected.path))) {
+      continue;
+    }
+
+    selectedIssues.push(issue);
+
+    if (selectedIssues.length >= limit) {
+      break;
+    }
+  }
+
+  return selectedIssues.length > 0 ? selectedIssues : dedupedIssues.slice(0, Math.min(limit, dedupedIssues.length));
+}
+
+function dedupeIssues(issues: WorkflowValidationIssue[]) {
+  const seen = new Set<string>();
+
+  return issues.filter((issue) => {
+    const key = `${issue.phase}|${issue.code}|${issue.path}|${issue.message}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function compareIssues(left: WorkflowValidationIssue, right: WorkflowValidationIssue, structuralOnly: boolean) {
+  const leftPriority = getIssuePriority(left, structuralOnly);
+  const rightPriority = getIssuePriority(right, structuralOnly);
+
+  if (leftPriority !== rightPriority) {
+    return leftPriority - rightPriority;
+  }
+
+  if (left.path.length !== right.path.length) {
+    return left.path.length - right.path.length;
+  }
+
+  return left.path.localeCompare(right.path) || left.message.localeCompare(right.message);
+}
+
+function getIssuePriority(issue: WorkflowValidationIssue, structuralOnly: boolean) {
+  if (structuralOnly) {
+    switch (issue.code) {
+      case 'schema.type':
+        return 0;
+      case 'schema.required':
+        return 1;
+      case 'schema.enum':
+        return 2;
+      case 'schema.additionalProperties':
+        return 3;
+      case 'schema.const':
+        return 4;
+      case 'schema.pattern':
+        return 5;
+      case 'schema.maxItems':
+      case 'schema.minItems':
+        return 6;
+      case 'schema.oneOf':
+        return 9;
+      default:
+        return 8;
+    }
+  }
+
+  switch (issue.code) {
+    case 'missingColumn':
+      return 0;
+    case 'invalidExpression':
+      return 1;
+    case 'incompatibleType':
+      return 2;
+    case 'invalidRegex':
+      return 3;
+    case 'duplicateColumnReference':
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+function isSameOrDescendantPath(path: string, ancestorPath: string) {
+  if (path === ancestorPath) {
+    return true;
+  }
+
+  if (ancestorPath === '$') {
+    return false;
+  }
+
+  return path.startsWith(`${ancestorPath}.`) || path.startsWith(`${ancestorPath}[`);
+}
+
+function formatIssueSummary(totalCount: number, relevantCount: number) {
+  const totalLabel = `${totalCount} issue${totalCount === 1 ? '' : 's'}`;
+
+  if (relevantCount === totalCount) {
+    return totalLabel;
+  }
+
+  return `${totalLabel}; using ${relevantCount} relevant issue${relevantCount === 1 ? '' : 's'}`;
 }
 
 function emitProgress(options: RunGeminiDraftTurnOptions, stage: AIProgressEvent['stage'], message: string) {

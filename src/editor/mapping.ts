@@ -905,6 +905,12 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readUnaryCall(block, 'lower');
     case BLOCK_TYPES.upperFunction:
       return readUnaryCall(block, 'upper');
+    case BLOCK_TYPES.toNumberFunction:
+      return readUnaryCall(block, 'toNumber');
+    case BLOCK_TYPES.toStringFunction:
+      return readUnaryCall(block, 'toString');
+    case BLOCK_TYPES.toBooleanFunction:
+      return readUnaryCall(block, 'toBoolean');
     case BLOCK_TYPES.collapseWhitespaceFunction:
       return readUnaryCall(block, 'collapseWhitespace');
     case BLOCK_TYPES.firstFunction:
@@ -1037,7 +1043,7 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
 
 function readUnaryCall(
   block: Blockly.Block,
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'not',
+  name: 'trim' | 'lower' | 'upper' | 'toNumber' | 'toString' | 'toBoolean' | 'collapseWhitespace' | 'first' | 'last' | 'not',
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   return readFixedArityCall(block, name, ['INPUT']);
 }
@@ -1070,6 +1076,9 @@ function readFixedArityCall(
     | 'trim'
     | 'lower'
     | 'upper'
+    | 'toNumber'
+    | 'toString'
+    | 'toBoolean'
     | 'collapseWhitespace'
     | 'first'
     | 'last'
@@ -1792,6 +1801,9 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'trim':
     case 'lower':
     case 'upper':
+    case 'toNumber':
+    case 'toString':
+    case 'toBoolean':
     case 'collapseWhitespace':
     case 'first':
     case 'last':
@@ -1800,6 +1812,9 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
         trim: BLOCK_TYPES.trimFunction,
         lower: BLOCK_TYPES.lowerFunction,
         upper: BLOCK_TYPES.upperFunction,
+        toNumber: BLOCK_TYPES.toNumberFunction,
+        toString: BLOCK_TYPES.toStringFunction,
+        toBoolean: BLOCK_TYPES.toBooleanFunction,
         collapseWhitespace: BLOCK_TYPES.collapseWhitespaceFunction,
         first: BLOCK_TYPES.firstFunction,
         last: BLOCK_TYPES.lastFunction,
