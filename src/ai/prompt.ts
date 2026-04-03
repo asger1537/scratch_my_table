@@ -387,14 +387,6 @@ function getAvailableSchemaPromptLines(context: AIPromptContext) {
   return getAvailableSchemaContextWorkflow(context).map((column) => `- ${column.columnId} | ${column.displayName} | ${column.logicalType}`);
 }
 
-export function summarizeDraftStepsForDisplay(draft: AIDraft | null) {
-  if (!draft || draft.steps.length === 0) {
-    return 'No AI draft steps.';
-  }
-
-  return JSON.stringify(stripWorkflowStepIds(draft.steps), null, 2);
-}
-
 export function summarizeWorkflowForPrompt(workflow: Workflow, draft: AIDraft | null) {
   return {
     workflow: summarizeWorkflowSteps(workflow),

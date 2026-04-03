@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, buildRepairUserMessage, generateGeminiDraftTurn, parseGeminiWorkflowResponse, replaceWorkflowSteps, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
+import { assignWorkflowStepIds, buildDraftPreviewWorkflow, buildGeminiRequestExport, buildGeminiSystemInstruction, buildRepairUserMessage, formatDraftStepsForDebug, generateGeminiDraftTurn, parseGeminiWorkflowResponse, replaceWorkflowSteps, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
@@ -259,6 +259,64 @@ describe('AI workflow copilot helpers', () => {
     expect(replacedWorkflow.steps).toHaveLength(1);
     expect(replacedWorkflow.workflowId).toBe('wf_ai');
     expect(replacedWorkflow.steps[0].id).toBe('step_filter_rows_1');
+  });
+
+  it('builds draft preview workflows from the selected AI context and formats debug JSON', () => {
+    const currentWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_preview_current',
+      name: 'Current workflow',
+      description: 'Uses the current workflow context.',
+      steps: [
+        {
+          id: 'step_comment_1',
+          type: 'comment',
+          text: 'Old step',
+        },
+      ],
+    };
+    const lastValidWorkflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_preview_last_valid',
+      name: 'Last valid workflow',
+      description: 'Fallback workflow snapshot.',
+      steps: [
+        {
+          id: 'step_drop_columns_1',
+          type: 'dropColumns',
+          columnIds: ['col_status'],
+        },
+      ],
+    };
+    const draft = {
+      assistantMessage: 'Replace the workflow with a filter.',
+      assumptions: ['Using the known email column.'],
+      validationIssues: [],
+      steps: assignWorkflowStepIds([
+        {
+          type: 'filterRows',
+          mode: 'drop',
+          condition: {
+            kind: 'call',
+            name: 'isEmpty',
+            args: [{ kind: 'column', columnId: 'col_email' }],
+          },
+        },
+      ]),
+    };
+
+    expect(buildDraftPreviewWorkflow(currentWorkflow, draft)).toEqual({
+      ...currentWorkflow,
+      steps: draft.steps,
+    });
+    expect(buildDraftPreviewWorkflow(lastValidWorkflow, draft)).toEqual({
+      ...lastValidWorkflow,
+      steps: draft.steps,
+    });
+    expect(buildDraftPreviewWorkflow(currentWorkflow, null)).toBeNull();
+    expect(buildDraftPreviewWorkflow(null, draft)).toBeNull();
+    expect(formatDraftStepsForDebug(draft)).toContain('"type": "filterRows"');
+    expect(formatDraftStepsForDebug(null)).toBe('No AI draft steps.');
   });
 
   it('validates AI drafts as full workflow replacements instead of appending them', async () => {

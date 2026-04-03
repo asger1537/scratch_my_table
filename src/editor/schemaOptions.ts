@@ -5,6 +5,12 @@ let currentColumns: Column[] = [];
 let extraColumnIds = new Set<string>();
 let blockColumnsById = new Map<string, Column[]>();
 
+export interface EditorSchemaSnapshot {
+  columns: Column[];
+  extraColumnIds: string[];
+  schemaByBlockId: Map<string, Column[]>;
+}
+
 export function setEditorSchemaColumns(columns: Column[], extraIds: string[] = [], schemaByBlockId?: Map<string, Column[]>) {
   currentColumns = columns.map((column) => ({ ...column }));
   extraColumnIds = new Set(extraIds.filter((columnId) => columnId !== ''));
@@ -14,6 +20,23 @@ export function setEditorSchemaColumns(columns: Column[], extraIds: string[] = [
       blockColumns.map((column) => ({ ...column })),
     ]),
   );
+}
+
+export function captureEditorSchemaSnapshot(): EditorSchemaSnapshot {
+  return {
+    columns: currentColumns.map((column) => ({ ...column })),
+    extraColumnIds: [...extraColumnIds],
+    schemaByBlockId: new Map(
+      [...blockColumnsById.entries()].map(([blockId, blockColumns]) => [
+        blockId,
+        blockColumns.map((column) => ({ ...column })),
+      ]),
+    ),
+  };
+}
+
+export function restoreEditorSchemaSnapshot(snapshot: EditorSchemaSnapshot) {
+  setEditorSchemaColumns(snapshot.columns, snapshot.extraColumnIds, snapshot.schemaByBlockId);
 }
 
 export function getSchemaColumnOptions(blockId?: string): [string, string][] {

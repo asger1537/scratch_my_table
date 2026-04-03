@@ -850,6 +850,74 @@ describe('block-based workflow authoring', () => {
     }
   }, 15000);
 
+  it('loads read-only preview workflows and roundtrips steps that reference created columns later', () => {
+    const table: Table = {
+      tableId: 'table_preview',
+      sourceName: 'Preview table',
+      schema: {
+        columns: [createColumn('col_email', 'Email', 'string')],
+      },
+      rowsById: {
+        row_1: {
+          rowId: 'row_1',
+          cellsByColumnId: {
+            col_email: 'alice@example.com',
+          },
+          stylesByColumnId: {},
+        },
+      },
+      rowOrder: ['row_1'],
+      importWarnings: [],
+    };
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_ai_preview',
+      name: 'AI preview',
+      description: 'Preview the applied workflow draft.',
+      steps: [
+        {
+          id: 'step_derive_email_clean',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'email_clean',
+            displayName: 'Email clean',
+          },
+          expression: call('trim', column('col_email')),
+        },
+        {
+          id: 'step_sort_email_clean',
+          type: 'sortRows',
+          sorts: [
+            {
+              columnId: 'email_clean',
+              direction: 'asc',
+            },
+          ],
+        },
+      ],
+    };
+    const workspace = createHeadlessWorkflowWorkspace();
+    const extraColumnIds = collectWorkflowColumnIds(workflow);
+    const stepChainTypes: string[] = [];
+
+    setEditorSchemaColumns(table.schema.columns, extraColumnIds);
+    workflowToWorkspace(workspace, workflow);
+    setEditorSchemaColumns(table.schema.columns, extraColumnIds, projectWorkspaceStepSchemas(workspace, table));
+
+    let block: ReturnType<typeof workspace.getTopBlocks>[number] | undefined = workspace.getTopBlocks(false)[0];
+
+    while (block) {
+      stepChainTypes.push(block.type);
+      block = block.getNextBlock() ?? undefined;
+    }
+
+    expect(stepChainTypes).toEqual([BLOCK_TYPES.deriveColumnStep, BLOCK_TYPES.sortRowsStep]);
+    expect(workspaceToWorkflow(workspace)).toEqual({
+      workflow,
+      issues: [],
+    });
+  });
+
   it('keeps validation and execution wired to canonical IR after block serialization', async () => {
     const table = await readFixtureTable('messy-customers.csv');
     const workflow: Workflow = {

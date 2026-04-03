@@ -4,11 +4,12 @@ import {
   DEFAULT_GEMINI_MODEL,
   GEMINI_MODEL_OPTIONS,
   appendAIDevLog,
+  buildDraftPreviewWorkflow,
   buildGeminiRequestExport,
+  formatDraftStepsForDebug,
   normalizeGeminiModelSelection,
   replaceWorkflowSteps,
   runGeminiDraftTurn,
-  summarizeDraftStepsForDisplay,
   type AIDebugTrace,
   type AIDraft,
   type AIMessage,
@@ -17,6 +18,7 @@ import {
   type GeminiClientLogEvent,
 } from './ai';
 import {
+  WorkflowBlockPreview,
   WorkflowEditor,
   collectWorkflowColumnIds,
   createDefaultWorkflow,
@@ -642,7 +644,8 @@ export default function App() {
     : aiUsesLastValidWorkflow
       ? 'The current block workspace has issues. AI will receive the live block snapshot and the issue list, and it will draft from the last valid workflow snapshot. Applying the draft will replace the broken workspace.'
       : 'The current workflow has issues. AI will receive the live block snapshot and the issue list when drafting.';
-  const aiDraftSummary = summarizeDraftStepsForDisplay(aiDraft);
+  const aiDraftPreviewWorkflow = buildDraftPreviewWorkflow(aiContextWorkflow, aiDraft);
+  const aiDraftDebugJson = formatDraftStepsForDebug(aiDraft);
 
   return (
     <main className="app-shell">
@@ -849,10 +852,11 @@ export default function App() {
       {isAIDialogOpen ? (
         <AIAssistantModal
           aiDraft={aiDraft}
+          aiDraftDebugJson={aiDraftDebugJson}
           aiDraftIssues={aiDraftIssues}
+          aiDraftPreviewWorkflow={aiDraftPreviewWorkflow}
           aiDebugTrace={aiDebugTrace}
           aiProgressEvents={aiProgressEvents}
-          aiDraftSummary={aiDraftSummary}
           aiError={aiError}
           aiMessages={aiMessages}
           aiPromptValue={aiPromptValue}
@@ -873,6 +877,7 @@ export default function App() {
             void handleSendAIPrompt();
           }}
           onSettingsChange={setAISettings}
+          previewTable={activeTable}
           workflowReady={canUseAI}
           workflowIssueNotice={aiWorkflowIssueNotice}
         />
@@ -1047,10 +1052,11 @@ function RunResultPanel({
 
 function AIAssistantModal({
   aiDraft,
+  aiDraftDebugJson,
   aiDraftIssues,
+  aiDraftPreviewWorkflow,
   aiDebugTrace,
   aiProgressEvents,
-  aiDraftSummary,
   aiError,
   aiMessages,
   aiPromptValue,
@@ -1067,14 +1073,16 @@ function AIAssistantModal({
   onPromptChange,
   onSendPrompt,
   onSettingsChange,
+  previewTable,
   workflowReady,
   workflowIssueNotice,
 }: {
   aiDraft: AIDraft | null;
+  aiDraftDebugJson: string;
   aiDraftIssues: WorkflowValidationIssue[];
+  aiDraftPreviewWorkflow: Workflow | null;
   aiDebugTrace: AIDebugTrace | null;
   aiProgressEvents: AIProgressEvent[];
-  aiDraftSummary: string;
   aiError: string | null;
   aiMessages: AIMessage[];
   aiPromptValue: string;
@@ -1091,9 +1099,35 @@ function AIAssistantModal({
   onPromptChange: (value: string) => void;
   onSendPrompt: () => void;
   onSettingsChange: (settings: AISettings) => void;
+  previewTable: Table | null;
   workflowReady: boolean;
   workflowIssueNotice: string | null;
 }) {
+  const [isDraftPreviewOpen, setIsDraftPreviewOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isDraftPreviewOpen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsDraftPreviewOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isDraftPreviewOpen]);
+
   return (
     <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="ai-assistant-title">
       <div className="workflow-import-modal__scrim" onClick={onClose} />
@@ -1228,7 +1262,7 @@ function AIAssistantModal({
             <div className="panel-header">
               <div>
                 <h2>Draft</h2>
-                <p>Canonical draft workflow steps that would replace the current workflow when applied.</p>
+                <p>Preview the full workflow that would exist after applying the current AI draft.</p>
               </div>
             </div>
 
@@ -1236,6 +1270,7 @@ function AIAssistantModal({
               <div className="ai-draft-summary">
                 <strong>{aiDraft.steps.length} draft step{aiDraft.steps.length === 1 ? '' : 's'}</strong>
                 <p>{aiDraft.assistantMessage}</p>
+                <p className="ai-draft-preview-note">Open a fullscreen, read-only Blockly view to inspect the full workflow after applying this draft.</p>
                 {aiDraft.assumptions.length > 0 ? (
                   <ul className="issue-list">
                     {aiDraft.assumptions.map((assumption, index) => (
@@ -1262,7 +1297,28 @@ function AIAssistantModal({
               </ul>
             ) : null}
 
-            <textarea className="json-viewer ai-draft-viewer" readOnly value={aiDraftSummary} />
+            {aiDraft && aiDraftPreviewWorkflow && previewTable ? (
+              <div className="workflow-import-actions ai-draft-actions">
+                <button
+                  onClick={() => {
+                    setIsDraftPreviewOpen(true);
+                  }}
+                  type="button"
+                >
+                  Show draft
+                </button>
+              </div>
+            ) : null}
+
+            {aiDraft ? (
+              <details className="ai-debug-trace ai-draft-debug">
+                <summary>Draft JSON</summary>
+                <div className="ai-debug-trace__section">
+                  <strong>Canonical replacement steps</strong>
+                  <textarea className="json-viewer ai-draft-debug__viewer" readOnly value={aiDraftDebugJson} />
+                </div>
+              </details>
+            ) : null}
 
             {aiDebugTrace ? (
               <details className="ai-debug-trace">
@@ -1332,6 +1388,40 @@ function AIAssistantModal({
           </button>
         </div>
       </section>
+
+      {isDraftPreviewOpen && aiDraftPreviewWorkflow && previewTable ? (
+        <div className="workflow-import-modal workflow-block-preview-modal" role="dialog" aria-modal="true" aria-labelledby="draft-preview-title">
+          <div
+            className="workflow-import-modal__scrim"
+            onClick={() => {
+              setIsDraftPreviewOpen(false);
+            }}
+          />
+          <section className="workflow-import-modal__panel workflow-block-preview-modal__panel">
+            <div className="panel-header">
+              <div>
+                <h2 id="draft-preview-title">Draft preview</h2>
+                <p>Read-only block view of the full workflow after applying the current AI draft.</p>
+              </div>
+              <div className="workflow-import-actions">
+                <button
+                  onClick={() => {
+                    setIsDraftPreviewOpen(false);
+                  }}
+                  type="button"
+                >
+                  Close
+                </button>
+                <button disabled={!canApplyDraft} onClick={onApplyDraft} type="button">
+                  Apply draft
+                </button>
+              </div>
+            </div>
+
+            <WorkflowBlockPreview table={previewTable} workflow={aiDraftPreviewWorkflow} />
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -557,8 +557,60 @@ code {
   margin: 0;
 }
 
-.ai-draft-viewer {
-  min-height: 12rem;
+.ai-draft-preview-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ai-draft-actions {
+  justify-content: flex-start;
+}
+
+.ai-draft-debug__viewer {
+  min-height: 10rem;
+}
+
+.workflow-block-preview {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workflow-block-preview__shell {
+  padding: 0.85rem;
+}
+
+.workflow-block-preview__canvas {
+  height: 22rem;
+  min-height: 22rem;
+}
+
+.workflow-block-preview-modal {
+  z-index: 1300;
+}
+
+.workflow-block-preview-modal__panel {
+  width: min(96rem, 100%);
+  height: calc(100vh - 3rem);
+  max-height: calc(100vh - 3rem);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.workflow-block-preview-modal__panel .workflow-block-preview,
+.workflow-block-preview-modal__panel .workflow-block-preview__shell {
+  min-height: 0;
+}
+
+.workflow-block-preview-modal__panel .workflow-block-preview__shell {
+  display: flex;
+  flex-direction: column;
+}
+
+.workflow-block-preview-modal__panel .workflow-block-preview__canvas {
+  flex: 1;
+  height: auto;
+  min-height: 0;
 }
 
 .ai-debug-trace {

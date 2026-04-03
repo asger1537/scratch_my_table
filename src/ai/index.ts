@@ -1,4 +1,4 @@
-export { assignWorkflowStepIds, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
+export { assignWorkflowStepIds, buildDraftPreviewWorkflow, formatDraftStepsForDebug, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
 export { appendAIDevLog } from './devLog';
 export {
   DEFAULT_GEMINI_MODEL,
@@ -13,7 +13,6 @@ export {
   buildGeminiContents,
   buildGeminiSystemInstruction,
   buildRepairUserMessage,
-  summarizeDraftStepsForDisplay,
   summarizeWorkflowForPrompt,
 } from './prompt';
 export { runGeminiDraftTurn } from './session';

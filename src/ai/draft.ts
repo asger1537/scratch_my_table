@@ -1,6 +1,6 @@
 import type { Workflow, WorkflowStep } from '../workflow';
 
-import type { WorkflowStepInput } from './types';
+import type { AIDraft, WorkflowStepInput } from './types';
 
 export function assignWorkflowStepIds(stepInputs: WorkflowStepInput[]): WorkflowStep[] {
   const usedIds = new Set<string>();
@@ -33,8 +33,24 @@ export function replaceWorkflowSteps(workflow: Workflow, draftSteps: WorkflowSte
   };
 }
 
+export function buildDraftPreviewWorkflow(workflow: Workflow | null, draft: AIDraft | null): Workflow | null {
+  if (!workflow || !draft) {
+    return null;
+  }
+
+  return replaceWorkflowSteps(workflow, draft.steps);
+}
+
 export function stripWorkflowStepIds(steps: WorkflowStep[]): WorkflowStepInput[] {
   return steps.map(({ id: _id, ...step }) => step as WorkflowStepInput);
+}
+
+export function formatDraftStepsForDebug(draft: AIDraft | null) {
+  if (!draft || draft.steps.length === 0) {
+    return 'No AI draft steps.';
+  }
+
+  return `${JSON.stringify(stripWorkflowStepIds(draft.steps), null, 2)}\n`;
 }
 
 export function summarizeWorkflowSteps(workflow: Workflow): string[] {
