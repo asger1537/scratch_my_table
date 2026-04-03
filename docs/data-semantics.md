@@ -10,7 +10,8 @@ Rules:
 
 - `null` means the source cell had no value.
 - `""` means the source explicitly contained an empty text value.
-- Emptiness-sensitive behavior only treats `null` and `""` as empty.
+- `coalesce(...)` treats only `null` and `""` as empty.
+- `isEmpty(...)` treats `null`, `""`, and whitespace-only strings as empty.
 - `null` is not equal to `""` for equality checks, deduplication, or sort comparison.
 
 ### Whitespace-Only Values
@@ -20,8 +21,8 @@ Whitespace-only text is preserved on import as a string.
 Rules:
 
 - `"   "` is not automatically converted to `null`.
-- whitespace-only strings are not treated as empty by default
-- if a workflow wants whitespace-sensitive emptiness, it must express that directly, for example `isEmpty(trim(column("email")))`
+- whitespace-only strings remain strings on import
+- `isEmpty(...)` treats whitespace-only strings as empty
 - `trim(...)` or `collapseWhitespace(...)` may turn whitespace-only strings into `""`
 
 ## Expression Semantics
@@ -72,7 +73,7 @@ Built-in function semantics:
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
 - `switch(target, match1, result1, ..., defaultResult)`: evaluates `target` and returns the `result` of the first matching `match` value. If no match is found, returns `defaultResult`. Requires an even number of arguments (at least 4).
 - `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
-- `isEmpty(x)`: returns `true` only when `x` is `null` or `""`
+- `isEmpty(x)`: returns `true` when `x` is `null`, `""`, or a whitespace-only string
 - `equals(a, b)`: exact scalar equality
 - `contains(a, b)`: string containment
 - `startsWith(a, b)`: string prefix check

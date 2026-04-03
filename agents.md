@@ -21,7 +21,7 @@ Rules:
 *   **Boolean logic is functional:** Predicates are represented with boolean-returning `call` nodes such as `and`, `or`, `not`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, and `isEmpty`.
 *   **One canonical cell-level step:** Value changes and formatting changes are both represented with `scopedRule`. Do not reintroduce separate `scopedTransform` or `colorCells` runtime steps.
 *   **Editor is not the source of truth:** Blockly is an authoring layer over canonical workflow JSON. Runtime validation and execution operate on canonical IR only.
-*   **Whitespace-sensitive logic is explicit:** Do not introduce special predicate flags for whitespace emptiness. Use function composition such as `isEmpty(trim(column("email")))`.
+*   **Whitespace emptiness is built into `isEmpty`:** Do not introduce special predicate flags for whitespace emptiness. `isEmpty(...)` treats whitespace-only strings as empty.
 
 ## 3. Current Build And Dev Commands
 

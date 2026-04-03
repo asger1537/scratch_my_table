@@ -130,6 +130,7 @@ Type rules:
 - `equals` requires comparable scalar inputs and returns `boolean`
 - `greaterThan` and `lessThan` require ordered comparable scalar inputs and return `boolean`
 - `contains`, `startsWith`, `endsWith`, and `matchesRegex` require string-like inputs and return `boolean`
+- `isEmpty` treats whitespace-only strings as empty
 
 Errors:
 
@@ -178,7 +179,6 @@ Rules:
 - a style-only change still counts as a changed cell in execution metadata
 - preview and XLSX export may use the resulting color state
 - CSV export ignores color state
-- if whitespace-sensitive emptiness is needed, express it explicitly with calls such as `trim(...)` and `isEmpty(...)`
 
 Common capability mappings:
 

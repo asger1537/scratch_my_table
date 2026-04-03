@@ -2218,7 +2218,7 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
         .join('');
     case 'isEmpty': {
       const value = evaluateExpression(expression.args[0], context);
-      return !Array.isArray(value) && isEmptyValue(value);
+      return !Array.isArray(value) && isBlankLikeValue(value);
     }
     case 'not':
       return !Boolean(evaluateExpression(expression.args[0], context));
@@ -2653,6 +2653,10 @@ function getDisplayNameKey(displayName: string) {
 
 function isEmptyValue(value: CellValue) {
   return value === null || value === '';
+}
+
+function isBlankLikeValue(value: CellValue) {
+  return value === null || (typeof value === 'string' && value.trim() === '');
 }
 
 function getComparableCellStyle(style: CellStyle | undefined) {

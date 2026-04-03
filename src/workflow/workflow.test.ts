@@ -218,6 +218,29 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
   });
 
+  it('treats whitespace-only strings as empty for isEmpty filters', () => {
+    const table = loadCsvTable('email\r\n   \r\nalice@example.com\r\n""\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_whitespace_is_empty',
+      name: 'Whitespace is empty',
+      steps: [
+        {
+          id: 'step_keep_empty_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('isEmpty', column('col_email')),
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowOrder).toEqual(['row_1', 'row_3']);
+    expect(execution.removedRowCount).toBe(1);
+  });
+
   it('applies multiple matching scoped-rule cases in order so later matches can add formatting', () => {
     const table = loadCsvTable('email,email_2\r\n,backup@example.com\r\n,\r\nprimary@example.com,\r\n');
     const workflow: Workflow = {
