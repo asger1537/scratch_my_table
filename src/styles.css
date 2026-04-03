@@ -792,7 +792,13 @@ code {
 }
 
 .workflow-editor-canvas .blocklyToolboxCategory {
+  box-sizing: border-box;
   margin-bottom: 0;
+  border-bottom: 3px solid #f8f3ec;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategoryContainer:last-child .blocklyToolboxCategory {
+  border-bottom-width: 0;
 }
 
 .blockly-column-multiselect {
