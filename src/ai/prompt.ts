@@ -161,6 +161,29 @@ const CURATED_EXAMPLES = [
     },
   },
   {
+    user: 'Combine First Name and Last Name into Full Name, then drop the originals.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will create a Full Name column first and only then drop the source name columns.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'combineColumns',
+          columnIds: ['col_first_name', 'col_last_name'],
+          separator: ' ',
+          newColumn: {
+            columnId: 'col_full_name',
+            displayName: 'Full Name',
+          },
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_first_name', 'col_last_name'],
+        },
+      ],
+    },
+  },
+  {
     user: 'Clean the name column.',
     assistant: {
       mode: 'clarify',
@@ -207,7 +230,7 @@ const CURATED_EXAMPLES = [
 ];
 
 export function buildGeminiSystemInstruction(context: AIPromptContext): string {
-  const availableSchema = getAvailableSchemaContextWorkflow(context);
+  const availableSchemaLines = getAvailableSchemaPromptLines(context);
   const workflowSummary = summarizeWorkflowSteps(context.workflow);
   const workflowSteps = context.workflow.steps.length > 0 ? JSON.stringify(stripWorkflowStepIds(context.workflow.steps), null, 2) : '(no steps yet)';
   const draftSummary = context.draft ? JSON.stringify(stripWorkflowStepIds(context.draft.steps), null, 2) : '(no draft yet)';
@@ -220,8 +243,7 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
   const draftSemanticsNote = context.draft
     ? 'There is an existing AI draft. Return the FULL updated workflow step list that should replace that AI draft.'
     : 'There is no AI draft yet. Return the FULL updated workflow step list that should replace the current workflow.';
-
-  return [
+  const promptSections = [
     'You are an expert Scratch My Table copilot.',
     'Translate the user request into canonical Workflow IR v2 draft steps.',
     'Return JSON only. Do not use markdown fences.',
@@ -256,6 +278,8 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     'Expression AST rules:',
     '- expression kinds: value, literal, column, call',
     '- "value" is only valid inside scopedRule.cases[*].when, scopedRule.cases[*].then.value, and scopedRule.defaultPatch.value',
+    '- DO NOT use { "kind": "value" } in deriveColumn.expression, filterRows.condition, or scopedRule.rowCondition; use { "kind": "column", "columnId": "..." } to read row data there',
+    '- sortRows, splitColumn, combineColumns, and deduplicateRows must reference columns through their columnId fields, never through { "kind": "value" }',
     '- "value" is represented exactly as { "kind": "value" } with no extra properties',
     '- null is represented as { "kind": "literal", "value": null }',
     '- filterRows.condition and scopedRule.rowCondition must resolve to boolean expressions',
@@ -263,6 +287,7 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- scopedRule cases are checked top to bottom and every matching case applies in order',
     '- later matching scopedRule cases see the current cell value after earlier matching cases have already applied',
     '- format patches currently support format.fillColor only, as a hex color like "#FFEB9C"',
+    '- CRITICAL: When writing regex patterns in JSON string literals, double-escape backslashes for JSON serialization. Example: the regex \\d+ must appear in JSON as "\\\\d+", and whitespace \\s must appear as "\\\\s"',
     '',
     'Built-in call names:',
     '- logic: equals, contains, startsWith, endsWith, matchesRegex, greaterThan, lessThan, and, or, not, isEmpty',
@@ -271,10 +296,9 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- date/time: now, datePart, dateDiff, dateAdd',
     '',
     'Schema currently available to the returned workflow steps:',
-    ...availableSchema.map((column) => `- ${column.columnId} | ${column.displayName} | ${column.logicalType}`),
-    '',
-    'Current block workspace snapshot:',
-    context.workspacePromptSnapshot || '(live workspace snapshot unavailable)',
+    ...availableSchemaLines,
+    '- Columns marked "mixed" contain incompatible runtime values. Do not use them directly for sortRows or numeric/date math until earlier steps normalize them to one logical type.',
+    '- Columns marked "unknown" may be entirely empty or unresolved. Do not assume numeric or date semantics unless your draft first creates or normalizes those values.',
     '',
     'Current workflow/editor issues:',
     ...currentIssues,
@@ -293,7 +317,19 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
       `Example ${index + 1} user: ${example.user}`,
       `Example ${index + 1} response: ${JSON.stringify(example.assistant)}`,
     ]),
-  ].join('\n');
+  ];
+
+  if (context.workflowContextSource === 'lastValidSnapshot') {
+    promptSections.splice(
+      promptSections.indexOf('Current workflow/editor issues:'),
+      0,
+      'Current block workspace snapshot:',
+      context.workspacePromptSnapshot || '(live workspace snapshot unavailable)',
+      '',
+    );
+  }
+
+  return promptSections.join('\n');
 }
 
 export function buildGeminiContents(messages: AIMessage[], userMessage: AIMessage): GeminiContent[] {
@@ -306,7 +342,10 @@ export function buildGeminiContents(messages: AIMessage[], userMessage: AIMessag
 export function buildRepairUserMessage(
   previousRawText: string,
   issues: Array<{ code: string; path: string; message: string; stepId?: string }>,
+  context: AIPromptContext,
 ) {
+  const availableSchemaLines = getAvailableSchemaPromptLines(context);
+
   return [
     'Your previous draft did not validate locally.',
     'Rewrite the FULL updated workflow step list so it satisfies these issues.',
@@ -330,6 +369,9 @@ export function buildRepairUserMessage(
       null,
       2,
     ),
+    '',
+    'Reminder of available columns:',
+    ...availableSchemaLines,
   ].join('\n');
 }
 
@@ -338,6 +380,10 @@ function getAvailableSchemaContextWorkflow(context: AIPromptContext) {
   const validation = validateWorkflowSemantics(workflowForSchema, context.table);
 
   return validation.valid ? validation.finalSchema.columns : context.table.schema.columns;
+}
+
+function getAvailableSchemaPromptLines(context: AIPromptContext) {
+  return getAvailableSchemaContextWorkflow(context).map((column) => `- ${column.columnId} | ${column.displayName} | ${column.logicalType}`);
 }
 
 export function summarizeDraftStepsForDisplay(draft: AIDraft | null) {

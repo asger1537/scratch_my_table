@@ -1,5 +1,5 @@
 Project overview
-Generated: 2026-03-31 10:12:35 +02:00
+Generated: 2026-04-03 18:19:54 +02:00
 
 Included files
 --------------
@@ -33,6 +33,7 @@ src\domain\workbookIO.ts
 src\domain\xlsx.ts
 src\editor\authoring.ts
 src\editor\blocks.ts
+src\editor\FieldColorInput.test.ts
 src\editor\FieldColorInput.ts
 src\editor\FieldColumnMultiSelect.ts
 src\editor\FieldCommentInput.ts
@@ -88,7 +89,7 @@ Rules:
 *   **Boolean logic is functional:** Predicates are represented with boolean-returning `call` nodes such as `and`, `or`, `not`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, and `isEmpty`.
 *   **One canonical cell-level step:** Value changes and formatting changes are both represented with `scopedRule`. Do not reintroduce separate `scopedTransform` or `colorCells` runtime steps.
 *   **Editor is not the source of truth:** Blockly is an authoring layer over canonical workflow JSON. Runtime validation and execution operate on canonical IR only.
-*   **Whitespace-sensitive logic is explicit:** Do not introduce special predicate flags for whitespace emptiness. Use function composition such as `isEmpty(trim(column("email")))`.
+*   **Whitespace emptiness is built into `isEmpty`:** Do not introduce special predicate flags for whitespace emptiness. `isEmpty(...)` treats whitespace-only strings as empty.
 
 ## 3. Current Build And Dev Commands
 
@@ -111,7 +112,7 @@ Notes:
 
 ## Purpose
 
-V1 operates on one active table at a time. Imported files, authoring state, preview state, and run results all normalize to the same canonical model so validation and execution do not depend on UI shape.
+The app operates on one active table at a time. Imported files, authoring state, preview state, and run results all normalize to the same canonical model so validation and execution do not depend on UI shape.
 
 ## Core Entities
 
@@ -132,11 +133,11 @@ Rules:
 
 - A CSV file becomes a workbook with exactly one table.
 - An XLSX file becomes a workbook with one table per imported sheet.
-- V1 workflows run against `activeTableId` only.
+- Workflows run against `activeTableId` only.
 
 ### Active Table
 
-A `table` is the only runtime unit for V1 workflows.
+A `table` is the only runtime unit for workflow execution.
 
 Required fields:
 
@@ -180,7 +181,7 @@ Rules:
 
 A `column` is identified by `columnId`, not by `displayName`.
 
-V1 identifier rule:
+Identifier rules:
 
 - Imported columns receive deterministic IDs derived from the normalized import display name.
 - The format is `col_<slug>`, where the slug is lowercase and uses underscores between alphanumeric segments.
@@ -198,7 +199,7 @@ Required fields:
 - `rowId`: stable internal identifier
 - `cellsByColumnId`: map of `columnId` to cell value
 
-V1 identifier rule:
+Identifier rules:
 
 - Imported rows receive deterministic IDs based on source order, such as `row_1`, `row_2`, and `row_3`.
 - The `row ID` remains stable even if the row later moves in `rowOrder`.
@@ -217,14 +218,14 @@ Canonical cell values are JSON-compatible scalars:
 Rules:
 
 - Dates and datetimes are stored as ISO-8601 strings and distinguished by column `logicalType`.
-- A cell has no separate user-visible identifier in V1.
-- Formula text is not part of the canonical cell model for V1; only imported values are preserved.
+- A cell has no separate user-visible identifier.
+- Formula text is not part of the canonical cell model; only imported values are preserved.
 
 ### Selection
 
 A `selection` is transient authoring state, not the source of truth.
 
-V1 selection shapes:
+Selection shapes:
 
 - column selection: ordered `columnId[]`
 - row selection: ordered `rowId[]`
@@ -296,7 +297,7 @@ XLSX import rules:
 - Data rows begin immediately after the selected header row.
 - For multiline header cells, the first non-empty visual line is used to derive `displayName` and `columnId`.
 - The user selects exactly one sheet as the active table.
-- V1 ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
+- Import ignores workbook formulas, formatting, charts, macros, and sheet relationships beyond cell values.
 
 ## Stable Identity Requirements
 
@@ -325,7 +326,7 @@ Minimum warning object:
 - `columnId`: optional when warning is column-specific
 - `rowId`: optional when warning is cell-specific
 
-Required warning scenarios for V1:
+Required warning scenarios:
 
 - duplicate header names were normalized
 - blank header names were generated
@@ -380,13 +381,12 @@ Required warning scenarios for V1:
 
 ### Null vs Empty String
 
-V1 preserves `null` and empty string as different values.
-
 Rules:
 
 - `null` means the source cell had no value.
 - `""` means the source explicitly contained an empty text value.
-- Emptiness-sensitive behavior only treats `null` and `""` as empty.
+- `coalesce(...)` treats only `null` and `""` as empty.
+- `isEmpty(...)` treats `null`, `""`, and whitespace-only strings as empty.
 - `null` is not equal to `""` for equality checks, deduplication, or sort comparison.
 
 ### Whitespace-Only Values
@@ -396,8 +396,8 @@ Whitespace-only text is preserved on import as a string.
 Rules:
 
 - `"   "` is not automatically converted to `null`.
-- whitespace-only strings are not treated as empty by default
-- if a workflow wants whitespace-sensitive emptiness, it must express that directly, for example `isEmpty(trim(column("email")))`
+- whitespace-only strings remain strings on import
+- `isEmpty(...)` treats whitespace-only strings as empty
 - `trim(...)` or `collapseWhitespace(...)` may turn whitespace-only strings into `""`
 
 ## Expression Semantics
@@ -414,6 +414,9 @@ Expression node kinds:
 Rules:
 
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
+- during `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied
+- `value` is represented exactly as `{ "kind": "value" }`
+- `null` is represented as `{ "kind": "literal", "value": null }`
 - `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
 - `literal` may be `string`, `number`, `boolean`, or `null`
 - `call` applies one built-in pure function
@@ -448,7 +451,7 @@ Built-in function semantics:
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
 - `switch(target, match1, result1, ..., defaultResult)`: evaluates `target` and returns the `result` of the first matching `match` value. If no match is found, returns `defaultResult`. Requires an even number of arguments (at least 4).
 - `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
-- `isEmpty(x)`: returns `true` only when `x` is `null` or `""`
+- `isEmpty(x)`: returns `true` when `x` is `null`, `""`, or a whitespace-only string
 - `equals(a, b)`: exact scalar equality
 - `contains(a, b)`: string containment
 - `startsWith(a, b)`: string prefix check
@@ -478,7 +481,7 @@ Determinism rules:
 
 - Functions are pure and deterministic.
 - No function mutates other cells, rows, or schema.
-- V1 does not support user-defined functions, loops, or recursion.
+- Workflow IR v2 does not support user-defined functions, loops, or recursion.
 
 ## Cell Formatting Semantics
 
@@ -535,8 +538,6 @@ Rules:
 6. `columnId` is generated separately and does not depend on later renames.
 
 ## Formulas on Import
-
-V1 imports spreadsheet formulas as values only.
 
 Rules:
 
@@ -739,15 +740,15 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 - File: `23-highlight-vip-fields.workflow.json`
 - Uses `scopedRule` with a format patch to highlight `status` and `balance` for rows where `VIP?` is `true`.
 
-## 24. Scoped Rule Single Action
+## 24. Scoped Rule With Default Patch
 
 - File: `24-scoped-rule-single-action.workflow.json`
-- Shows the compact single-action authoring shape: one `defaultPatch` that both normalizes VIP `status` cells and fills them with a highlight color.
+- Shows a default-only `scopedRule`: one `defaultPatch` both normalizes VIP `status` cells and fills them with a highlight color.
 
 ## 25. Scoped Rule Cases
 
 - File: `25-scoped-rule-cases.workflow.json`
-- Shows the cases-mode authoring shape: ordered `cases` with first-match-wins semantics plus a `defaultPatch` fallback for `status`.
+- Shows ordered `cases` with cumulative matching semantics plus a `defaultPatch` fallback for `status`.
 
 ===== docs\validation-rules.md =====
 # Validation Rules
@@ -840,6 +841,8 @@ Workflow IR v2 uses one shared expression AST:
 Rules:
 
 - `value` is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
+- `value` is represented exactly as `{ "kind": "value" }`
+- `null` must be represented as `{ "kind": "literal", "value": null }`
 - `column` is valid anywhere row-scoped expressions are evaluated
 - `literal` is always structurally valid
 - `call` must use one supported built-in function name and the correct arity
@@ -882,6 +885,7 @@ Type rules:
 - `equals` requires comparable scalar inputs and returns `boolean`
 - `greaterThan` and `lessThan` require ordered comparable scalar inputs and return `boolean`
 - `contains`, `startsWith`, `endsWith`, and `matchesRegex` require string-like inputs and return `boolean`
+- `isEmpty` treats whitespace-only strings as empty
 
 Errors:
 
@@ -915,7 +919,7 @@ Valid when:
 - every `cases[*].when` expression resolves to boolean
 - every `cases[*].then` and `defaultPatch`, if present, defines at least one of `value` or `format`
 - every patch `value`, if present, resolves to a scalar cell value
-- every `format.fillColor`, if present, is a valid 6-digit hex color such as `#fff2cc`
+- every `format.fillColor`, if present, is a valid 6-digit hex color such as `#ffeb9c`
 - all value-producing branches are type-compatible for each targeted column
 
 Rules:
@@ -923,21 +927,21 @@ Rules:
 - `rowCondition` is evaluated against the current row before any targeted cell work
 - `value` is evaluated as the current selected cell
 - `column` may read any existing column from the current row
-- cases are checked top to bottom and first match wins
+- cases are checked top to bottom and every matching case applies in order
+- later matching cases see the current cell value after earlier matching cases have already applied
 - `defaultPatch`, if present, applies when no case matches
 - patches may change value only, format only, or both
 - format-only rules do not change schema
 - a style-only change still counts as a changed cell in execution metadata
 - preview and XLSX export may use the resulting color state
 - CSV export ignores color state
-- if whitespace-sensitive emptiness is needed, express it explicitly with calls such as `trim(...)` and `isEmpty(...)`
 
 Common capability mappings:
 
 - fill empty cells: `defaultPatch.value = coalesce(value, <literal>)`
 - fill empty trimmed text: `defaultPatch.value = coalesce(trim(value), <literal>)`
 - normalize text: `defaultPatch.value = lower(trim(value))`
-- highlight cells: `defaultPatch.format.fillColor = "#fff2cc"`
+- highlight cells: `defaultPatch.format.fillColor = "#ffeb9c"`
 - transform and highlight together: use both `then.value` and `then.format` in the same matching case
 
 Errors:
@@ -1086,7 +1090,7 @@ Errors:
 ## Incompatible-Type Behavior
 
 - Semantic incompatibility is a validation error, not a warning.
-- V1 does not silently cast target columns for in-place operations.
+- The runtime does not silently cast target columns for in-place operations.
 - Intentional stringification operations are `concat` and `combineColumns`.
 
 ===== docs\workflow-ir-v2.md =====
@@ -1151,7 +1155,7 @@ Step types:
 - `deduplicateRows`
 - `sortRows`
 
-V1 capability mapping:
+Common capability mappings:
 
 - fill empty cells: `scopedRule` with `defaultPatch.value = coalesce(value, <literal>)`
 - trim / normalize text: `scopedRule` with `defaultPatch.value = lower(trim(value))`
@@ -1179,6 +1183,9 @@ Expression kinds:
 Rules:
 
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`.
+  During `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied.
+- `value` is represented exactly as `{ "kind": "value" }`.
+- `null` is represented as `{ "kind": "literal", "value": null }`.
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
@@ -1327,7 +1334,8 @@ Rules:
 - `rowCondition` uses the shared expression AST and must resolve to a boolean value
 - if `rowCondition` is omitted, all rows are eligible
 - `cases[*].when` uses the shared expression AST and must resolve to a boolean value
-- cases are checked top to bottom and first match wins
+- cases are checked top to bottom and every matching case applies in order
+- later matching cases can refine the value or formatting produced by earlier matching cases
 - `defaultPatch`, if present, applies when no case matches
 - patches may contain:
   - `value` optional
@@ -1369,7 +1377,7 @@ Example:
           ]
         },
         "format": {
-          "fillColor": "#fff2cc"
+          "fillColor": "#ffeb9c"
         }
       }
     }
@@ -2149,7 +2157,7 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
 ===== src\ai\ai.test.ts =====
 import { describe, expect, it, vi } from 'vitest';
 
-import { appendDraftStepsToWorkflow, assignWorkflowStepIds, buildGeminiSystemInstruction, parseGeminiWorkflowResponse, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
+import { assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, generateGeminiDraftTurn, parseGeminiWorkflowResponse, replaceWorkflowSteps, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
@@ -2160,9 +2168,152 @@ describe('AI workflow copilot helpers', () => {
     const instruction = buildGeminiSystemInstruction(context);
 
     expect(instruction).toContain('col_email | Email | string');
+    expect(instruction).toContain('Current block workspace snapshot:');
+    expect(instruction).toContain('Current workflow/editor issues:');
+    expect(instruction).toContain('Current workflow steps without IDs:');
     expect(instruction).toContain('Current workflow summary:');
     expect(instruction).toContain('scopedRule on col_email');
+    expect(instruction).toContain('Never return mode "draft" with an empty steps array.');
+    expect(instruction).toContain('If Email is empty, use Email (2), then drop Email (2).');
+    expect(instruction).toContain('Use Email first, fall back to Email (2), and if both are empty color the final email cell red.');
+    expect(instruction).toContain('scopedRule cases are checked top to bottom and every matching case applies in order');
+    expect(instruction).toContain('null is represented as { "kind": "literal", "value": null }');
+    expect(instruction).toContain('The returned steps are a full workflow replacement candidate.');
     expect(instruction).not.toContain('alice@example.com');
+  });
+
+  it('includes live workspace issues when the canonical workflow falls back to the last valid snapshot', () => {
+    const context = createPromptContext();
+
+    context.workflowContextSource = 'lastValidSnapshot';
+    context.currentIssues = [
+      {
+        code: 'missingColumns',
+        message: "Block 'scoped_rule_cases_step' must target at least one column.",
+      },
+    ];
+
+    const instruction = buildGeminiSystemInstruction(context);
+
+    expect(instruction).toContain('last valid snapshot');
+    expect(instruction).toContain("missingColumns: Block 'scoped_rule_cases_step' must target at least one column.");
+    expect(instruction).toContain('"type": "scoped_rule_cases_step"');
+  });
+
+  it('builds a replayable Gemini request export without including the API key in the payload', () => {
+    const context = createPromptContext();
+    const settings = createAISettings();
+    const userMessage = {
+      role: 'user' as const,
+      text: 'Normalize the email column.',
+      timestamp: '2026-03-31T09:00:00.000Z',
+    };
+
+    const requestExport = buildGeminiRequestExport({
+      settings,
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+
+    expect(requestExport.phase).toBe('initial');
+    expect(requestExport.model).toBe('gemini-2.5-flash');
+    expect(requestExport.systemInstructionText).toContain('Current workflow summary:');
+    expect(requestExport.contents).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'Normalize the email column.' }],
+      },
+    ]);
+    expect(requestExport.requestBody.systemInstruction.parts[0]?.text).toBe(requestExport.systemInstructionText);
+    expect(requestExport.requestBody.contents).toEqual(requestExport.contents);
+    expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(1024);
+    expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
+    const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as {
+      oneOf?: Array<Record<string, unknown>>;
+    };
+    const draftResponseSchema = responseJsonSchema.oneOf?.[1];
+    const draftStepSchemas = (draftResponseSchema?.properties as {
+      steps?: { items?: { oneOf?: Array<Record<string, unknown>> } };
+    } | undefined)?.steps?.items?.oneOf;
+
+    expect(draftStepSchemas).toHaveLength(10);
+    expect(
+      draftStepSchemas?.every((variant) => {
+        const required = Array.isArray(variant.required) ? variant.required : [];
+        const properties = variant.properties as Record<string, unknown> | undefined;
+        const typeProperty = properties?.type as { const?: string } | undefined;
+
+        return required.includes('type') && !required.includes('id') && !properties?.id && typeof typeProperty?.const === 'string';
+      }),
+    ).toBe(true);
+    expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
+  });
+
+  it('maps the thinking toggle onto Gemini 2.5 and Gemini 3 request configs', () => {
+    const context = createPromptContext();
+    const userMessage = {
+      role: 'user' as const,
+      text: 'Normalize the email column.',
+      timestamp: '2026-03-31T09:00:00.000Z',
+    };
+
+    const flashThinkingOnExport = buildGeminiRequestExport({
+      settings: {
+        ...createAISettings(),
+        thinkingEnabled: true,
+      },
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+    const flashLiteThinkingOffExport = buildGeminiRequestExport({
+      settings: {
+        ...createAISettings(),
+        model: 'gemini-3.1-flash-lite-preview',
+      },
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+    const flashLiteThinkingOnExport = buildGeminiRequestExport({
+      settings: {
+        ...createAISettings(),
+        model: 'gemini-3.1-flash-lite-preview',
+        thinkingEnabled: true,
+      },
+      context,
+      userMessage,
+      phase: 'initial',
+    });
+
+    expect(flashThinkingOnExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: -1 });
+    expect(flashLiteThinkingOffExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'minimal' });
+    expect(flashLiteThinkingOnExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingLevel: 'high' });
+  });
+
+  it('surfaces malformed Gemini HTTP bodies with a compact preview', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () => '{"candidates":[{"content":{"parts":[{"text":"ok"}]}}',
+    } as Response);
+
+    await expect(
+      generateGeminiDraftTurn(
+        {
+          settings: createAISettings(),
+          context: createPromptContext(),
+          userMessage: {
+            role: 'user',
+            text: 'Normalize the email column.',
+            timestamp: '2026-03-31T09:00:00.000Z',
+          },
+          phase: 'initial',
+        },
+        fetchFn,
+      ),
+    ).rejects.toThrow('Gemini returned an invalid JSON HTTP response body.');
   });
 
   it('parses clarify and draft Gemini responses and rejects malformed payloads', () => {
@@ -2188,7 +2339,7 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
-  it('assigns deterministic draft step ids and appends draft steps instead of replacing the workflow', () => {
+  it('assigns deterministic draft step ids and replaces the workflow step list', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_ai',
@@ -2206,7 +2357,7 @@ describe('AI workflow copilot helpers', () => {
         },
       ],
     };
-    const draftSteps = assignWorkflowStepIds(workflow, [
+    const draftSteps = assignWorkflowStepIds([
       {
         type: 'filterRows',
         mode: 'keep',
@@ -2220,17 +2371,94 @@ describe('AI workflow copilot helpers', () => {
         },
       },
     ]);
-    const appendedWorkflow = appendDraftStepsToWorkflow(workflow, draftSteps);
+    const replacedWorkflow = replaceWorkflowSteps(workflow, draftSteps);
 
     expect(draftSteps).toEqual([
       expect.objectContaining({
-        id: 'step_filter_rows_2',
+        id: 'step_filter_rows_1',
         type: 'filterRows',
       }),
     ]);
-    expect(appendedWorkflow.steps).toHaveLength(2);
-    expect(appendedWorkflow.steps[0].id).toBe('step_filter_rows_1');
-    expect(appendedWorkflow.steps[1].id).toBe('step_filter_rows_2');
+    expect(replacedWorkflow.steps).toHaveLength(1);
+    expect(replacedWorkflow.workflowId).toBe('wf_ai');
+    expect(replacedWorkflow.steps[0].id).toBe('step_filter_rows_1');
+  });
+
+  it('validates AI drafts as full workflow replacements instead of appending them', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          '{"mode":"draft","assistantMessage":"I will update the existing fallback rule so it colors those cells yellow.","assumptions":[],"steps":[{"type":"scopedRule","columnIds":["col_email"],"cases":[{"when":{"kind":"call","name":"isEmpty","args":[{"kind":"value"}]},"then":{"value":{"kind":"column","columnId":"col_email_2"},"format":{"fillColor":"#FFEB9C"}}}]},{"type":"dropColumns","columnIds":["col_email_2"]}]}',
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([]);
+    const context = createPromptContext();
+
+    context.workflow.steps = [
+      {
+        id: 'step_scoped_rule_1',
+        type: 'scopedRule',
+        columnIds: ['col_email'],
+        cases: [
+          {
+            when: {
+              kind: 'call',
+              name: 'isEmpty',
+              args: [{ kind: 'value' }],
+            },
+            then: {
+              value: {
+                kind: 'column',
+                columnId: 'col_email_2',
+              },
+            },
+          },
+        ],
+      },
+      {
+        id: 'step_drop_columns_1',
+        type: 'dropColumns',
+        columnIds: ['col_email_2'],
+      },
+    ];
+    context.table.schema.columns.push({
+      columnId: 'col_email_2',
+      displayName: 'Email (2)',
+      logicalType: 'string',
+      nullable: true,
+      sourceIndex: 2,
+      missingCount: 2,
+    });
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context,
+      userText: 'Color cells yellow when Email (2) was used.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(validateCandidateWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [
+          expect.objectContaining({ id: 'step_scoped_rule_1', type: 'scopedRule' }),
+          expect.objectContaining({ id: 'step_drop_columns_1', type: 'dropColumns' }),
+        ],
+      }),
+    );
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        repaired: false,
+        draft: expect.objectContaining({
+          steps: [
+            expect.objectContaining({ id: 'step_scoped_rule_1', type: 'scopedRule' }),
+            expect.objectContaining({ id: 'step_drop_columns_1', type: 'dropColumns' }),
+          ],
+        }),
+      }),
+    );
   });
 
   it('repairs one invalid Gemini draft turn and keeps the validated draft only after the retry passes', async () => {
@@ -2387,7 +2615,7 @@ describe('AI workflow copilot helpers', () => {
         }),
         draft: expect.objectContaining({
           steps: [
-            expect.objectContaining({ id: 'step_scoped_rule_2', type: 'scopedRule' }),
+            expect.objectContaining({ id: 'step_scoped_rule_1', type: 'scopedRule' }),
             expect.objectContaining({ id: 'step_drop_columns_1', type: 'dropColumns' }),
           ],
         }),
@@ -2428,6 +2656,27 @@ function createPromptContext(): AIPromptContext {
     workflow,
     draft: null,
     messages: [],
+    currentIssues: [],
+    workflowContextSource: 'current',
+    workspacePromptSnapshot: `${JSON.stringify(
+      {
+        metadata: {
+          workflowId: 'wf_ai',
+          name: 'AI test',
+          description: '',
+        },
+        topBlocks: [
+          {
+            type: 'scoped_rule_cases_step',
+            fields: {
+              COLUMN_IDS: 'col_email',
+            },
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
   };
 }
 
@@ -2474,22 +2723,26 @@ function createAISettings(): AISettings {
   return {
     apiKey: 'test-key',
     model: 'gemini-2.5-flash',
+    thinkingEnabled: false,
   };
 }
 
 function createGeminiResponse(text: string): Response {
+  const payload = {
+    candidates: [
+      {
+        content: {
+          parts: [{ text }],
+        },
+      },
+    ],
+  };
+
   return {
     ok: true,
     status: 200,
-    json: async () => ({
-      candidates: [
-        {
-          content: {
-            parts: [{ text }],
-          },
-        },
-      ],
-    }),
+    text: async () => JSON.stringify(payload),
+    json: async () => payload,
   } as Response;
 }
 
@@ -2524,8 +2777,8 @@ import type { Workflow, WorkflowStep } from '../workflow';
 
 import type { WorkflowStepInput } from './types';
 
-export function assignWorkflowStepIds(workflow: Workflow, stepInputs: WorkflowStepInput[]): WorkflowStep[] {
-  const usedIds = new Set(workflow.steps.map((step) => step.id));
+export function assignWorkflowStepIds(stepInputs: WorkflowStepInput[]): WorkflowStep[] {
+  const usedIds = new Set<string>();
   const nextCounterByType = new Map<string, number>();
 
   return stepInputs.map((stepInput) => {
@@ -2548,10 +2801,10 @@ export function assignWorkflowStepIds(workflow: Workflow, stepInputs: WorkflowSt
   });
 }
 
-export function appendDraftStepsToWorkflow(workflow: Workflow, draftSteps: WorkflowStep[]): Workflow {
+export function replaceWorkflowSteps(workflow: Workflow, draftSteps: WorkflowStep[]): Workflow {
   return {
     ...workflow,
-    steps: [...workflow.steps, ...draftSteps],
+    steps: draftSteps,
   };
 }
 
@@ -2621,74 +2874,82 @@ interface GeminiGenerateContentResponse {
   };
 }
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_REQUEST_TIMEOUT_MS = 45000;
+type GeminiResponseJsonSchema = Record<string, unknown>;
+type GeminiThinkingConfig =
+  | {
+      thinkingBudget: number;
+    }
+  | {
+      thinkingLevel: 'minimal' | 'high';
+    };
 
-const GEMINI_RESPONSE_JSON_SCHEMA = {
-  type: 'object',
-  properties: {
-    mode: {
-      type: 'string',
-      enum: ['clarify', 'draft'],
-    },
-    assistantMessage: {
-      type: 'string',
-    },
-    assumptions: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-    },
-    steps: {
-      type: 'array',
-      items: {
-        type: 'object',
-      },
-    },
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+export const GEMINI_MODEL_OPTIONS = [
+  {
+    value: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
   },
-  required: ['mode', 'assistantMessage', 'assumptions'],
-};
+  {
+    value: 'gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash-Lite',
+  },
+  {
+    value: 'gemini-3.1-flash-lite-preview',
+    label: 'Gemini 3.1 Flash-Lite Preview',
+  },
+] as const;
+const GEMINI_MODEL_OPTION_VALUES = new Set<string>(GEMINI_MODEL_OPTIONS.map((option) => option.value));
+const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
+const GEMINI_MAX_OUTPUT_TOKENS = 1024;
+const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
+
+export interface GeminiRequestExport {
+  exportedAt: string;
+  phase: 'initial' | 'repair';
+  model: string;
+  requestUrl: string;
+  systemInstructionText: string;
+  contents: ReturnType<typeof buildGeminiContents>;
+  requestBody: {
+    systemInstruction: {
+      parts: Array<{ text: string }>;
+    };
+    contents: ReturnType<typeof buildGeminiContents>;
+    generationConfig: {
+      responseMimeType: 'application/json';
+      responseJsonSchema: GeminiResponseJsonSchema;
+      temperature: number;
+      maxOutputTokens: number;
+      thinkingConfig?: GeminiThinkingConfig;
+    };
+  };
+}
 
 export async function generateGeminiDraftTurn(
   input: GeminiDraftTurnInput,
   fetchFn: typeof fetch = fetch,
 ): Promise<GeminiDraftTurnResult> {
+  const requestExport = buildGeminiRequestExport(input);
   const abortController = new AbortController();
-  const timeoutId = globalThis.setTimeout(() => {
+  const timeoutId = setTimeout(() => {
     abortController.abort();
   }, GEMINI_REQUEST_TIMEOUT_MS);
 
   try {
     emitLogEvent(input, 'request_started', 'Gemini request started.');
-    const response = await fetchFn(buildGeminiUrl(input.settings.model), {
+    const response = await fetchFn(requestExport.requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-goog-api-key': input.settings.apiKey,
       },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: buildGeminiSystemInstruction(input.context) }],
-        },
-        contents: buildGeminiContents(input.context.messages, input.userMessage),
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: GEMINI_RESPONSE_JSON_SCHEMA,
-          temperature: 0.2,
-        },
-      }),
+      body: JSON.stringify(requestExport.requestBody),
       signal: abortController.signal,
     });
-    const payload = (await response.json()) as GeminiGenerateContentResponse;
+    const payload = parseGeminiHttpResponseBody(await response.text());
 
     if (!response.ok) {
-      const errorMessage = payload.error?.message ?? `Gemini request failed with status ${response.status}.`;
-
-      emitLogEvent(input, 'request_failed', errorMessage, {
-        error: errorMessage,
-      });
-      throw new Error(errorMessage);
+      throw new Error(payload.error?.message ?? `Gemini request failed with status ${response.status}.`);
     }
 
     const rawText = extractGeminiText(payload);
@@ -2707,7 +2968,7 @@ export async function generateGeminiDraftTurn(
     };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      const timeoutMessage = `Gemini request timed out after ${Math.round(GEMINI_REQUEST_TIMEOUT_MS / 1000)} seconds.`;
+      const timeoutMessage = `Gemini request timed out after ${Math.floor(GEMINI_REQUEST_TIMEOUT_MS / 1000)} seconds.`;
 
       emitLogEvent(input, 'request_failed', timeoutMessage, {
         error: timeoutMessage,
@@ -2720,8 +2981,37 @@ export async function generateGeminiDraftTurn(
     });
     throw error;
   } finally {
-    globalThis.clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   }
+}
+
+export function buildGeminiRequestExport(input: GeminiDraftTurnInput): GeminiRequestExport {
+  const systemInstructionText = buildGeminiSystemInstruction(input.context);
+  const contents = buildGeminiContents(input.context.messages, input.userMessage);
+  const normalizedModel = normalizeGeminiModel(input.settings.model);
+  const thinkingConfig = buildThinkingConfig(normalizedModel, input.settings.thinkingEnabled);
+
+  return {
+    exportedAt: new Date().toISOString(),
+    phase: input.phase ?? 'initial',
+    model: normalizedModel,
+    requestUrl: buildGeminiUrl(normalizedModel),
+    systemInstructionText,
+    contents,
+    requestBody: {
+      systemInstruction: {
+        parts: [{ text: systemInstructionText }],
+      },
+      contents,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: GEMINI_RESPONSE_JSON_SCHEMA,
+        temperature: 0.2,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        ...(thinkingConfig ? { thinkingConfig } : {}),
+      },
+    },
+  };
 }
 
 export function parseGeminiWorkflowResponse(rawText: string): GeminiWorkflowResponse {
@@ -2788,9 +3078,353 @@ function stripJsonCodeFence(value: string) {
   return trimmed;
 }
 
+function parseGeminiHttpResponseBody(rawBody: string): GeminiGenerateContentResponse {
+  try {
+    return JSON.parse(rawBody) as GeminiGenerateContentResponse;
+  } catch {
+    const compactPreview = rawBody.replace(/\s+/g, ' ').trim().slice(0, 280);
+    throw new Error(
+      compactPreview === ''
+        ? 'Gemini returned an invalid empty HTTP response body.'
+        : `Gemini returned an invalid JSON HTTP response body. Preview: ${compactPreview}`,
+    );
+  }
+}
+
 function buildGeminiUrl(model: string) {
-  const normalizedModel = model.trim().replace(/^models\//, '') || DEFAULT_GEMINI_MODEL;
+  const normalizedModel = normalizeGeminiModel(model);
   return `https://generativelanguage.googleapis.com/v1beta/models/${normalizedModel}:generateContent`;
+}
+
+function normalizeGeminiModel(model: string) {
+  return model.trim().replace(/^models\//, '') || DEFAULT_GEMINI_MODEL;
+}
+
+export function normalizeGeminiModelSelection(model: string) {
+  const normalizedModel = normalizeGeminiModel(model);
+  return GEMINI_MODEL_OPTION_VALUES.has(normalizedModel) ? normalizedModel : DEFAULT_GEMINI_MODEL;
+}
+
+function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThinkingConfig | undefined {
+  const normalizedModel = model.toLowerCase();
+
+  if (normalizedModel.startsWith('gemini-2.5-flash')) {
+    return {
+      thinkingBudget: thinkingEnabled ? -1 : 0,
+    };
+  }
+
+  if (normalizedModel.startsWith('gemini-3') && normalizedModel.includes('flash')) {
+    return {
+      thinkingLevel: thinkingEnabled ? 'high' : 'minimal',
+    };
+  }
+
+  return undefined;
+}
+
+function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
+  const stringSchema = {
+    type: 'string',
+    minLength: 1,
+  };
+  const stringArraySchema = {
+    type: 'array',
+    minItems: 1,
+    items: stringSchema,
+  };
+  const scalarSchema = {
+    type: ['string', 'number', 'boolean', 'null'],
+  };
+  const expressionSchema = {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      kind: {
+        type: 'string',
+        enum: ['value', 'literal', 'column', 'call'],
+      },
+      value: scalarSchema,
+      columnId: stringSchema,
+      name: stringSchema,
+      args: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+        },
+      },
+    },
+    required: ['kind'],
+  };
+  const cellFormatPatchSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      fillColor: {
+        type: 'string',
+      },
+    },
+  };
+  const cellPatchSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      value: expressionSchema,
+      format: cellFormatPatchSchema,
+    },
+    anyOf: [
+      {
+        required: ['value'],
+      },
+      {
+        required: ['format'],
+      },
+    ],
+  };
+  const columnSpecSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      columnId: stringSchema,
+      displayName: stringSchema,
+    },
+    required: ['columnId', 'displayName'],
+  };
+  const sortKeySchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      columnId: stringSchema,
+      direction: {
+        type: 'string',
+        enum: ['asc', 'desc'],
+      },
+    },
+    required: ['columnId', 'direction'],
+  };
+  const ruleCaseSchema = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      when: expressionSchema,
+      then: cellPatchSchema,
+    },
+    required: ['when', 'then'],
+  };
+  const draftStepSchemas = [
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'comment',
+        },
+        text: stringSchema,
+      },
+      required: ['type', 'text'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'scopedRule',
+        },
+        columnIds: stringArraySchema,
+        rowCondition: expressionSchema,
+        cases: {
+          type: 'array',
+          minItems: 1,
+          items: ruleCaseSchema,
+        },
+        defaultPatch: cellPatchSchema,
+      },
+      required: ['type', 'columnIds'],
+      anyOf: [
+        {
+          required: ['cases'],
+        },
+        {
+          required: ['defaultPatch'],
+        },
+      ],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'dropColumns',
+        },
+        columnIds: stringArraySchema,
+      },
+      required: ['type', 'columnIds'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'renameColumn',
+        },
+        columnId: stringSchema,
+        newDisplayName: stringSchema,
+      },
+      required: ['type', 'columnId', 'newDisplayName'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'deriveColumn',
+        },
+        newColumn: columnSpecSchema,
+        expression: expressionSchema,
+      },
+      required: ['type', 'newColumn', 'expression'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'filterRows',
+        },
+        mode: {
+          type: 'string',
+          enum: ['keep', 'drop'],
+        },
+        condition: expressionSchema,
+      },
+      required: ['type', 'mode', 'condition'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'splitColumn',
+        },
+        columnId: stringSchema,
+        delimiter: stringSchema,
+        outputColumns: {
+          type: 'array',
+          minItems: 2,
+          items: columnSpecSchema,
+        },
+      },
+      required: ['type', 'columnId', 'delimiter', 'outputColumns'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'combineColumns',
+        },
+        columnIds: {
+          type: 'array',
+          minItems: 2,
+          items: stringSchema,
+        },
+        separator: {
+          type: 'string',
+        },
+        newColumn: columnSpecSchema,
+      },
+      required: ['type', 'columnIds', 'separator', 'newColumn'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'deduplicateRows',
+        },
+        columnIds: stringArraySchema,
+      },
+      required: ['type', 'columnIds'],
+    },
+    {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        type: {
+          type: 'string',
+          const: 'sortRows',
+        },
+        sorts: {
+          type: 'array',
+          minItems: 1,
+          items: sortKeySchema,
+        },
+      },
+      required: ['type', 'sorts'],
+    },
+  ];
+
+  return {
+    oneOf: [
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          mode: {
+            type: 'string',
+            const: 'clarify',
+          },
+          assistantMessage: {
+            type: 'string',
+          },
+          assumptions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+        },
+        required: ['mode', 'assistantMessage', 'assumptions'],
+      },
+      {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          mode: {
+            type: 'string',
+            const: 'draft',
+          },
+          assistantMessage: {
+            type: 'string',
+          },
+          assumptions: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+          steps: {
+            type: 'array',
+            minItems: 1,
+            items: {
+              oneOf: draftStepSchemas,
+            },
+          },
+        },
+        required: ['mode', 'assistantMessage', 'assumptions', 'steps'],
+      },
+    ],
+  };
 }
 
 function emitLogEvent(
@@ -2809,9 +3443,17 @@ function emitLogEvent(
 }
 
 ===== src\ai\index.ts =====
-export { assignWorkflowStepIds, appendDraftStepsToWorkflow, stripWorkflowStepIds } from './draft';
+export { assignWorkflowStepIds, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
 export { appendAIDevLog } from './devLog';
-export { DEFAULT_GEMINI_MODEL, generateGeminiDraftTurn, parseGeminiWorkflowResponse } from './gemini';
+export {
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_OPTIONS,
+  buildGeminiRequestExport,
+  generateGeminiDraftTurn,
+  normalizeGeminiModelSelection,
+  parseGeminiWorkflowResponse,
+} from './gemini';
+export type { GeminiRequestExport } from './gemini';
 export {
   buildGeminiContents,
   buildGeminiSystemInstruction,
@@ -2837,7 +3479,7 @@ export type {
 ===== src\ai\prompt.ts =====
 import { validateWorkflowSemantics, type Workflow } from '../workflow';
 
-import { appendDraftStepsToWorkflow, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
+import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
 import type { AIDraft, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
 
 export interface GeminiContent {
@@ -2893,6 +3535,84 @@ const CURATED_EXAMPLES = [
     },
   },
   {
+    user: 'If Email is empty, use Email (2), then drop Email (2).',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will create a single email column by using Email (2) only when Email is empty, then drop Email (2).',
+      assumptions: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+      ],
+    },
+  },
+  {
+    user: 'We just need one email column. Use Email first, fall back to Email (2), and if both are empty color the final email cell red.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will fill Email from Email (2) when needed, color the final email cell red when it is still empty, and then drop Email (2).',
+      assumptions: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+              },
+            },
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                format: {
+                  fillColor: '#FFC7CE',
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+      ],
+    },
+  },
+  {
     user: 'Highlight VIP status cells in yellow.',
     assistant: {
       mode: 'draft',
@@ -2912,7 +3632,7 @@ const CURATED_EXAMPLES = [
           },
           defaultPatch: {
             format: {
-              fillColor: '#FFF2CC',
+              fillColor: '#FFEB9C',
             },
           },
         },
@@ -2927,12 +3647,58 @@ const CURATED_EXAMPLES = [
       assumptions: [],
     },
   },
+  {
+    user: 'Update the existing email fallback so cells turn yellow when Email (2) was used.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will update the existing email fallback rule so it also colors those cells yellow.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+                format: {
+                  fillColor: '#FFEB9C',
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+      ],
+    },
+  },
 ];
 
 export function buildGeminiSystemInstruction(context: AIPromptContext): string {
   const availableSchema = getAvailableSchemaContextWorkflow(context);
   const workflowSummary = summarizeWorkflowSteps(context.workflow);
+  const workflowSteps = context.workflow.steps.length > 0 ? JSON.stringify(stripWorkflowStepIds(context.workflow.steps), null, 2) : '(no steps yet)';
   const draftSummary = context.draft ? JSON.stringify(stripWorkflowStepIds(context.draft.steps), null, 2) : '(no draft yet)';
+  const currentIssues = context.currentIssues.length > 0
+    ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
+    : ['- (none)'];
+  const workflowContextNote = context.workflowContextSource === 'lastValidSnapshot'
+    ? 'The canonical workflow summary below is the last valid snapshot because the live block workspace currently has issues. Use the live workspace snapshot and issue list to infer the intended fix. Applying the draft will replace the broken workspace with the drafted workflow.'
+    : 'The canonical workflow summary below reflects the current valid workflow context.';
+  const draftSemanticsNote = context.draft
+    ? 'There is an existing AI draft. Return the FULL updated workflow step list that should replace that AI draft.'
+    : 'There is no AI draft yet. Return the FULL updated workflow step list that should replace the current workflow.';
 
   return [
     'You are an expert Scratch My Table copilot.',
@@ -2940,8 +3706,13 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     'Return JSON only. Do not use markdown fences.',
     'Never return a workflow envelope or step IDs. Return only the structured response object.',
     'If the request is ambiguous or missing a required choice, return mode "clarify" and ask a short targeted question.',
-    'If you can act, return mode "draft" and include the FULL updated draft step list that should replace the current AI draft.',
-    'The draft is append-only relative to the existing workflow. Do not rewrite existing workflow steps.',
+    'If you can act, return mode "draft" and include the FULL updated workflow step list.',
+    'Never return mode "draft" with an empty steps array. If you cannot produce at least one valid workflow step, return mode "clarify" instead.',
+    'The returned steps are a full workflow replacement candidate.',
+    'You may rewrite, reorder, insert, or remove steps as needed.',
+    'If a later step drops a column, any logic that depends on that column must happen before the drop or be folded into an earlier step.',
+    workflowContextNote,
+    draftSemanticsNote,
     '',
     'Response contract:',
     '- mode: "clarify" or "draft"',
@@ -2964,9 +3735,13 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     'Expression AST rules:',
     '- expression kinds: value, literal, column, call',
     '- "value" is only valid inside scopedRule.cases[*].when, scopedRule.cases[*].then.value, and scopedRule.defaultPatch.value',
+    '- "value" is represented exactly as { "kind": "value" } with no extra properties',
+    '- null is represented as { "kind": "literal", "value": null }',
     '- filterRows.condition and scopedRule.rowCondition must resolve to boolean expressions',
     '- scopedRule is the only canonical cell-level step',
-    '- format patches currently support format.fillColor only, as a hex color like "#FFF2CC"',
+    '- scopedRule cases are checked top to bottom and every matching case applies in order',
+    '- later matching scopedRule cases see the current cell value after earlier matching cases have already applied',
+    '- format patches currently support format.fillColor only, as a hex color like "#FFEB9C"',
     '',
     'Built-in call names:',
     '- logic: equals, contains, startsWith, endsWith, matchesRegex, greaterThan, lessThan, and, or, not, isEmpty',
@@ -2974,13 +3749,22 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- math: add, subtract, multiply, divide, modulo, round, floor, ceil, abs',
     '- date/time: now, datePart, dateDiff, dateAdd',
     '',
-    'Schema currently available to appended steps:',
+    'Schema currently available to the returned workflow steps:',
     ...availableSchema.map((column) => `- ${column.columnId} | ${column.displayName} | ${column.logicalType}`),
+    '',
+    'Current block workspace snapshot:',
+    context.workspacePromptSnapshot || '(live workspace snapshot unavailable)',
+    '',
+    'Current workflow/editor issues:',
+    ...currentIssues,
+    '',
+    'Current workflow steps without IDs:',
+    workflowSteps,
     '',
     'Current workflow summary:',
     ...workflowSummary.map((line) => `- ${line}`),
     '',
-    'Current AI draft steps without IDs:',
+    'Current AI draft workflow steps without IDs:',
     draftSummary,
     '',
     'Curated examples:',
@@ -3004,9 +3788,12 @@ export function buildRepairUserMessage(
 ) {
   return [
     'Your previous draft did not validate locally.',
-    'Rewrite the FULL updated draft so it satisfies these issues.',
+    'Rewrite the FULL updated workflow step list so it satisfies these issues.',
     'Use only the available schema and allowed canonical step/function names.',
+    'You may rewrite, reorder, insert, or remove earlier steps.',
+    'If a validation issue says a column does not exist, do not reference it after it has been dropped. Move that logic before the drop or fold it into an earlier step.',
     'Do not ask a clarification question in this repair turn. Return mode "draft".',
+    'Return at least one workflow step. Do not return an empty steps array.',
     '',
     'Previous invalid response:',
     previousRawText,
@@ -3026,7 +3813,7 @@ export function buildRepairUserMessage(
 }
 
 function getAvailableSchemaContextWorkflow(context: AIPromptContext) {
-  const workflowForSchema = context.draft ? appendDraftStepsToWorkflow(context.workflow, context.draft.steps) : context.workflow;
+  const workflowForSchema = context.draft ? replaceWorkflowSteps(context.workflow, context.draft.steps) : context.workflow;
   const validation = validateWorkflowSemantics(workflowForSchema, context.table);
 
   return validation.valid ? validation.finalSchema.columns : context.table.schema.columns;
@@ -3056,7 +3843,7 @@ export function stripDraftStepIds(steps: WorkflowStepInput[] | Workflow['steps']
 ===== src\ai\session.ts =====
 import type { WorkflowValidationIssue } from '../workflow';
 
-import { appendDraftStepsToWorkflow, assignWorkflowStepIds } from './draft';
+import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
 import type {
@@ -3307,8 +4094,8 @@ async function validateDraftResponse(
     };
   }
 
-  const steps = assignWorkflowStepIds(context.workflow, stepInputs);
-  const candidateWorkflow = appendDraftStepsToWorkflow(context.workflow, steps);
+  const steps = assignWorkflowStepIds(stepInputs);
+  const candidateWorkflow = replaceWorkflowSteps(context.workflow, steps);
   const issues = await validateCandidateWorkflow(candidateWorkflow);
 
   return {
@@ -3347,6 +4134,7 @@ export type WorkflowStepInput =
 export interface AISettings {
   apiKey: string;
   model: string;
+  thinkingEnabled: boolean;
 }
 
 export interface AIMessage {
@@ -3406,11 +4194,19 @@ export interface AIDraft {
   validationIssues: WorkflowValidationIssue[];
 }
 
+export interface AIPromptIssue {
+  code: string;
+  message: string;
+}
+
 export interface AIPromptContext {
   table: Table;
   workflow: Workflow;
   draft: AIDraft | null;
   messages: AIMessage[];
+  currentIssues: AIPromptIssue[];
+  workflowContextSource: 'current' | 'lastValidSnapshot';
+  workspacePromptSnapshot: string;
 }
 
 export interface GeminiDraftTurnInput {
@@ -3429,12 +4225,28 @@ export interface GeminiDraftTurnResult {
 ===== src\App.tsx =====
 import { ChangeEvent, DragEvent, startTransition, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { DEFAULT_GEMINI_MODEL, appendAIDevLog, appendDraftStepsToWorkflow, runGeminiDraftTurn, summarizeDraftStepsForDisplay, type AIDebugTrace, type AIDraft, type AIMessage, type AIProgressEvent, type AISettings, type GeminiClientLogEvent } from './ai';
+import {
+  DEFAULT_GEMINI_MODEL,
+  GEMINI_MODEL_OPTIONS,
+  appendAIDevLog,
+  buildGeminiRequestExport,
+  normalizeGeminiModelSelection,
+  replaceWorkflowSteps,
+  runGeminiDraftTurn,
+  summarizeDraftStepsForDisplay,
+  type AIDebugTrace,
+  type AIDraft,
+  type AIMessage,
+  type AIProgressEvent,
+  type AISettings,
+  type GeminiClientLogEvent,
+} from './ai';
 import {
   WorkflowEditor,
   collectWorkflowColumnIds,
   createDefaultWorkflow,
   parseWorkflowJson,
+  type EditorWorkspaceChange,
   type EditorIssue,
   workflowToJson,
 } from './editor';
@@ -3453,6 +4265,7 @@ const PREVIEW_ROW_LIMIT = 50;
 const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
 const GEMINI_API_KEY_STORAGE_KEY = 'scratch_my_table.gemini_api_key';
 const GEMINI_MODEL_STORAGE_KEY = 'scratch_my_table.gemini_model';
+const GEMINI_THINKING_ENABLED_STORAGE_KEY = 'scratch_my_table.gemini_thinking_enabled';
 
 export default function App() {
   const uploadDragDepthRef = useRef(0);
@@ -3460,13 +4273,17 @@ export default function App() {
   const workflowImportDragDepthRef = useRef(0);
   const validationDebounceTimerRef = useRef<number | null>(null);
   const validationRequestIdRef = useRef(0);
+  const runResultSectionRef = useRef<HTMLElement | null>(null);
+  const pendingRunResultScrollRef = useRef(false);
   const [workbook, setWorkbookState] = useState<Workbook | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploadDragActive, setIsUploadDragActive] = useState(false);
   const [authoredWorkflow, setAuthoredWorkflow] = useState<Workflow | null>(null);
+  const [lastValidWorkflow, setLastValidWorkflow] = useState<Workflow | null>(null);
   const [editorIssues, setEditorIssues] = useState<EditorIssue[]>([]);
   const [validationIssues, setValidationIssues] = useState<WorkflowValidationIssue[]>([]);
+  const [workspacePromptSnapshot, setWorkspacePromptSnapshot] = useState('');
   const [loadWorkflow, setLoadWorkflow] = useState<Workflow | null>(null);
   const [workflowLoadVersion, setWorkflowLoadVersion] = useState(0);
   const [workflowJsonError, setWorkflowJsonError] = useState<string | null>(null);
@@ -3478,7 +4295,8 @@ export default function App() {
   const [isAIDialogOpen, setIsAIDialogOpen] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>(() => ({
     apiKey: readStoredValue(GEMINI_API_KEY_STORAGE_KEY),
-    model: readStoredValue(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL,
+    model: normalizeGeminiModelSelection(readStoredValue(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL),
+    thinkingEnabled: readStoredBoolean(GEMINI_THINKING_ENABLED_STORAGE_KEY),
   }));
   const [aiMessages, setAIMessages] = useState<AIMessage[]>([]);
   const [aiPromptValue, setAIPromptValue] = useState('');
@@ -3495,6 +4313,7 @@ export default function App() {
   const resultPreviewRows = resultTable ? getOrderedRows(resultTable).slice(0, PREVIEW_ROW_LIMIT) : [];
   const deferredAuthoredWorkflow = useDeferredValue(authoredWorkflow);
   const authoredWorkflowJson = deferredAuthoredWorkflow ? workflowToJson(deferredAuthoredWorkflow) : '';
+  const selectedAIModel = normalizeGeminiModelSelection(aiSettings.model);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -3544,8 +4363,9 @@ export default function App() {
 
   useEffect(() => {
     window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, aiSettings.apiKey);
-    window.localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, aiSettings.model);
-  }, [aiSettings]);
+    window.localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, selectedAIModel);
+    window.localStorage.setItem(GEMINI_THINKING_ENABLED_STORAGE_KEY, aiSettings.thinkingEnabled ? 'true' : 'false');
+  }, [aiSettings.apiKey, aiSettings.thinkingEnabled, selectedAIModel]);
 
   useEffect(() => {
     setIsAIDialogOpen(false);
@@ -3558,6 +4378,26 @@ export default function App() {
     setAIPromptValue('');
     setIsAILoading(false);
   }, [activeTable?.tableId]);
+
+  useEffect(() => {
+    if (!pendingRunResultScrollRef.current || !executionResult) {
+      return;
+    }
+
+    const target = runResultSectionRef.current;
+
+    if (!target) {
+      return;
+    }
+
+    pendingRunResultScrollRef.current = false;
+    window.requestAnimationFrame(() => {
+      target.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, [executionResult]);
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -3640,10 +4480,15 @@ export default function App() {
     setExecutionResult(null);
   }
 
-  function handleEditorWorkspaceChange(result: { workflow: Workflow | null; issues: EditorIssue[] }) {
+  function handleEditorWorkspaceChange(result: EditorWorkspaceChange) {
     startTransition(() => {
       setAuthoredWorkflow(result.workflow);
       setEditorIssues(result.issues);
+      setWorkspacePromptSnapshot(result.workspacePromptSnapshot);
+
+      if (result.workflow) {
+        setLastValidWorkflow(result.workflow);
+      }
     });
   }
 
@@ -3668,6 +4513,7 @@ export default function App() {
       return;
     }
 
+    pendingRunResultScrollRef.current = true;
     setExecutionResult(executeWorkflow(authoredWorkflow, activeTable));
   }
 
@@ -3784,8 +4630,10 @@ export default function App() {
 
   function resetWorkflowEditor(nextWorkflow: Workflow | null) {
     setAuthoredWorkflow(nextWorkflow);
+    setLastValidWorkflow(nextWorkflow);
     setEditorIssues([]);
     setValidationIssues([]);
+    setWorkspacePromptSnapshot('');
     setLoadWorkflow(nextWorkflow);
     setWorkflowLoadVersion((version) => version + 1);
     setWorkflowJsonError(null);
@@ -3802,7 +4650,9 @@ export default function App() {
   }
 
   async function handleSendAIPrompt() {
-    if (!activeTable || !authoredWorkflow || isAILoading) {
+    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+
+    if (!activeTable || !aiContextWorkflow || isAILoading) {
       return;
     }
 
@@ -3827,8 +4677,9 @@ export default function App() {
       turnId,
       kind: 'turn_start',
       prompt: userText,
-      model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
-      workflowId: authoredWorkflow.workflowId,
+      model: selectedAIModel,
+      thinkingEnabled: aiSettings.thinkingEnabled,
+      workflowId: aiContextWorkflow.workflowId,
       activeTableId: activeTable.tableId,
     });
 
@@ -3836,13 +4687,20 @@ export default function App() {
       const outcome = await runGeminiDraftTurn({
         settings: {
           apiKey: aiSettings.apiKey.trim(),
-          model: aiSettings.model.trim() || DEFAULT_GEMINI_MODEL,
+          model: selectedAIModel,
+          thinkingEnabled: aiSettings.thinkingEnabled,
         },
         context: {
           table: activeTable,
-          workflow: authoredWorkflow,
+          workflow: aiContextWorkflow,
           draft: aiDraft,
           messages: aiMessages,
+          currentIssues: mergeWorkflowIssues(editorIssues, validationIssues).map((issue) => ({
+            code: issue.code,
+            message: issue.message,
+          })),
+          workflowContextSource: authoredWorkflow ? 'current' : 'lastValidSnapshot',
+          workspacePromptSnapshot,
         },
         userText,
         validateCandidateWorkflow,
@@ -3916,7 +4774,9 @@ export default function App() {
   }
 
   async function handleApplyAIDraft() {
-    if (!activeTable || !authoredWorkflow || !aiDraft || isAILoading) {
+    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+
+    if (!activeTable || !aiContextWorkflow || !aiDraft || isAILoading) {
       return;
     }
 
@@ -3924,7 +4784,7 @@ export default function App() {
     setAIError(null);
 
     try {
-      const candidateWorkflow = appendDraftStepsToWorkflow(authoredWorkflow, aiDraft.steps);
+      const candidateWorkflow = replaceWorkflowSteps(aiContextWorkflow, aiDraft.steps);
       const issues = await validateCandidateWorkflow(candidateWorkflow);
 
       if (issues.length > 0) {
@@ -3950,11 +4810,63 @@ export default function App() {
     setAIError(null);
   }
 
+  function handleDownloadAIPrompt() {
+    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+
+    if (!activeTable || !aiContextWorkflow) {
+      return;
+    }
+
+    const userText = aiPromptValue.trim();
+
+    if (userText === '') {
+      return;
+    }
+
+    const requestExport = buildGeminiRequestExport({
+      settings: {
+        apiKey: aiSettings.apiKey.trim(),
+        model: selectedAIModel,
+        thinkingEnabled: aiSettings.thinkingEnabled,
+      },
+      context: {
+        table: activeTable,
+        workflow: aiContextWorkflow,
+        draft: aiDraft,
+        messages: aiMessages,
+        currentIssues: mergeWorkflowIssues(editorIssues, validationIssues).map((issue) => ({
+          code: issue.code,
+          message: issue.message,
+        })),
+        workflowContextSource: authoredWorkflow ? 'current' : 'lastValidSnapshot',
+        workspacePromptSnapshot,
+      },
+      userMessage: {
+        role: 'user',
+        text: userText,
+        timestamp: new Date().toISOString(),
+      },
+      phase: 'initial',
+    });
+
+    downloadBlob(
+      new Blob([JSON.stringify(requestExport, null, 2)], { type: 'application/json;charset=utf-8' }),
+      buildAIPromptExportFileName(aiContextWorkflow),
+    );
+  }
+
   const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
   const allWorkflowIssues = mergeWorkflowIssues(editorIssues, validationIssues);
+  const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
   const workflowExtraColumnIds = deferredAuthoredWorkflow ? collectWorkflowColumnIds(deferredAuthoredWorkflow) : [];
   const canRunWorkflow = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
-  const canUseAI = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
+  const canUseAI = Boolean(activeTable && aiContextWorkflow);
+  const aiUsesLastValidWorkflow = Boolean(!authoredWorkflow && aiContextWorkflow);
+  const aiWorkflowIssueNotice = allWorkflowIssues.length === 0
+    ? null
+    : aiUsesLastValidWorkflow
+      ? 'The current block workspace has issues. AI will receive the live block snapshot and the issue list, and it will draft from the last valid workflow snapshot. Applying the draft will replace the broken workspace.'
+      : 'The current workflow has issues. AI will receive the live block snapshot and the issue list when drafting.';
   const aiDraftSummary = summarizeDraftStepsForDisplay(aiDraft);
 
   return (
@@ -4062,7 +4974,11 @@ export default function App() {
 
             <section className="panel-stack">
               <ValidationPanel issues={allWorkflowIssues} jsonError={workflowJsonError} />
-              <WorkflowJsonPanel workflowJson={authoredWorkflowJson} />
+            </section>
+          </section>
+
+          {executionResult ? (
+            <section className="panel-stack" ref={runResultSectionRef}>
               <RunResultPanel
                 executionResult={executionResult}
                 onExportCsv={() => {
@@ -4072,16 +4988,15 @@ export default function App() {
                   handleExportTableXlsx(resultTable);
                 }}
               />
+              {resultTable ? (
+                <PreviewPanel
+                  description={`Showing ${resultPreviewRows.length} of ${resultTable.rowOrder.length} transformed rows.`}
+                  previewRows={resultPreviewRows}
+                  table={resultTable}
+                  title="Run result"
+                />
+              ) : null}
             </section>
-          </section>
-
-          {resultTable ? (
-            <PreviewPanel
-              description={`Showing ${resultPreviewRows.length} of ${resultTable.rowOrder.length} transformed rows.`}
-              previewRows={resultPreviewRows}
-              table={resultTable}
-              title="Run result"
-            />
           ) : null}
         </>
       )}
@@ -4167,8 +5082,9 @@ export default function App() {
           aiMessages={aiMessages}
           aiPromptValue={aiPromptValue}
           aiSettings={aiSettings}
-          canApplyDraft={Boolean(aiDraft && aiDraftIssues.length === 0 && canUseAI && !isAILoading)}
+          canApplyDraft={Boolean(aiDraft && aiDraftIssues.length === 0 && aiContextWorkflow && !isAILoading)}
           canDiscardDraft={Boolean(aiDraft || aiDraftIssues.length > 0)}
+          canDownloadPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '')}
           canSendPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '' && !isAILoading)}
           isLoading={isAILoading}
           onApplyDraft={() => {
@@ -4176,12 +5092,14 @@ export default function App() {
           }}
           onClose={handleCloseAIDialog}
           onDiscardDraft={handleDiscardAIDraft}
+          onDownloadPrompt={handleDownloadAIPrompt}
           onPromptChange={setAIPromptValue}
           onSendPrompt={() => {
             void handleSendAIPrompt();
           }}
           onSettingsChange={setAISettings}
           workflowReady={canUseAI}
+          workflowIssueNotice={aiWorkflowIssueNotice}
         />
       ) : null}
     </main>
@@ -4258,37 +5176,29 @@ function ValidationPanel({
   issues: Array<{ code: string; message: string }>;
   jsonError: string | null;
 }) {
+  const issueCount = issues.length + (jsonError ? 1 : 0);
+
   return (
-    <section className="panel">
-      <div className="panel-header">
+    <section className="panel panel--compact">
+      <div className="panel-header panel-header--compact">
         <h2>Validation</h2>
-        <p>Editor issues and schema-aware workflow validation against the active table.</p>
+        <p>{issueCount === 0 ? 'No issues' : `${issueCount} issue${issueCount === 1 ? '' : 's'}`}</p>
       </div>
       {jsonError ? <pre className="json-error-panel">{jsonError}</pre> : null}
       {issues.length === 0 ? (
-        <div className="empty-panel">No current workflow issues.</div>
+        <div className="empty-panel empty-panel--compact">No current workflow issues.</div>
       ) : (
-        <ul className="issue-list">
+        <div className="panel-scroll-region" style={{ maxHeight: '13rem' }}>
+          <ul className="issue-list issue-list--compact">
           {issues.map((issue, index) => (
-            <li className="issue-item" key={`${issue.code}-${index}`}>
+              <li className="issue-item issue-item--compact" key={`${issue.code}-${index}`}>
               <strong>{issue.code}</strong>
               <p>{issue.message}</p>
             </li>
           ))}
-        </ul>
+          </ul>
+        </div>
       )}
-    </section>
-  );
-}
-
-function WorkflowJsonPanel({ workflowJson }: { workflowJson: string }) {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <h2>Workflow JSON</h2>
-        <p>Canonical IR generated from the current block workspace.</p>
-      </div>
-      <textarea className="json-viewer" readOnly value={workflowJson} />
     </section>
   );
 }
@@ -4302,17 +5212,21 @@ function RunResultPanel({
   onExportCsv: () => void;
   onExportXlsx: () => void;
 }) {
+  if (!executionResult) {
+    return null;
+  }
+
   const canExport = Boolean(executionResult && executionResult.validationErrors.length === 0 && executionResult.transformedTable);
 
   return (
-    <section className="panel">
+    <section className="panel panel--compact">
       <div className="panel-header">
         <div>
-          <h2>Run result</h2>
-          <p>Basic execution metadata from the existing deterministic executor.</p>
+          <h2>Run summary</h2>
+          <p>Compact metadata for the latest workflow run.</p>
         </div>
         {canExport ? (
-          <div className="export-actions">
+          <div className="export-actions export-actions--compact">
             <button onClick={onExportCsv} type="button">
               Export CSV
             </button>
@@ -4322,12 +5236,10 @@ function RunResultPanel({
           </div>
         ) : null}
       </div>
-      {!executionResult ? (
-        <div className="empty-panel">Run a valid workflow to see result metadata.</div>
-      ) : executionResult.validationErrors.length > 0 ? (
+      {executionResult.validationErrors.length > 0 ? (
         <div className="empty-panel">Run blocked by validation errors.</div>
       ) : (
-        <dl className="result-stats">
+        <dl className="result-stats result-stats--compact">
           <div>
             <dt>Changed rows</dt>
             <dd>{executionResult.changedRowCount}</dd>
@@ -4370,15 +5282,18 @@ function AIAssistantModal({
   aiSettings,
   canApplyDraft,
   canDiscardDraft,
+  canDownloadPrompt,
   canSendPrompt,
   isLoading,
   onApplyDraft,
   onClose,
   onDiscardDraft,
+  onDownloadPrompt,
   onPromptChange,
   onSendPrompt,
   onSettingsChange,
   workflowReady,
+  workflowIssueNotice,
 }: {
   aiDraft: AIDraft | null;
   aiDraftIssues: WorkflowValidationIssue[];
@@ -4391,15 +5306,18 @@ function AIAssistantModal({
   aiSettings: AISettings;
   canApplyDraft: boolean;
   canDiscardDraft: boolean;
+  canDownloadPrompt: boolean;
   canSendPrompt: boolean;
   isLoading: boolean;
   onApplyDraft: () => void;
   onClose: () => void;
   onDiscardDraft: () => void;
+  onDownloadPrompt: () => void;
   onPromptChange: (value: string) => void;
   onSendPrompt: () => void;
   onSettingsChange: (settings: AISettings) => void;
   workflowReady: boolean;
+  workflowIssueNotice: string | null;
 }) {
   return (
     <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="ai-assistant-title">
@@ -4429,20 +5347,45 @@ function AIAssistantModal({
           </label>
           <label className="workflow-meta-field">
             <span>Model</span>
-            <input
+            <select
               onChange={(event) =>
                 onSettingsChange({
                   ...aiSettings,
                   model: event.target.value,
                 })
               }
-              placeholder={DEFAULT_GEMINI_MODEL}
               value={aiSettings.model}
-            />
+            >
+              {GEMINI_MODEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="workflow-meta-field">
+            <span>Thinking mode</span>
+            <div className="ai-assistant-toggle">
+              <input
+                checked={aiSettings.thinkingEnabled}
+                onChange={(event) =>
+                  onSettingsChange({
+                    ...aiSettings,
+                    thinkingEnabled: event.target.checked,
+                  })
+                }
+                type="checkbox"
+              />
+              <div className="ai-assistant-toggle__body">
+                <strong>{aiSettings.thinkingEnabled ? 'Enabled' : 'Disabled'}</strong>
+                <small>{describeAIThinkingMode(aiSettings.model, aiSettings.thinkingEnabled)}</small>
+              </div>
+            </div>
           </label>
         </div>
 
-        {!workflowReady ? <div className="empty-panel">Fix current workflow issues before asking AI to append more steps.</div> : null}
+        {!workflowReady ? <div className="empty-panel">Load a table and workflow before asking AI to draft workflow changes.</div> : null}
+        {workflowIssueNotice ? <div className="empty-panel">{workflowIssueNotice}</div> : null}
         {aiError ? <pre className="json-error-panel">{aiError}</pre> : null}
 
         <div className="ai-assistant-layout">
@@ -4450,7 +5393,7 @@ function AIAssistantModal({
             <div className="panel-header">
               <div>
                 <h2>Conversation</h2>
-                <p>The assistant can clarify ambiguous requests before proposing a draft.</p>
+                <p>The assistant can clarify ambiguous requests before proposing a draft workflow.</p>
               </div>
             </div>
 
@@ -4492,12 +5435,15 @@ function AIAssistantModal({
               <textarea
                 className="json-viewer ai-assistant-compose__input"
                 onChange={(event) => onPromptChange(event.target.value)}
-                placeholder="Describe the workflow steps you want to add"
+                placeholder="Describe the workflow changes you want"
                 value={aiPromptValue}
               />
               <div className="workflow-import-actions">
+                <button disabled={!canDownloadPrompt} onClick={onDownloadPrompt} type="button">
+                  Download prompt
+                </button>
                 <button disabled={!canSendPrompt} onClick={onSendPrompt} type="button">
-                  {isLoading ? 'Thinking...' : 'Send'}
+                  {isLoading ? 'Working...' : 'Send'}
                 </button>
               </div>
             </div>
@@ -4507,7 +5453,7 @@ function AIAssistantModal({
             <div className="panel-header">
               <div>
                 <h2>Draft</h2>
-                <p>Canonical draft steps that would be appended to the current workflow.</p>
+                <p>Canonical draft workflow steps that would replace the current workflow when applied.</p>
               </div>
             </div>
 
@@ -4760,12 +5706,36 @@ function downloadBlob(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url);
 }
 
+function buildAIPromptExportFileName(workflow: Workflow) {
+  const baseName = workflow.workflowId.trim() || 'workflow';
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${baseName}-ai-prompt-${timestamp}.json`;
+}
+
 function readStoredValue(key: string) {
   if (typeof window === 'undefined') {
     return '';
   }
 
   return window.localStorage.getItem(key) ?? '';
+}
+
+function readStoredBoolean(key: string) {
+  return readStoredValue(key) === 'true';
+}
+
+function describeAIThinkingMode(model: string, thinkingEnabled: boolean) {
+  const normalizedModel = normalizeGeminiModelSelection(model);
+
+  if (normalizedModel.startsWith('gemini-3')) {
+    return thinkingEnabled
+      ? 'On uses Gemini 3 high thinking. Expect higher latency and more billed output tokens.'
+      : 'Off uses Gemini 3 minimal thinking. Google notes the model may still think a little on harder prompts.';
+  }
+
+  return thinkingEnabled
+    ? 'On enables dynamic thinking. Expect higher latency and more billed output tokens.'
+    : 'Off disables thinking to keep drafting faster and cheaper.';
 }
 
 function isAbortError(error: unknown) {
@@ -5691,15 +6661,15 @@ describe('Milestone 1 normalization and export', () => {
       throw new Error('Expected active table for worksheet style test.');
     }
 
-    table.rowsById.row_1.stylesByColumnId.col_email = { fillColor: '#fff2cc' };
+    table.rowsById.row_1.stylesByColumnId.col_email = { fillColor: '#ffeb9c' };
 
     const sheet = buildWorksheetFromTable(table);
 
     expect(sheet.D2?.s).toEqual({
       fill: {
         patternType: 'solid',
-        fgColor: { rgb: 'FFFFF2CC' },
-        bgColor: { rgb: 'FFFFF2CC' },
+        fgColor: { rgb: 'FFFFEB9C' },
+        bgColor: { rgb: 'FFFFEB9C' },
       },
       font: {
         color: { rgb: 'FF1C1A17' },
@@ -6427,7 +7397,7 @@ function compileStep(step: AuthoringStep, index: number, usedStepIds: Set<string
         id: stepId,
         type: 'scopedRule',
         columnIds: step.columnIds,
-        rowCondition: step.rowCondition,
+        ...(step.rowCondition ? { rowCondition: step.rowCondition } : {}),
         ...(cases && cases.length > 0 ? { cases } : {}),
         ...(defaultPatch ? { defaultPatch } : {}),
       };
@@ -6628,14 +7598,14 @@ function normalizeDescription(description: string | undefined) {
 
 function normalizeWorkflowColor(value: string) {
   const normalized = value.trim().toLocaleLowerCase();
-  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '#fff2cc';
+  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : '#ffeb9c';
 }
 
 function createEmptyAuthoringCellPatch(): AuthoringCellPatch {
   return {
     valueEnabled: false,
     formatEnabled: false,
-    fillColor: '#fff2cc',
+    fillColor: '#ffeb9c',
   };
 }
 
@@ -6645,7 +7615,7 @@ function compileAuthoringCellPatch(patch: AuthoringCellPatch): WorkflowCellPatch
     ...(patch.formatEnabled
       ? {
           format: {
-            fillColor: normalizeWorkflowColor(patch.fillColor ?? '#fff2cc'),
+            fillColor: normalizeWorkflowColor(patch.fillColor ?? '#ffeb9c'),
           },
         }
       : {}),
@@ -6670,7 +7640,7 @@ function workflowCellPatchToAuthoringPatch(patch: WorkflowCellPatch | undefined)
     valueEnabled: Boolean(patch?.value),
     ...(patch?.value ? { value: patch.value } : {}),
     formatEnabled: Boolean(patch?.format?.fillColor),
-    fillColor: normalizeWorkflowColor(patch?.format?.fillColor ?? '#fff2cc'),
+    fillColor: normalizeWorkflowColor(patch?.format?.fillColor ?? '#ffeb9c'),
   };
 }
 
@@ -6708,10 +7678,9 @@ const DATE_COLOR = '#2a9d8f';
 const MATH_COLOR = '#6b3a8c';
 const LOGIC_COLOR = '#355070';
 const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
-export const CHECKBOX_TRUE = 'TRUE';
-export const CHECKBOX_FALSE = 'FALSE';
 export const WORKFLOW_TOOLBOX_COLOURS = {
   scopedRules: TRANSFORM_COLOR,
+  cellActions: SUPPORT_COLOR,
   tableOperations: TABLE_OPERATION_COLOR,
   comments: COMMENT_COLOR,
   lists: SUPPORT_COLOR,
@@ -6729,25 +7698,14 @@ const CREATE_COLUMN_INPUT_NAMES = {
 } as const;
 export const SCOPED_RULE_INPUT_NAMES = {
   cases: 'CASES',
-  singleValueEnabled: 'SINGLE_VALUE_ENABLED',
-  singleValue: 'SINGLE_VALUE',
-  singleFormatEnabled: 'SINGLE_FORMAT_ENABLED',
-  singleFormatRow: 'SINGLE_FORMAT_ROW',
-  singleColor: 'SINGLE_COLOR',
-  defaultValueEnabled: 'DEFAULT_VALUE_ENABLED',
-  defaultValueRow: 'DEFAULT_VALUE_ROW',
-  defaultValue: 'DEFAULT_VALUE',
-  defaultFormatEnabled: 'DEFAULT_FORMAT_ENABLED',
-  defaultFormatRow: 'DEFAULT_FORMAT_ROW',
-  defaultColor: 'DEFAULT_COLOR',
+  defaultActions: 'DEFAULT_ACTIONS',
 } as const;
 const RULE_CASE_INPUT_NAMES = {
   when: 'WHEN',
-  valueEnabled: 'VALUE_ENABLED',
-  valueRow: 'VALUE_ROW',
+  actions: 'ACTIONS',
+} as const;
+const CELL_ACTION_INPUT_NAMES = {
   value: 'VALUE',
-  formatEnabled: 'FORMAT_ENABLED',
-  formatRow: 'FORMAT_ROW',
   color: 'COLOR',
 } as const;
 
@@ -6762,21 +7720,13 @@ type LogicalGroupBlock = Blockly.Block & {
   itemCount_?: number;
   updateShape_?: () => void;
 };
-type ScopedRuleBlock = Blockly.Block & {
-  updateShape_?: () => void;
-};
-type RuleCaseBlock = Blockly.Block & {
-  updateShape_?: () => void;
-};
 type SwitchGroupBlock = Blockly.Block & {
   itemCount_?: number;
   updateShape_?: () => void;
 };
-type PredicateFunctionBlock = Blockly.Block & {
-  updateShape_?: (operator?: PredicateFunctionOperator) => void;
-};
 type ComparatorOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
-type PredicateFunctionOperator = 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
+type PredicateFunctionOperator = 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex';
+type UnaryPredicateFunctionOperator = 'isEmpty';
 const COMPARATOR_OPTIONS: Array<[string, ComparatorOperator]> = [
   ['=', 'eq'],
   ['â‰ ', 'ne'],
@@ -6790,6 +7740,8 @@ const PREDICATE_FUNCTION_OPTIONS: Array<{ label: string; value: PredicateFunctio
   { label: 'starts with', value: 'startsWith', searchText: 'starts with begins prefix' },
   { label: 'ends with', value: 'endsWith', searchText: 'ends with suffix' },
   { label: 'matches regex', value: 'matchesRegex', searchText: 'matches regex pattern regular expression' },
+];
+const UNARY_PREDICATE_FUNCTION_OPTIONS: Array<{ label: string; value: UnaryPredicateFunctionOperator; searchText: string }> = [
   { label: 'is empty', value: 'isEmpty', searchText: 'is empty blank null missing' },
 ];
 
@@ -6803,6 +7755,8 @@ export const BLOCK_TYPES = {
   commentStep: 'comment_step',
   scopedRuleCasesStep: 'scoped_rule_cases_step',
   ruleCaseItem: 'rule_case_item',
+  setValueActionItem: 'set_value_action_item',
+  highlightActionItem: 'highlight_action_item',
   dropColumnsStep: 'drop_columns_step',
   renameColumnStep: 'rename_column_step',
   deriveColumnStep: 'derive_column_step',
@@ -6815,6 +7769,7 @@ export const BLOCK_TYPES = {
   sortItem: 'sort_item',
   currentValueExpression: 'current_value_expression',
   literalString: 'literal_string',
+  literalColor: 'literal_color',
   literalNumber: 'literal_number',
   literalBoolean: 'literal_boolean',
   literalNull: 'literal_null',
@@ -6842,6 +7797,7 @@ export const BLOCK_TYPES = {
   mathRoundingFunction: 'math_rounding_function',
   comparisonFunction: 'comparison_function',
   predicateFunction: 'predicate_function',
+  unaryPredicateFunction: 'unary_predicate_function',
   logicalBinaryFunction: 'logical_binary_function',
   notFunction: 'not_function',
 } as const;
@@ -6860,48 +7816,52 @@ export function registerWorkflowBlocks() {
   });
 
   Blockly.Blocks[BLOCK_TYPES.scopedRuleCasesStep] = {
-    init(this: ScopedRuleBlock) {
+    init() {
       this.appendDummyInput()
         .appendField('on columns')
         .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
       this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
       this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.cases).setCheck('RULE_CASE_ITEM').appendField('cases');
-      this.appendDummyInput('DEFAULT_TOGGLE_ROW')
-        .appendField('apply by default')
-        .appendField('set value')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_FALSE), SCOPED_RULE_INPUT_NAMES.defaultValueEnabled)
-        .appendField('fill color')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_FALSE), SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled);
-      this.appendValueInput(SCOPED_RULE_INPUT_NAMES.defaultValue).setCheck('EXPRESSION').appendField('default set value');
-      this.appendDummyInput(SCOPED_RULE_INPUT_NAMES.defaultFormatRow)
-        .appendField('default fill color')
-        .appendField(new FieldColorInput(), SCOPED_RULE_INPUT_NAMES.defaultColor);
+      this.appendDummyInput('DEFAULT_HEADER').appendField('otherwise default to');
+      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'AUTHORING_STEP');
       this.setNextStatement(true, 'AUTHORING_STEP');
       this.setColour(TRANSFORM_COLOR);
-      this.updateShape_ = () => updateScopedRuleCasesShape(this);
-      this.updateShape_();
     },
   };
 
   Blockly.Blocks[BLOCK_TYPES.ruleCaseItem] = {
-    init(this: RuleCaseBlock) {
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when');
-      this.appendDummyInput('CASE_TOGGLE_ROW')
-        .appendField('then')
-        .appendField('set value')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_TRUE), RULE_CASE_INPUT_NAMES.valueEnabled)
-        .appendField('fill color')
-        .appendField(createShapeAwareCheckbox(this, CHECKBOX_FALSE), RULE_CASE_INPUT_NAMES.formatEnabled);
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.value).setCheck('EXPRESSION').appendField('set value');
-      this.appendDummyInput(RULE_CASE_INPUT_NAMES.formatRow)
-        .appendField('fill color')
-        .appendField(new FieldColorInput(), RULE_CASE_INPUT_NAMES.color);
+    init() {
+      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('case: when');
+      this.appendStatementInput(RULE_CASE_INPUT_NAMES.actions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'RULE_CASE_ITEM');
       this.setNextStatement(true, 'RULE_CASE_ITEM');
       this.setColour(SUPPORT_COLOR);
-      this.updateShape_ = () => updateRuleCaseShape(this);
-      this.updateShape_();
+      this.setInputsInline(false);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.setValueActionItem] = {
+    init() {
+      this.appendValueInput(CELL_ACTION_INPUT_NAMES.value)
+        .setCheck('EXPRESSION')
+        .appendField('set value')
+        .appendField('to');
+      this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
+      this.setNextStatement(true, 'CELL_ACTION_ITEM');
+      this.setColour(SUPPORT_COLOR);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.highlightActionItem] = {
+    init() {
+      this.appendValueInput(CELL_ACTION_INPUT_NAMES.color)
+        .setCheck('COLOR_LITERAL')
+        .appendField('highlight')
+        .appendField('with');
+      this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
+      this.setNextStatement(true, 'CELL_ACTION_ITEM');
+      this.setColour(SUPPORT_COLOR);
     },
   };
 
@@ -7025,6 +7985,16 @@ export function registerWorkflowBlocks() {
         .appendField('text')
         .appendField(new Blockly.FieldTextInput('value'), 'VALUE');
       this.setOutput(true, ['EXPRESSION', 'LITERAL', 'NON_NULL_LITERAL', 'STRING_LITERAL']);
+      this.setColour(VALUE_COLOR);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.literalColor] = {
+    init() {
+      this.appendDummyInput()
+        .appendField('color')
+        .appendField(new FieldColorInput(), 'VALUE');
+      this.setOutput(true, ['COLOR_LITERAL', 'EXPRESSION', 'LITERAL', 'NON_NULL_LITERAL', 'STRING_LITERAL']);
       this.setColour(VALUE_COLOR);
     },
   };
@@ -7203,12 +8173,24 @@ export function registerWorkflowBlocks() {
   };
   createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
   Blockly.Blocks[BLOCK_TYPES.predicateFunction] = {
-    init(this: PredicateFunctionBlock) {
+    init() {
+      this.appendValueInput('FIRST').setCheck('EXPRESSION');
+      this.appendValueInput('SECOND')
+        .setCheck('EXPRESSION')
+        .appendField(createPredicateFunctionOperatorField('contains'), 'OPERATOR');
       this.setOutput(true, 'EXPRESSION');
       this.setInputsInline(true);
       this.setColour(LOGIC_COLOR);
-      this.updateShape_ = (operator?: PredicateFunctionOperator) => updatePredicateFunctionShape(this, operator);
-      this.updateShape_('contains');
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.unaryPredicateFunction] = {
+    init() {
+      this.appendValueInput('INPUT')
+        .setCheck('EXPRESSION')
+        .appendField(createUnaryPredicateFunctionOperatorField('isEmpty'), 'OPERATOR');
+      this.setOutput(true, 'EXPRESSION');
+      this.setInputsInline(true);
+      this.setColour(LOGIC_COLOR);
     },
   };
   Blockly.Blocks[BLOCK_TYPES.logicalBinaryFunction] = {
@@ -7359,48 +8341,22 @@ function updateLogicalGroupShape(block: LogicalGroupBlock) {
   block.setInputsInline(false);
 }
 
-function updatePredicateFunctionShape(block: PredicateFunctionBlock, operator = normalizePredicateFunctionOperator(block.getFieldValue('OPERATOR'))) {
-  const primaryConnection =
-    block.getInput('FIRST')?.connection?.targetConnection
-    ?? block.getInput('INPUT')?.connection?.targetConnection
-    ?? null;
-  const secondaryConnection = block.getInput('SECOND')?.connection?.targetConnection ?? null;
-
-  ['FIRST', 'SECOND', 'INPUT'].forEach((inputName) => {
-    if (block.getInput(inputName)) {
-      block.removeInput(inputName);
-    }
-  });
-
-  if (isUnaryPredicateFunctionOperator(operator)) {
-    block.appendValueInput('INPUT')
-      .setCheck('EXPRESSION')
-      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
-    primaryConnection?.reconnect(block, 'INPUT');
-  } else {
-    block.appendValueInput('FIRST').setCheck('EXPRESSION');
-    block.appendValueInput('SECOND')
-      .setCheck('EXPRESSION')
-      .appendField(createPredicateFunctionOperatorField(block, operator), 'OPERATOR');
-    primaryConnection?.reconnect(block, 'FIRST');
-    secondaryConnection?.reconnect(block, 'SECOND');
-  }
-
-  block.setInputsInline(true);
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function createPredicateFunctionOperatorField(block: PredicateFunctionBlock, operator: PredicateFunctionOperator) {
+function createPredicateFunctionOperatorField(operator: PredicateFunctionOperator) {
   return new FieldSearchDropdown(
     operator,
     PREDICATE_FUNCTION_OPTIONS,
     (newValue) => {
-      const normalizedValue = normalizePredicateFunctionOperator(newValue);
-      block.updateShape_?.(normalizedValue);
-      return normalizedValue;
+      return normalizePredicateFunctionOperator(newValue);
+    },
+  );
+}
+
+function createUnaryPredicateFunctionOperatorField(operator: UnaryPredicateFunctionOperator) {
+  return new FieldSearchDropdown(
+    operator,
+    UNARY_PREDICATE_FUNCTION_OPTIONS,
+    (newValue) => {
+      return normalizeUnaryPredicateFunctionOperator(newValue);
     },
   );
 }
@@ -7447,7 +8403,6 @@ function normalizePredicateFunctionOperator(value: unknown): PredicateFunctionOp
     case 'startsWith':
     case 'endsWith':
     case 'matchesRegex':
-    case 'isEmpty':
     case 'contains':
       return value;
     default:
@@ -7455,8 +8410,8 @@ function normalizePredicateFunctionOperator(value: unknown): PredicateFunctionOp
   }
 }
 
-function isUnaryPredicateFunctionOperator(operator: PredicateFunctionOperator) {
-  return operator === 'isEmpty';
+function normalizeUnaryPredicateFunctionOperator(value: unknown): UnaryPredicateFunctionOperator {
+  return value === 'isEmpty' ? 'isEmpty' : 'isEmpty';
 }
 
 function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
@@ -7583,48 +8538,6 @@ function resizeSwitchGroup(block: SwitchGroupBlock, itemCount: number) {
   }
 }
 
-function updateScopedRuleCasesShape(block: ScopedRuleBlock) {
-  const defaultValueEnabled = isChecked(block.getFieldValue(SCOPED_RULE_INPUT_NAMES.defaultValueEnabled));
-  const defaultFormatEnabled = isChecked(block.getFieldValue(SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled));
-
-  block.getInput('DEFAULT_TOGGLE_ROW')?.setVisible(true);
-  block.getInput(SCOPED_RULE_INPUT_NAMES.defaultValue)?.setVisible(defaultValueEnabled);
-  block.getInput(SCOPED_RULE_INPUT_NAMES.defaultFormatRow)?.setVisible(defaultFormatEnabled);
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function updateRuleCaseShape(block: RuleCaseBlock) {
-  const valueEnabled = isChecked(block.getFieldValue(RULE_CASE_INPUT_NAMES.valueEnabled));
-  const formatEnabled = isChecked(block.getFieldValue(RULE_CASE_INPUT_NAMES.formatEnabled));
-
-  block.getInput(RULE_CASE_INPUT_NAMES.value)?.setVisible(valueEnabled);
-  block.getInput(RULE_CASE_INPUT_NAMES.formatRow)?.setVisible(formatEnabled);
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function createShapeAwareCheckbox(block: { updateShape_?: () => void }, defaultValue: string) {
-  return new Blockly.FieldCheckbox(defaultValue === CHECKBOX_TRUE, (newValue) => {
-    queueMicrotask(() => {
-      block.updateShape_?.();
-    });
-    return normalizeCheckboxValue(newValue);
-  });
-}
-
-function normalizeCheckboxValue(value: unknown) {
-  return String(value).toUpperCase() === CHECKBOX_TRUE ? CHECKBOX_TRUE : CHECKBOX_FALSE;
-}
-
-function isChecked(value: unknown) {
-  return normalizeCheckboxValue(value) === CHECKBOX_TRUE;
-}
-
 function appendNewColumnFields(block: Blockly.Block) {
   block.appendDummyInput()
     .appendField('new column id')
@@ -7654,12 +8567,59 @@ function normalizeCreateColumnMode(value: unknown): CreateColumnMode {
   }
 }
 
+===== src\editor\FieldColorInput.test.ts =====
+import { describe, expect, it } from 'vitest';
+
+import { isValidFillColor } from '../domain/model';
+
+import {
+  DEFAULT_COLOR,
+  FILL_COLOR_CHOICES,
+  MAX_RECENT_FILL_COLORS,
+  pushRecentFillColor,
+} from './FieldColorInput';
+
+describe('FieldColorInput palette', () => {
+  it('uses the compact fill-color palette, including Excel good/neutral/bad colors', () => {
+    const colors = FILL_COLOR_CHOICES.map((choice) => choice.color);
+
+    expect(FILL_COLOR_CHOICES).toHaveLength(7);
+    expect(colors).toContain('#C6EFCE');
+    expect(colors).toContain('#FFEB9C');
+    expect(colors).toContain('#FFC7CE');
+    expect(colors.every((color) => isValidFillColor(color))).toBe(true);
+    expect(isValidFillColor(DEFAULT_COLOR)).toBe(true);
+  });
+
+  it('keeps recent colors unique and most-recent-first', () => {
+    const recentColors = Array.from({ length: MAX_RECENT_FILL_COLORS }, (_, index) => `#00000${index}`);
+    const updatedWithExisting = pushRecentFillColor(recentColors, '#000003');
+    const updatedWithNew = pushRecentFillColor(updatedWithExisting, '#abcdef');
+
+    expect(updatedWithExisting[0]).toBe('#000003');
+    expect(updatedWithExisting.filter((color) => color === '#000003')).toHaveLength(1);
+    expect(updatedWithNew[0]).toBe('#abcdef');
+    expect(updatedWithNew).toHaveLength(MAX_RECENT_FILL_COLORS);
+  });
+});
+
 ===== src\editor\FieldColorInput.ts =====
 import * as Blockly from 'blockly';
 
-import { isValidFillColor, normalizeFillColor } from '../domain/model';
+import { getReadableTextColor, isValidFillColor, normalizeFillColor } from '../domain/model';
 
-const DEFAULT_COLOR = '#fff2cc';
+export const DEFAULT_COLOR = '#ffeb9c';
+export const RECENT_FILL_COLOR_STORAGE_KEY = 'scratch_my_table.recent_fill_colors';
+export const MAX_RECENT_FILL_COLORS = 8;
+export const FILL_COLOR_CHOICES = [
+  { label: 'White', color: '#FFFFFF' },
+  { label: 'Green', color: '#C6EFCE' },
+  { label: 'Yellow', color: '#FFEB9C' },
+  { label: 'Orange', color: '#F4B183' },
+  { label: 'Red', color: '#FFC7CE' },
+  { label: 'Purple', color: '#D9C2E9' },
+  { label: 'Blue', color: '#BDD7EE' },
+] as const;
 
 export class FieldColorInput extends Blockly.Field<string | undefined> {
   override EDITABLE = true;
@@ -7690,6 +8650,51 @@ export class FieldColorInput extends Blockly.Field<string | undefined> {
     return (this.getValue() ?? DEFAULT_COLOR).toLocaleUpperCase();
   }
 
+  protected override render_() {
+    if (!this.textElement_) {
+      return;
+    }
+
+    const textElement = this.getTextElement();
+    const constants = this.getConstants();
+
+    if (!constants) {
+      return;
+    }
+
+    const value = this.getText();
+    const fillColor = normalizeEditorColor(this.getValue() ?? DEFAULT_COLOR);
+    const textColor = getReadableTextColor(fillColor);
+    const xPadding = this.isFullBlockField() ? 0 : constants.FIELD_BORDER_RECT_X_PADDING;
+    const yPadding = this.isFullBlockField() ? 0 : constants.FIELD_BORDER_RECT_Y_PADDING;
+
+    textElement.textContent = value;
+    textElement.setAttribute('text-anchor', 'start');
+    textElement.setAttribute('x', String(xPadding));
+    textElement.setAttribute('y', String(yPadding + constants.FIELD_TEXT_BASELINE));
+    textElement.style.fill = textColor;
+
+    const textWidth = Blockly.utils.dom.getFastTextWidth(
+      textElement,
+      constants.FIELD_TEXT_FONTSIZE,
+      constants.FIELD_TEXT_FONTWEIGHT,
+      constants.FIELD_TEXT_FONTFAMILY,
+    );
+    const width = xPadding + textWidth + xPadding;
+    const height = Math.max(constants.FIELD_BORDER_RECT_HEIGHT, constants.FIELD_TEXT_HEIGHT + (yPadding * 2));
+
+    if (this.borderRect_) {
+      this.borderRect_.style.fill = fillColor;
+      this.borderRect_.style.fillOpacity = '1';
+      this.borderRect_.style.stroke = textColor;
+      this.borderRect_.style.strokeOpacity = '0.22';
+      this.borderRect_.style.strokeWidth = '1';
+    }
+
+    this.size_ = new Blockly.utils.Size(width, height);
+    this.positionBorderRect_();
+  }
+
   protected override showEditor_() {
     if (!this.isCurrentlyEditable() || typeof document === 'undefined') {
       return;
@@ -7706,35 +8711,238 @@ export class FieldColorInput extends Blockly.Field<string | undefined> {
     wrapper.addEventListener('pointerdown', stopPropagation);
     wrapper.addEventListener('click', stopPropagation);
 
-    const picker = document.createElement('input');
-    picker.className = 'blockly-color-input__picker';
-    picker.type = 'color';
-    picker.value = normalizeEditorColor(this.getValue() ?? DEFAULT_COLOR);
+    const initialColor = normalizeEditorColor(this.getValue() ?? DEFAULT_COLOR);
+    let selectedColor = initialColor;
+    let recentColors = readRecentFillColors();
+
+    const currentPreview = document.createElement('div');
+    currentPreview.className = 'blockly-color-input__current';
+
+    const currentSwatch = document.createElement('div');
+    currentSwatch.className = 'blockly-color-input__current-swatch';
+    currentSwatch.style.backgroundColor = initialColor;
+
+    const currentMeta = document.createElement('div');
+    currentMeta.className = 'blockly-color-input__current-meta';
+
+    const currentLabel = document.createElement('div');
+    currentLabel.className = 'blockly-color-input__current-label';
+    currentLabel.textContent = 'Selected color';
 
     const valueLabel = document.createElement('div');
     valueLabel.className = 'blockly-color-input__value';
-    valueLabel.textContent = picker.value.toLocaleUpperCase();
+    valueLabel.textContent = initialColor.toLocaleUpperCase();
+
+    currentMeta.append(currentLabel, valueLabel);
+    currentPreview.append(currentSwatch, currentMeta);
+
+    const paletteButtons: HTMLButtonElement[] = [];
+    const recentSection = document.createElement('div');
+    recentSection.className = 'blockly-color-input__section';
+    const recentSectionLabel = document.createElement('div');
+    recentSectionLabel.className = 'blockly-color-input__section-label';
+    recentSectionLabel.textContent = 'Recently used';
+    const recentGrid = document.createElement('div');
+    recentGrid.className = 'blockly-color-input__recent-grid';
+    recentSection.append(recentSectionLabel, recentGrid);
+
+    const customRow = document.createElement('label');
+    customRow.className = 'blockly-color-input__custom';
+
+    const customLabel = document.createElement('span');
+    customLabel.className = 'blockly-color-input__custom-label';
+    customLabel.textContent = 'Custom';
+
+    const customPicker = document.createElement('input');
+    customPicker.className = 'blockly-color-input__picker';
+    customPicker.type = 'color';
+    customPicker.value = initialColor;
+
+    const syncSelectionState = (selectedColor: string) => {
+      paletteButtons.forEach((button) => {
+        button.classList.toggle('blockly-color-input__choice--selected', button.dataset.color === selectedColor);
+      });
+    };
+
+    const renderRecentColors = (selectedColor: string) => {
+      recentGrid.replaceChildren();
+
+      if (recentColors.length === 0) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'blockly-color-input__recent-empty';
+        emptyState.textContent = 'No recent colors yet.';
+        recentGrid.append(emptyState);
+        return;
+      }
+
+      recentColors.forEach((color) => {
+        recentGrid.append(
+          createColorButton({
+            document,
+            color,
+            label: color.toLocaleUpperCase(),
+            variant: 'recent',
+            selected: color === selectedColor,
+            onSelect: () => {
+              applyColor(color);
+            },
+          }),
+        );
+      });
+    };
 
     const applyColor = (nextColor: string) => {
       const normalized = normalizeEditorColor(nextColor);
-      picker.value = normalized;
+      selectedColor = normalized;
+      customPicker.value = normalized;
+      currentSwatch.style.backgroundColor = normalized;
       valueLabel.textContent = normalized.toLocaleUpperCase();
+      syncSelectionState(normalized);
+      renderRecentColors(normalized);
       this.setValue(normalized);
     };
 
-    picker.addEventListener('input', () => {
-      applyColor(picker.value);
+    wrapper.append(currentPreview, recentSection);
+
+    wrapper.append(
+      createPaletteSection(document, 'Colors', FILL_COLOR_CHOICES, initialColor, paletteButtons, (color) => {
+        applyColor(color);
+      }),
+    );
+
+    customPicker.addEventListener('input', () => {
+      applyColor(customPicker.value);
     });
 
-    wrapper.append(picker, valueLabel);
+    customRow.append(customLabel, customPicker);
+    wrapper.append(customRow);
+
+    renderRecentColors(initialColor);
     contentDiv.append(wrapper);
 
     Blockly.DropDownDiv.setColour('#fffaf3', '#d7b98c');
     Blockly.DropDownDiv.showPositionedByField(this, () => {
+      if (selectedColor !== initialColor) {
+        recentColors = pushRecentFillColor(recentColors, selectedColor);
+        writeRecentFillColors(recentColors);
+      }
       wrapper.remove();
     });
 
-    setTimeout(() => picker.focus(), 0);
+    setTimeout(() => customPicker.focus(), 0);
+  }
+}
+
+function createPaletteSection(
+  documentRef: Document,
+  title: string,
+  choices: ReadonlyArray<{ label: string; color: string }>,
+  currentColor: string,
+  paletteButtons: HTMLButtonElement[],
+  onSelect: (color: string) => void,
+) {
+  const section = documentRef.createElement('div');
+  section.className = 'blockly-color-input__section';
+
+  const sectionLabel = documentRef.createElement('div');
+  sectionLabel.className = 'blockly-color-input__section-label';
+  sectionLabel.textContent = title;
+
+  const grid = documentRef.createElement('div');
+  grid.className = 'blockly-color-input__choice-grid';
+
+  choices.forEach((choice) => {
+    const normalizedColor = normalizeEditorColor(choice.color);
+    const button = createColorButton({
+      document: documentRef,
+      color: normalizedColor,
+      label: choice.label,
+      variant: 'palette',
+      selected: normalizedColor === currentColor,
+      onSelect: () => {
+        onSelect(normalizedColor);
+      },
+    });
+    paletteButtons.push(button);
+    grid.append(button);
+  });
+
+  section.append(sectionLabel, grid);
+  return section;
+}
+
+function createColorButton({
+  document,
+  color,
+  label,
+  variant,
+  selected,
+  onSelect,
+}: {
+  document: Document;
+  color: string;
+  label: string;
+  variant: 'palette' | 'recent';
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const button = document.createElement('button');
+
+  button.type = 'button';
+  button.className = `blockly-color-input__choice blockly-color-input__choice--${variant}`;
+  button.dataset.color = color;
+  button.title = label;
+  button.setAttribute('aria-label', `Select ${label} (${color})`);
+  button.style.backgroundColor = color;
+  button.style.color = getReadableTextColor(color);
+  button.classList.toggle('blockly-color-input__choice--selected', selected);
+  button.addEventListener('click', onSelect);
+
+  return button;
+}
+
+export function pushRecentFillColor(recentColors: string[], nextColor: string) {
+  const normalized = normalizeEditorColor(nextColor);
+
+  return [normalized, ...recentColors.filter((color) => color !== normalized)].slice(0, MAX_RECENT_FILL_COLORS);
+}
+
+function readRecentFillColors() {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(RECENT_FILL_COLOR_STORAGE_KEY);
+
+    if (!rawValue) {
+      return [];
+    }
+
+    const parsed = JSON.parse(rawValue);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => normalizeEditorColor(value))
+      .slice(0, MAX_RECENT_FILL_COLORS);
+  } catch {
+    return [];
+  }
+}
+
+function writeRecentFillColors(recentColors: string[]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(RECENT_FILL_COLOR_STORAGE_KEY, JSON.stringify(recentColors));
+  } catch {
+    // Ignore storage write failures so the picker stays usable in restricted contexts.
   }
 }
 
@@ -8282,6 +9490,7 @@ export {
   workflowToAuthoringWorkflow,
 } from './authoring';
 export {
+  createWorkspacePromptSnapshot,
   createDefaultWorkflow,
   createHeadlessWorkflowWorkspace,
   getWorkspaceMetadata,
@@ -8295,7 +9504,7 @@ export {
 } from './mapping';
 export { collectWorkflowColumnIds, getSchemaColumnOptions, setEditorSchemaColumns } from './schemaOptions';
 export { formatColumnSelectionSummary, getSelectableColumnTypeGroups } from './FieldColumnMultiSelect';
-export type { EditorIssue, WorkspaceWorkflowResult } from './types';
+export type { EditorIssue, EditorWorkspaceChange, WorkspaceWorkflowResult } from './types';
 
 ===== src\editor\integration.ts =====
 import type * as Blockly from 'blockly';
@@ -8423,6 +9632,7 @@ describe('block-based workflow authoring', () => {
       BLOCK_TYPES.currentValueExpression,
       BLOCK_TYPES.lowerFunction,
       BLOCK_TYPES.scopedRuleCasesStep,
+      BLOCK_TYPES.setValueActionItem,
       BLOCK_TYPES.trimFunction,
     ]);
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
@@ -8438,7 +9648,6 @@ describe('block-based workflow authoring', () => {
       valueEnabled: true,
       value: call('lower', call('trim', value())),
       formatEnabled: false,
-      fillColor: '#fff2cc',
     });
   });
 
@@ -8462,13 +9671,13 @@ describe('block-based workflow authoring', () => {
             valueEnabled: true,
             value: call('substring', value(), literal(0), literal(3)),
             formatEnabled: false,
-            fillColor: '#fff2cc',
+            fillColor: '#ffeb9c',
           },
           cases: [],
           defaultPatch: {
             valueEnabled: false,
             formatEnabled: false,
-            fillColor: '#fff2cc',
+            fillColor: '#ffeb9c',
           },
         },
       ],
@@ -8544,7 +9753,7 @@ describe('block-based workflow authoring', () => {
           rowCondition: call('equals', column('col_vip'), literal(true)),
           defaultPatch: {
             format: {
-              fillColor: '#fff2cc',
+              fillColor: '#ffeb9c',
             },
           },
         },
@@ -8554,9 +9763,13 @@ describe('block-based workflow authoring', () => {
     const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_vip'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
     const [topBlock] = workspace.getTopBlocks(false);
+    const defaultActionBlock = topBlock?.getInputTargetBlock('DEFAULT_ACTIONS');
+    const defaultColorBlock = defaultActionBlock?.getInputTargetBlock('COLOR');
 
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
-    expect(topBlock?.getFieldValue('DEFAULT_COLOR')).toBe('#fff2cc');
+    expect(defaultActionBlock?.type).toBe(BLOCK_TYPES.highlightActionItem);
+    expect(defaultColorBlock?.type).toBe(BLOCK_TYPES.literalColor);
+    expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#ffeb9c');
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
   });
@@ -8577,7 +9790,7 @@ describe('block-based workflow authoring', () => {
               then: {
                 value: literal('unknown'),
                 format: {
-                  fillColor: '#fff2cc',
+                  fillColor: '#ffeb9c',
                 },
               },
             },
@@ -8596,6 +9809,49 @@ describe('block-based workflow authoring', () => {
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
+  });
+
+  it('reconstructs scoped-rule action stacks in normalized order from canonical workflow patches', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_case_action_order',
+      name: 'Case action order',
+      steps: [
+        {
+          id: 'step_case_action_order',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          cases: [
+            {
+              when: call('isEmpty', value()),
+              then: {
+                value: literal('unknown'),
+                format: {
+                  fillColor: '#ff0000',
+                },
+              },
+            },
+          ],
+          defaultPatch: {
+            value: call('lower', value()),
+            format: {
+              fillColor: '#ffeb9c',
+            },
+          },
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_status'], workflow);
+    const [topBlock] = workspace.getTopBlocks(false);
+    const ruleCaseBlock = topBlock?.getInputTargetBlock('CASES');
+    const firstCaseAction = ruleCaseBlock?.getInputTargetBlock('ACTIONS');
+    const defaultAction = topBlock?.getInputTargetBlock('DEFAULT_ACTIONS');
+
+    expect(firstCaseAction?.type).toBe(BLOCK_TYPES.setValueActionItem);
+    expect(firstCaseAction?.getNextBlock()?.type).toBe(BLOCK_TYPES.highlightActionItem);
+    expect(defaultAction?.type).toBe(BLOCK_TYPES.setValueActionItem);
+    expect(defaultAction?.getNextBlock()?.type).toBe(BLOCK_TYPES.highlightActionItem);
   });
 
   it('wraps long comment text into multiple display lines without truncating content', () => {
@@ -8990,6 +10246,29 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.predicateFunction);
   });
 
+  it('roundtrips isEmpty logic expressions through a dedicated unary predicate block', () => {
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_is_empty_roundtrip',
+      name: 'Is empty roundtrip',
+      steps: [
+        {
+          id: 'step_filter_empty_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('isEmpty', column('col_email')),
+        },
+      ],
+    };
+
+    const workspace = buildWorkspaceFromColumnIds(['col_email'], workflow);
+    const roundtrip = workspaceToWorkflow(workspace);
+
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.unaryPredicateFunction);
+  });
+
   it('roundtrips symbolic comparator operators without semantic loss', () => {
     const workflow: Workflow = {
       version: 2,
@@ -9200,23 +10479,232 @@ describe('block-based workflow authoring', () => {
     const transformBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
     const comparisonBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
     const predicateBlock = workspace.newBlock(BLOCK_TYPES.predicateFunction);
+    const unaryPredicateBlock = workspace.newBlock(BLOCK_TYPES.unaryPredicateFunction);
     const logicalBlock = workspace.newBlock(BLOCK_TYPES.logicalBinaryFunction);
 
     expect(transformBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
     expect(predicateBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(unaryPredicateBlock.outputConnection?.getCheck()).toEqual(['EXPRESSION']);
     expect(comparisonBlock.getFieldValue('OPERATOR')).toBe('eq');
     expect(predicateBlock.getFieldValue('OPERATOR')).toBe('contains');
+    expect(unaryPredicateBlock.getFieldValue('OPERATOR')).toBe('isEmpty');
     expect(logicalBlock.getFieldValue('OPERATOR')).toBe('and');
     expect(comparisonBlock.inputsInline).toBe(true);
     expect(predicateBlock.inputsInline).toBe(true);
+    expect(unaryPredicateBlock.inputsInline).toBe(true);
     expect(logicalBlock.inputsInline).toBe(false);
     expect(logicalBlock.getInput('HEADER')).toBeTruthy();
     expect(logicalBlock.getField('ADD_ITEM')).toBeTruthy();
     expect(logicalBlock.getField('REMOVE_ITEM')).toBeTruthy();
     expect(predicateBlock.getInput('FIRST')).toBeTruthy();
     expect(predicateBlock.getInput('SECOND')).toBeTruthy();
+    expect(unaryPredicateBlock.getInput('INPUT')).toBeTruthy();
     expect(logicalBlock.getInput('ITEM0')).toBeTruthy();
     expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
+  });
+
+  it('lays out scoped-rule cases and defaults with nested cell-action statements', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep) as {
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem) as {
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+    const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem) as {
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+
+    expect(ruleCaseBlock.inputList.map((input) => input.name)).toEqual(['WHEN', 'ACTIONS']);
+    expect(ruleCaseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('case: when');
+    expect(ruleCaseBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('do');
+    expect(ruleCaseBlock.getInput('ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
+    expect(scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
+    expect(setValueActionBlock.getInput('VALUE')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(highlightActionBlock.getInput('COLOR')?.connection?.getCheck()).toEqual(['COLOR_LITERAL']);
+  });
+
+  it('compiles rule-case value actions from nested set-value blocks', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const valueBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    valueBlock.setFieldValue('fallback@example.com', 'VALUE');
+    whenBlock.setFieldValue('true', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(valueBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+    const step = result.workflow?.steps[0];
+
+    if (!step || step.kind !== 'scopedRule') {
+      throw new Error('Expected a scoped rule authoring step.');
+    }
+
+    expect(result.issues).toEqual([]);
+    expect(step.cases[0]).toEqual({
+      when: { kind: 'literal', value: true },
+      then: {
+        valueEnabled: true,
+        value: { kind: 'literal', value: 'fallback@example.com' },
+        formatEnabled: false,
+      },
+    });
+  });
+
+  it('compiles rule-case highlight colors from nested highlight action blocks', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const colorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    colorBlock.setFieldValue('#ff2ccc', 'VALUE');
+    whenBlock.setFieldValue('true', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(highlightActionBlock.previousConnection!);
+    highlightActionBlock.getInput('COLOR')?.connection?.connect(colorBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+    const step = result.workflow?.steps[0];
+
+    if (!step || step.kind !== 'scopedRule') {
+      throw new Error('Expected a scoped rule authoring step.');
+    }
+
+    expect(result.issues).toEqual([]);
+    expect(step.cases[0]).toEqual({
+      when: { kind: 'literal', value: true },
+      then: {
+        valueEnabled: false,
+        formatEnabled: true,
+        fillColor: '#ff2ccc',
+      },
+    });
+  });
+
+  it('drops empty rule-case action stacks when another action keeps the scoped rule effective', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const emptyRuleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const valueBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('true', 'VALUE');
+    valueBlock.setFieldValue('fallback@example.com', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(emptyRuleCaseBlock.previousConnection!);
+    emptyRuleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(valueBlock.outputConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+    expect(result.workflow?.steps[0]).toEqual({
+      id: 'step_scoped_rule_1',
+      type: 'scopedRule',
+      columnIds: ['col_email'],
+      defaultPatch: {
+        value: { kind: 'literal', value: 'fallback@example.com' },
+      },
+    });
+  });
+
+  it('treats empty rule-case action stacks as no-ops until the step-level validation runs', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('true', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingRuleCases',
+        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
+        blockId: scopedRuleBlock.id,
+        blockType: BLOCK_TYPES.scopedRuleCasesStep,
+      },
+    ]);
+  });
+
+  it('surfaces duplicate cell actions within a single rule case', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.literalBoolean);
+    const firstHighlightBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const secondHighlightBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const firstColorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+    const secondColorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('true', 'VALUE');
+    firstColorBlock.setFieldValue('#ff2ccc', 'VALUE');
+    secondColorBlock.setFieldValue('#ffeb9c', 'VALUE');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(firstHighlightBlock.previousConnection!);
+    firstHighlightBlock.nextConnection?.connect(secondHighlightBlock.previousConnection!);
+    firstHighlightBlock.getInput('COLOR')?.connection?.connect(firstColorBlock.outputConnection!);
+    secondHighlightBlock.getInput('COLOR')?.connection?.connect(secondColorBlock.outputConnection!);
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'duplicateCellAction',
+        message: `Block '${BLOCK_TYPES.ruleCaseItem}' cannot define more than one 'highlight' action.`,
+        blockId: secondHighlightBlock.id,
+        blockType: BLOCK_TYPES.highlightActionItem,
+      },
+    ]);
+  });
+
+  it('treats empty scoped-rule default action stacks as no default patch', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+
+    const result = workspaceToAuthoringWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingRuleCases',
+        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
+        blockId: scopedRuleBlock.id,
+        blockType: BLOCK_TYPES.scopedRuleCasesStep,
+      },
+    ]);
   });
 
   it('exposes schema-aware explicit column IDs for multi-select fields', async () => {
@@ -9357,7 +10845,7 @@ function buildAllStepsWorkflow(): Workflow {
         rowCondition: call('equals', column('col_vip'), literal(true)),
         defaultPatch: {
           format: {
-            fillColor: '#fff2cc',
+            fillColor: '#ffeb9c',
           },
         },
       },
@@ -9554,7 +11042,7 @@ function createColumn(columnId: string, displayName: string, logicalType: Table[
 ===== src\editor\mapping.ts =====
 import * as Blockly from 'blockly';
 
-import { type Table } from '../domain/model';
+import { isValidFillColor, type Table } from '../domain/model';
 import { slugify } from '../domain/normalize';
 import { projectWorkflowStepSchema, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from '../workflow';
 
@@ -9800,6 +11288,39 @@ export function workflowToJson(workflow: Workflow) {
   return `${JSON.stringify(workflow, null, 2)}\n`;
 }
 
+export function createWorkspacePromptSnapshot(workspace: Blockly.Workspace) {
+  registerWorkflowBlocks();
+
+  const metadata = getWorkspaceMetadata(workspace);
+  const topBlocks = sortBlocksByPosition(workspace.getTopBlocks(false));
+  const serializedBlocks = topBlocks
+    .map((block) =>
+      sanitizePromptBlockState(
+        Blockly.serialization.blocks.save(block, {
+          addCoordinates: false,
+          addInputBlocks: true,
+          addNextBlocks: true,
+          doFullSerialization: false,
+          saveIds: false,
+        }) as Record<string, unknown> | null,
+      ),
+    )
+    .filter((block): block is Record<string, unknown> => block !== null);
+
+  return `${JSON.stringify(
+    {
+      metadata: {
+        workflowId: metadata.workflowId,
+        name: metadata.name,
+        description: metadata.description,
+      },
+      topBlocks: serializedBlocks,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep[]; issues: EditorIssue[] } {
   const steps: AuthoringStep[] = [];
   const issues: EditorIssue[] = [];
@@ -9818,6 +11339,102 @@ function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep
   }
 
   return { steps, issues };
+}
+
+function sanitizePromptBlockState(state: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!state) {
+    return null;
+  }
+
+  const sanitized: Record<string, unknown> = {
+    type: state.type,
+  };
+  const fields = sanitizePromptValue(state.fields);
+  const extraState = sanitizePromptValue(state.extraState);
+  const inputs = sanitizePromptInputs(state.inputs);
+  const next = sanitizePromptConnection(state.next);
+
+  if (fields && typeof fields === 'object' && !Array.isArray(fields) && Object.keys(fields).length > 0) {
+    sanitized.fields = fields;
+  }
+
+  if (extraState !== undefined) {
+    sanitized.extraState = extraState;
+  }
+
+  if (inputs && Object.keys(inputs).length > 0) {
+    sanitized.inputs = inputs;
+  }
+
+  if (next) {
+    sanitized.next = next;
+  }
+
+  return sanitized;
+}
+
+function sanitizePromptInputs(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const sanitizedEntries = Object.entries(value).flatMap(([key, connection]) => {
+    const sanitizedConnection = sanitizePromptConnection(connection);
+    return sanitizedConnection ? [[key, sanitizedConnection] as const] : [];
+  });
+
+  return sanitizedEntries.length > 0 ? Object.fromEntries(sanitizedEntries) : null;
+}
+
+function sanitizePromptConnection(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const connection = value as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = {};
+  const block = sanitizePromptBlockState(connection.block as Record<string, unknown> | null);
+  const shadow = sanitizePromptBlockState(connection.shadow as Record<string, unknown> | null);
+
+  if (block) {
+    sanitized.block = block;
+  }
+
+  if (shadow) {
+    sanitized.shadow = shadow;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+}
+
+function sanitizePromptValue(value: unknown): unknown {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'number'
+    || typeof value === 'boolean'
+  ) {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const sanitizedItems = value
+      .map((item) => sanitizePromptValue(item))
+      .filter((item) => item !== undefined);
+
+    return sanitizedItems.length > 0 ? sanitizedItems : undefined;
+  }
+
+  if (typeof value !== 'object') {
+    return undefined;
+  }
+
+  const sanitizedEntries = Object.entries(value).flatMap(([key, nestedValue]) => {
+    const sanitizedNestedValue = sanitizePromptValue(nestedValue);
+    return sanitizedNestedValue === undefined ? [] : [[key, sanitizedNestedValue] as const];
+  });
+
+  return sanitizedEntries.length > 0 ? Object.fromEntries(sanitizedEntries) : undefined;
 }
 
 function getOrderedStepBlocks(workspace: Blockly.Workspace) {
@@ -9891,13 +11508,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
         return { step: undefined as never, issue: rowCondition.issue };
       }
 
-      const defaultPatch = readAuthoringCellPatch(block, {
-        valueEnabledField: 'DEFAULT_VALUE_ENABLED',
-        valueInput: 'DEFAULT_VALUE',
-        formatEnabledField: 'DEFAULT_FORMAT_ENABLED',
-        colorField: 'DEFAULT_COLOR',
-        required: false,
-      });
+      const defaultPatch = readAuthoringCellPatchActions(block, 'DEFAULT_ACTIONS');
 
       if ('issue' in defaultPatch) {
         return { step: undefined as never, issue: defaultPatch.issue };
@@ -9909,7 +11520,10 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
         return { step: undefined as never, issue: cases.issue };
       }
 
-      if (cases.cases.length === 0 && !isAuthoringCellPatchEnabled(defaultPatch.patch)) {
+      const hasEffectiveCases = cases.cases.some((ruleCase) => isAuthoringCellPatchEnabled(ruleCase.then));
+      const hasDefaultPatch = isAuthoringCellPatchEnabled(defaultPatch.patch);
+
+      if (!hasEffectiveCases && !hasDefaultPatch) {
         return {
           step: undefined as never,
           issue: {
@@ -9929,12 +11543,12 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
           rowCondition: rowCondition.expression,
-          mode: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch) ? 'single' : 'cases',
-          singlePatch: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch)
+          mode: cases.caseCount === 0 && hasDefaultPatch ? 'single' : 'cases',
+          singlePatch: cases.caseCount === 0 && hasDefaultPatch
             ? defaultPatch.patch
             : createEmptyAuthoringCellPatch(),
           cases: cases.cases,
-          defaultPatch: cases.cases.length === 0 && isAuthoringCellPatchEnabled(defaultPatch.patch)
+          defaultPatch: cases.caseCount === 0 && hasDefaultPatch
             ? createEmptyAuthoringCellPatch()
             : defaultPatch.patch,
         },
@@ -10134,37 +11748,64 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
   return readExpression(expressionBlock);
 }
 
-function readAuthoringCellPatch(
+function readAuthoringCellPatchActions(
   block: Blockly.Block,
-  fields: {
-    valueEnabledField: string;
-    valueInput: string;
-    formatEnabledField: string;
-    colorField: string;
-    required: boolean;
-  },
-): { patch: AuthoringCellPatch } | { issue: EditorIssue } {
-  const valueEnabled = isCheckboxFieldChecked(block, fields.valueEnabledField);
-  const formatEnabled = isCheckboxFieldChecked(block, fields.formatEnabledField);
+  inputName: string,
+): { patch: AuthoringCellPatch; actionCount: number } | { issue: EditorIssue } {
+  let valueEnabled = false;
   let value: WorkflowExpression | undefined;
+  let formatEnabled = false;
+  let fillColor: string | undefined;
+  let actionCount = 0;
+  let current = block.getInputTargetBlock(inputName);
 
-  if (valueEnabled) {
-    const expression = readRequiredExpression(block, fields.valueInput);
+  while (current) {
+    actionCount += 1;
 
-    if ('issue' in expression) {
-      return expression;
+    if (current.type === BLOCK_TYPES.setValueActionItem) {
+      if (valueEnabled) {
+        return {
+          issue: duplicateCellActionIssue(block, current, 'set value'),
+        };
+      }
+
+      const expression = readRequiredExpression(current, 'VALUE');
+
+      if ('issue' in expression) {
+        return expression;
+      }
+
+      valueEnabled = true;
+      value = expression.expression;
+      current = current.getNextBlock();
+      continue;
     }
 
-    value = expression.expression;
-  }
+    if (current.type === BLOCK_TYPES.highlightActionItem) {
+      if (formatEnabled) {
+        return {
+          issue: duplicateCellActionIssue(block, current, 'highlight'),
+        };
+      }
 
-  if (!valueEnabled && !formatEnabled && fields.required) {
+      const colorLiteral = readRequiredColorLiteral(current, 'COLOR');
+
+      if ('issue' in colorLiteral) {
+        return colorLiteral;
+      }
+
+      formatEnabled = true;
+      fillColor = colorLiteral.fillColor;
+      current = current.getNextBlock();
+      continue;
+    }
+
     return {
       issue: {
-        code: 'missingPatch',
-        message: `Block '${block.type}' must define a value change or fill color.`,
-        blockId: block.id,
-        blockType: block.type,
+        code: 'invalidCellActionBlock',
+        message: `Block '${block.type}' contains unsupported action block '${current.type}'.`,
+        blockId: current.id,
+        blockType: current.type,
       },
     };
   }
@@ -10174,16 +11815,59 @@ function readAuthoringCellPatch(
       valueEnabled,
       ...(value ? { value } : {}),
       formatEnabled,
-      fillColor: getFieldString(block, fields.colorField),
+      ...(fillColor ? { fillColor } : {}),
     },
+    actionCount,
   };
 }
 
-function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[] } | { issue: EditorIssue } {
+function readOptionalColorLiteral(block: Blockly.Block, inputName: string): { fillColor?: string } | { issue: EditorIssue } {
+  const colorBlock = block.getInputTargetBlock(inputName);
+
+  if (!colorBlock) {
+    return { fillColor: undefined };
+  }
+
+  if (colorBlock.type !== BLOCK_TYPES.literalColor) {
+    return {
+      issue: {
+        code: 'invalidColorBlock',
+        message: `Block '${block.type}' must use a color block for '${inputName}'.`,
+        blockId: colorBlock.id,
+        blockType: colorBlock.type,
+      },
+    };
+  }
+
+  return { fillColor: getFieldString(colorBlock, 'VALUE') };
+}
+
+function readRequiredColorLiteral(block: Blockly.Block, inputName: string): { fillColor: string } | { issue: EditorIssue } {
+  const colorLiteral = readOptionalColorLiteral(block, inputName);
+
+  if ('issue' in colorLiteral) {
+    return colorLiteral;
+  }
+
+  if (!colorLiteral.fillColor) {
+    return {
+      issue: missingInputIssue(block, inputName),
+    };
+  }
+
+  return {
+    fillColor: colorLiteral.fillColor,
+  };
+}
+
+function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[]; caseCount: number } | { issue: EditorIssue } {
   const cases: AuthoringRuleCase[] = [];
+  let caseCount = 0;
   let current = block.getInputTargetBlock(inputName);
 
   while (current) {
+    caseCount += 1;
+
     if (current.type !== BLOCK_TYPES.ruleCaseItem) {
       return {
         issue: {
@@ -10201,13 +11885,7 @@ function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases
       return when;
     }
 
-    const then = readAuthoringCellPatch(current, {
-      valueEnabledField: 'VALUE_ENABLED',
-      valueInput: 'VALUE',
-      formatEnabledField: 'FORMAT_ENABLED',
-      colorField: 'COLOR',
-      required: true,
-    });
+    const then = readAuthoringCellPatchActions(current, 'ACTIONS');
 
     if ('issue' in then) {
       return then;
@@ -10220,7 +11898,7 @@ function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases
     current = current.getNextBlock();
   }
 
-  return { cases };
+  return { cases, caseCount };
 }
 
 function isAuthoringCellPatchEnabled(patch: AuthoringCellPatch) {
@@ -10231,7 +11909,7 @@ function createEmptyAuthoringCellPatch(): AuthoringCellPatch {
   return {
     valueEnabled: false,
     formatEnabled: false,
-    fillColor: '#fff2cc',
+    fillColor: '#ffeb9c',
   };
 }
 
@@ -10252,6 +11930,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
     case BLOCK_TYPES.currentValueExpression:
       return { expression: { kind: 'value' } };
     case BLOCK_TYPES.literalString:
+      return { expression: { kind: 'literal', value: getFieldString(block, 'VALUE') } };
+    case BLOCK_TYPES.literalColor:
       return { expression: { kind: 'literal', value: getFieldString(block, 'VALUE') } };
     case BLOCK_TYPES.literalNumber:
       return { expression: { kind: 'literal', value: Number(block.getFieldValue('VALUE') ?? 0) } };
@@ -10381,6 +12061,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readComparisonExpression(block);
     case BLOCK_TYPES.predicateFunction:
       return readPredicateExpression(block);
+    case BLOCK_TYPES.unaryPredicateFunction:
+      return readUnaryPredicateExpression(block);
     case BLOCK_TYPES.logicalBinaryFunction:
       return readLogicalBinaryExpression(block);
     default:
@@ -10397,7 +12079,7 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
 
 function readUnaryCall(
   block: Blockly.Block,
-  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'isEmpty' | 'not',
+  name: 'trim' | 'lower' | 'upper' | 'collapseWhitespace' | 'first' | 'last' | 'not',
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   return readFixedArityCall(block, name, ['INPUT']);
 }
@@ -10553,13 +12235,13 @@ function readComparisonExpression(block: Blockly.Block): { expression: WorkflowE
 }
 
 function readPredicateExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
-  const operator = getFieldString(block, 'OPERATOR') as 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex' | 'isEmpty';
-
-  if (operator === 'isEmpty') {
-    return readFixedArityCall(block, operator, ['INPUT']);
-  }
+  const operator = getFieldString(block, 'OPERATOR') as 'contains' | 'startsWith' | 'endsWith' | 'matchesRegex';
 
   return readFixedArityCall(block, operator, ['FIRST', 'SECOND']);
+}
+
+function readUnaryPredicateExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  return readFixedArityCall(block, getFieldString(block, 'OPERATOR') as 'isEmpty', ['INPUT']);
 }
 
 function readLogicalBinaryExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -10903,12 +12585,11 @@ function createScopedRuleBlock(workspace: Blockly.Workspace, step: AuthoringScop
     connectValueBlock(block, 'ROW_CONDITION', createExpressionBlock(workspace, step.rowCondition));
   }
 
-  setAuthoringCellPatchFields(block, {
-    valueEnabledField: 'DEFAULT_VALUE_ENABLED',
-    valueInput: 'DEFAULT_VALUE',
-    formatEnabledField: 'DEFAULT_FORMAT_ENABLED',
-    colorField: 'DEFAULT_COLOR',
-  }, step.mode === 'single' ? step.singlePatch : step.defaultPatch, workspace);
+  connectStatementChain(
+    block,
+    'DEFAULT_ACTIONS',
+    createCellActionBlocks(workspace, step.mode === 'single' ? step.singlePatch : step.defaultPatch),
+  );
 
   if (step.mode === 'cases' && step.cases.length > 0) {
     connectStatementChain(block, 'CASES', step.cases.map((ruleCase) => createRuleCaseBlock(workspace, ruleCase)));
@@ -10921,34 +12602,29 @@ function createRuleCaseBlock(workspace: Blockly.Workspace, ruleCase: AuthoringRu
   const block = createBlock(workspace, BLOCK_TYPES.ruleCaseItem);
 
   connectValueBlock(block, 'WHEN', createExpressionBlock(workspace, ruleCase.when));
-  setAuthoringCellPatchFields(block, {
-    valueEnabledField: 'VALUE_ENABLED',
-    valueInput: 'VALUE',
-    formatEnabledField: 'FORMAT_ENABLED',
-    colorField: 'COLOR',
-  }, ruleCase.then, workspace);
+  connectStatementChain(block, 'ACTIONS', createCellActionBlocks(workspace, ruleCase.then));
 
   return block;
 }
 
-function setAuthoringCellPatchFields(
-  block: Blockly.Block,
-  fields: {
-    valueEnabledField: string;
-    valueInput: string;
-    formatEnabledField: string;
-    colorField: string;
-  },
-  patch: AuthoringCellPatch,
-  workspace: Blockly.Workspace,
-) {
-  block.setFieldValue(patch.valueEnabled ? 'TRUE' : 'FALSE', fields.valueEnabledField);
-  block.setFieldValue(patch.formatEnabled ? 'TRUE' : 'FALSE', fields.formatEnabledField);
-  block.setFieldValue(patch.fillColor ?? '#fff2cc', fields.colorField);
+function createCellActionBlocks(workspace: Blockly.Workspace, patch: AuthoringCellPatch) {
+  const blocks: Blockly.Block[] = [];
 
   if (patch.valueEnabled && patch.value) {
-    connectValueBlock(block, fields.valueInput, createExpressionBlock(workspace, patch.value));
+    const setValueBlock = createBlock(workspace, BLOCK_TYPES.setValueActionItem);
+
+    connectValueBlock(setValueBlock, 'VALUE', createExpressionBlock(workspace, patch.value));
+    blocks.push(setValueBlock);
   }
+
+  if (patch.formatEnabled && patch.fillColor) {
+    const highlightBlock = createBlock(workspace, BLOCK_TYPES.highlightActionItem);
+
+    connectValueBlock(highlightBlock, 'COLOR', createColorLiteralBlock(workspace, patch.fillColor));
+    blocks.push(highlightBlock);
+  }
+
+  return blocks;
 }
 
 function createRenameColumnBlock(workspace: Blockly.Workspace, step: AuthoringRenameColumnStep, isTopBlock: boolean) {
@@ -11058,7 +12734,9 @@ function createLiteralBlock(workspace: Blockly.Workspace, value: string | number
   }
 
   if (typeof value === 'string') {
-    const block = createBlock(workspace, BLOCK_TYPES.literalString);
+    const block = isValidFillColor(value)
+      ? createBlock(workspace, BLOCK_TYPES.literalColor)
+      : createBlock(workspace, BLOCK_TYPES.literalString);
 
     block.setFieldValue(value, 'VALUE');
     return block;
@@ -11074,6 +12752,13 @@ function createLiteralBlock(workspace: Blockly.Workspace, value: string | number
   const block = createBlock(workspace, BLOCK_TYPES.literalBoolean);
 
   block.setFieldValue(value ? 'true' : 'false', 'VALUE');
+  return block;
+}
+
+function createColorLiteralBlock(workspace: Blockly.Workspace, value: string) {
+  const block = createBlock(workspace, BLOCK_TYPES.literalColor);
+
+  block.setFieldValue(value, 'VALUE');
   return block;
 }
 
@@ -11260,19 +12945,20 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'contains':
     case 'startsWith':
     case 'endsWith':
-    case 'matchesRegex':
-    case 'isEmpty': {
+    case 'matchesRegex': {
       const block = createBlock(workspace, BLOCK_TYPES.predicateFunction);
 
       block.setFieldValue(expression.name, 'OPERATOR');
 
-      if (expression.name === 'isEmpty') {
-        connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
-        return block;
-      }
-
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
+      return block;
+    }
+    case 'isEmpty': {
+      const block = createBlock(workspace, BLOCK_TYPES.unaryPredicateFunction);
+
+      block.setFieldValue(expression.name, 'OPERATOR');
+      connectValueBlock(block, 'INPUT', createExpressionBlock(workspace, expression.args[0]));
       return block;
     }
     case 'and':
@@ -11408,10 +13094,6 @@ function getFieldString(block: Blockly.Block, fieldName: string) {
   return String(block.getFieldValue(fieldName) ?? '');
 }
 
-function isCheckboxFieldChecked(block: Blockly.Block, fieldName: string) {
-  return getFieldString(block, fieldName).toUpperCase() === 'TRUE';
-}
-
 function readCreateColumnExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
   const mode = getCreateColumnMode(block);
 
@@ -11488,6 +13170,15 @@ function missingInputIssue(block: Blockly.Block, inputName: string): EditorIssue
     message: `Block '${block.type}' is missing required input '${inputName}'.`,
     blockId: block.id,
     blockType: block.type,
+  };
+}
+
+function duplicateCellActionIssue(containerBlock: Blockly.Block, actionBlock: Blockly.Block, actionLabel: string): EditorIssue {
+  return {
+    code: 'duplicateCellAction',
+    message: `Block '${containerBlock.type}' cannot define more than one '${actionLabel}' action.`,
+    blockId: actionBlock.id,
+    blockType: actionBlock.type,
   };
 }
 
@@ -11645,7 +13336,7 @@ function collectExpressionColumnIds(expression: WorkflowExpression, columnIds: S
 ===== src\editor\toolbox.test.ts =====
 import { describe, expect, it } from 'vitest';
 
-import { BLOCK_TYPES, CHECKBOX_FALSE, CHECKBOX_TRUE, SCOPED_RULE_INPUT_NAMES } from './blocks';
+import { BLOCK_TYPES } from './blocks';
 import {
   filterWorkflowToolboxEntries,
   getWorkflowToolboxCategory,
@@ -11670,6 +13361,9 @@ describe('workflow toolbox search', () => {
   it('finds generic logic blocks through keyword search', () => {
     const comparisonMatches = getWorkflowToolboxCategoryContents('category_logic', 'greater');
     const predicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'regex');
+    const unaryPredicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'empty');
+    const colorMatches = getWorkflowToolboxCategoryContents('category_values', 'highlight');
+    const cellActionMatches = getWorkflowToolboxCategoryContents('category_cell_actions', 'highlight');
 
     expect(comparisonMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.comparisonFunction })]),
@@ -11677,9 +13371,18 @@ describe('workflow toolbox search', () => {
     expect(predicateMatches).toEqual(
       expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.predicateFunction })]),
     );
+    expect(unaryPredicateMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.unaryPredicateFunction })]),
+    );
+    expect(colorMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.literalColor })]),
+    );
+    expect(cellActionMatches).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.highlightActionItem })]),
+    );
   });
 
-  it('preserves preset fields on filtered scoped rule entries', () => {
+  it('keeps the scoped rule block available on filtered searches', () => {
     const contents = getWorkflowToolboxCategoryContents('category_scoped_rules', 'highlight');
     const scopedRuleEntry = contents.find(
       (item): item is Extract<(typeof contents)[number], { kind: 'block' }> =>
@@ -11690,10 +13393,6 @@ describe('workflow toolbox search', () => {
       expect.objectContaining({
         kind: 'block',
         type: BLOCK_TYPES.scopedRuleCasesStep,
-        fields: {
-          [SCOPED_RULE_INPUT_NAMES.defaultValueEnabled]: CHECKBOX_TRUE,
-          [SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled]: CHECKBOX_FALSE,
-        },
       }),
     );
   });
@@ -11740,6 +13439,17 @@ describe('workflow toolbox search', () => {
       ]),
     );
   });
+
+  it('exposes cell actions in their own toolbox category directly after scoped rules', () => {
+    const categoryIds = WORKFLOW_TOOLBOX_CATEGORIES.map((category) => category.id);
+    const cellActionsCategory = getWorkflowToolboxCategory('category_cell_actions');
+
+    expect(categoryIds.indexOf('category_cell_actions')).toBe(categoryIds.indexOf('category_scoped_rules') + 1);
+    expect(cellActionsCategory?.entries).toEqual([
+      expect.objectContaining({ type: BLOCK_TYPES.setValueActionItem }),
+      expect.objectContaining({ type: BLOCK_TYPES.highlightActionItem }),
+    ]);
+  });
 });
 
 ===== src\editor\toolbox.ts =====
@@ -11747,9 +13457,6 @@ import * as Blockly from 'blockly';
 
 import {
   BLOCK_TYPES,
-  CHECKBOX_FALSE,
-  CHECKBOX_TRUE,
-  SCOPED_RULE_INPUT_NAMES,
   WORKFLOW_TOOLBOX_COLOURS,
 } from './blocks';
 
@@ -11774,15 +13481,26 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     entries: [
       {
         type: BLOCK_TYPES.scopedRuleCasesStep,
-        fields: {
-          [SCOPED_RULE_INPUT_NAMES.defaultValueEnabled]: CHECKBOX_TRUE,
-          [SCOPED_RULE_INPUT_NAMES.defaultFormatEnabled]: CHECKBOX_FALSE,
-        },
         searchText: 'scoped rule transform update cells value color format highlight case default apply',
       },
       {
         type: BLOCK_TYPES.ruleCaseItem,
         searchText: 'rule case branch when then condition result color format value',
+      },
+    ],
+  },
+  {
+    id: 'category_cell_actions',
+    name: 'Cell actions',
+    colour: WORKFLOW_TOOLBOX_COLOURS.cellActions,
+    entries: [
+      {
+        type: BLOCK_TYPES.setValueActionItem,
+        searchText: 'cell actions set value update replace expression patch current cell',
+      },
+      {
+        type: BLOCK_TYPES.highlightActionItem,
+        searchText: 'cell actions highlight fill color format patch annotate emphasis',
       },
     ],
   },
@@ -11814,6 +13532,7 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     entries: [
       { type: BLOCK_TYPES.currentValueExpression, searchText: 'current value selected cell input value' },
       { type: BLOCK_TYPES.literalString, searchText: 'text string literal value characters' },
+      { type: BLOCK_TYPES.literalColor, searchText: 'color hex highlight fill swatch literal value' },
       { type: BLOCK_TYPES.literalNumber, searchText: 'number numeric literal integer decimal' },
       { type: BLOCK_TYPES.literalBoolean, searchText: 'boolean true false literal flag' },
       { type: BLOCK_TYPES.columnExpression, searchText: 'column value row lookup other column reference' },
@@ -11866,7 +13585,8 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     colour: WORKFLOW_TOOLBOX_COLOURS.logic,
     entries: [
       { type: BLOCK_TYPES.comparisonFunction, searchText: 'equals compare match not equals less greater less than greater than' },
-      { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex is empty predicate text logic' },
+      { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex predicate text logic binary' },
+      { type: BLOCK_TYPES.unaryPredicateFunction, searchText: 'is empty blank null missing predicate unary logic' },
       { type: BLOCK_TYPES.logicalBinaryFunction, searchText: 'and or logical group combine conditions boolean' },
       { type: BLOCK_TYPES.switchFunction, searchText: 'switch case match default choose branch conditional' },
       { type: BLOCK_TYPES.notFunction, searchText: 'not negate boolean invert logical' },
@@ -11985,6 +13705,10 @@ export interface WorkspaceWorkflowResult {
   issues: EditorIssue[];
 }
 
+export interface EditorWorkspaceChange extends WorkspaceWorkflowResult {
+  workspacePromptSnapshot: string;
+}
+
 ===== src\editor\WorkflowEditor.tsx =====
 import { type ChangeEvent, type MouseEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
 
@@ -11996,6 +13720,7 @@ import type { Workflow } from '../workflow';
 import type { AuthoringWorkflowMetadata } from './authoring';
 import { BLOCK_TYPES, registerWorkflowBlocks } from './blocks';
 import {
+  createWorkspacePromptSnapshot,
   createDefaultWorkflow,
   getWorkspaceMetadata,
   projectWorkspaceStepSchemas,
@@ -12010,20 +13735,20 @@ import {
   getWorkflowToolboxDefinition,
   registerWorkflowToolboxCategoryCallbacks,
 } from './toolbox';
-import type { WorkspaceWorkflowResult } from './types';
+import type { EditorWorkspaceChange } from './types';
 
 interface WorkflowEditorProps {
   table: Table;
   loadWorkflow: Workflow | null;
   loadVersion: number;
   extraColumnIds: string[];
-  onWorkspaceChange: (result: WorkspaceWorkflowResult) => void;
+  onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
 interface DeferredWorkspaceInputs {
   table: Table;
   extraColumnIds: string[];
-  onWorkspaceChange: (result: WorkspaceWorkflowResult) => void;
+  onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
 type ToolboxWithItemLookup = Blockly.IToolbox & {
@@ -12055,12 +13780,16 @@ const SCHEMA_AFFECTING_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.deduplicateRowsStep,
   BLOCK_TYPES.sortRowsStep,
   BLOCK_TYPES.ruleCaseItem,
+  BLOCK_TYPES.setValueActionItem,
+  BLOCK_TYPES.highlightActionItem,
   BLOCK_TYPES.outputColumnItem,
   BLOCK_TYPES.sortItem,
 ]);
 const ORDER_SENSITIVE_BLOCK_TYPES = new Set<string>([
   ...STEP_BLOCK_TYPES,
   BLOCK_TYPES.ruleCaseItem,
+  BLOCK_TYPES.setValueActionItem,
+  BLOCK_TYPES.highlightActionItem,
   BLOCK_TYPES.outputColumnItem,
   BLOCK_TYPES.sortItem,
 ]);
@@ -12068,6 +13797,7 @@ const SCHEMA_AFFECTING_CHANGE_DELAY_MS = 150;
 const SEMANTIC_CHANGE_DELAY_MS = 1000;
 const SCHEMA_PROJECTION_DELAY_MS = 700;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
+const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 
 export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, onWorkspaceChange }: WorkflowEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -12084,6 +13814,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     onWorkspaceChange,
   });
   const activeToolboxCategoryIdRef = useRef<string | null>(null);
+  const lastToolboxSearchPointerDownAtRef = useRef(0);
   const toolboxSearchQueryRef = useRef('');
   const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow));
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
@@ -12176,7 +13907,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
       }
 
       const { table: currentTable, extraColumnIds: currentExtraColumnIds, onWorkspaceChange: handleWorkspaceChange } = latestInputsRef.current;
-      const workflowResult = workspaceToWorkflow(workspace);
+      const workflowResult = buildEditorWorkspaceChange(workspace);
       const nextExtraColumnIds = workflowResult.workflow
         ? collectWorkflowColumnIds(workflowResult.workflow)
         : currentExtraColumnIds;
@@ -12209,9 +13940,17 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         if (nextCategoryId) {
           syncActiveToolboxCategory(nextCategoryId);
         } else {
-          queueMicrotask(() => {
-            restoreActiveToolboxSelection();
-          });
+          // Preserve the open flyout when focus moves to the external category search UI.
+          const shouldRestoreFromSearchUi =
+            performance.now() - lastToolboxSearchPointerDownAtRef.current <= TOOLBOX_SEARCH_RESTORE_WINDOW_MS;
+
+          if (shouldRestoreFromSearchUi) {
+            queueMicrotask(() => {
+              restoreActiveToolboxSelection();
+            });
+          } else {
+            syncActiveToolboxCategory(null);
+          }
         }
         return;
       }
@@ -12348,12 +14087,13 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
 
       setMetadata(nextMetadata);
       setWorkspaceMetadata(workspace, nextMetadata);
-      onWorkspaceChange(workspaceToWorkflow(workspace));
+      onWorkspaceChange(buildEditorWorkspaceChange(workspace));
     };
   }
 
   function handleToolboxSearchPointerDown(event: MouseEvent<HTMLDivElement | HTMLInputElement>) {
     event.stopPropagation();
+    lastToolboxSearchPointerDownAtRef.current = performance.now();
 
     const workspace = workspaceRef.current;
 
@@ -12422,14 +14162,14 @@ function loadWorkspace(
   workspace: Blockly.Workspace,
   table: Table,
   workflow: Workflow,
-  onWorkspaceChange: (result: WorkspaceWorkflowResult) => void,
+  onWorkspaceChange: (result: EditorWorkspaceChange) => void,
   suppressChangesRef: MutableRefObject<boolean>,
 ) {
   suppressChangesRef.current = true;
   setEditorSchemaColumns(table.schema.columns, collectWorkflowColumnIds(workflow));
   workflowToWorkspace(workspace, workflow);
   suppressChangesRef.current = false;
-  onWorkspaceChange(workspaceToWorkflow(workspace));
+  onWorkspaceChange(buildEditorWorkspaceChange(workspace));
 }
 
 function syncEditorSchema(workspace: Blockly.Workspace, table: Table, extraColumnIds: string[]) {
@@ -12467,6 +14207,13 @@ function getDefaultMetadata(table: Table, workflow: Workflow | null): AuthoringW
     workflowId: seedWorkflow.workflowId,
     name: seedWorkflow.name,
     description: seedWorkflow.description,
+  };
+}
+
+function buildEditorWorkspaceChange(workspace: Blockly.Workspace): EditorWorkspaceChange {
+  return {
+    ...workspaceToWorkflow(workspace),
+    workspacePromptSnapshot: createWorkspacePromptSnapshot(workspace),
   };
 }
 
@@ -12768,6 +14515,10 @@ code {
   gap: 0.75rem;
 }
 
+.export-actions--compact {
+  gap: 0.55rem;
+}
+
 .export-actions button {
   border: 0;
   border-radius: 999px;
@@ -12808,6 +14559,10 @@ code {
 
 .panel {
   padding: 1rem 1.25rem;
+}
+
+.panel--compact {
+  padding: 0.9rem 1rem;
 }
 
 .panel--full {
@@ -12857,6 +14612,16 @@ code {
   margin: 0;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.panel-header--compact {
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.panel-header--compact p {
+  font-size: 0.84rem;
+  white-space: nowrap;
 }
 
 .preview-panel-fullscreen {
@@ -13005,7 +14770,7 @@ code {
 .ai-assistant-settings {
   display: grid;
   gap: 0.9rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr));
 }
 
 .ai-assistant-layout {
@@ -13233,6 +14998,7 @@ code {
 }
 
 .workflow-meta-field input,
+.workflow-meta-field select,
 .workflow-meta-field textarea {
   width: 100%;
   border: 1px solid var(--line);
@@ -13246,8 +15012,40 @@ code {
   resize: vertical;
 }
 
+.workflow-meta-field small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
 .workflow-meta-field--wide {
   grid-column: span 1;
+}
+
+.ai-assistant-toggle {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  min-height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.8rem;
+  background: #fffdf9;
+  padding: 0.75rem 0.9rem;
+}
+
+.ai-assistant-toggle input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0.15rem 0 0;
+  accent-color: var(--accent);
+}
+
+.ai-assistant-toggle__body {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.ai-assistant-toggle__body strong {
+  font-size: 0.95rem;
 }
 
 .workflow-editor-toolbox-search {
@@ -13307,6 +15105,28 @@ code {
   stroke: #d9c7b2;
 }
 
+.workflow-editor-canvas .blocklyToolbox {
+  padding: 0;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategoryGroup {
+  gap: 0;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategoryContainer {
+  margin: 0;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategory {
+  box-sizing: border-box;
+  margin-bottom: 0;
+  border-bottom: 3px solid #f8f3ec;
+}
+
+.workflow-editor-canvas .blocklyToolboxCategoryContainer:last-child .blocklyToolboxCategory {
+  border-bottom-width: 0;
+}
+
 .blockly-column-multiselect {
   width: min(22rem, 80vw);
   display: grid;
@@ -13322,19 +15142,86 @@ code {
 }
 
 .blockly-color-input {
-  width: 11rem;
+  width: min(18rem, 72vw);
   display: grid;
-  gap: 0.65rem;
+  gap: 0.75rem;
   padding: 0.5rem;
 }
 
-.blockly-color-input__picker {
-  width: 100%;
-  height: 3rem;
-  border: 1px solid var(--line);
+.blockly-color-input__current {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.blockly-color-input__current-swatch {
+  height: 2.5rem;
+  border: 1px solid rgba(28, 26, 23, 0.18);
   border-radius: 0.75rem;
   background: #fffdf9;
+}
+
+.blockly-color-input__current-meta {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.blockly-color-input__current-label,
+.blockly-color-input__section-label,
+.blockly-color-input__custom-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.blockly-color-input__section {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.blockly-color-input__choice-grid,
+.blockly-color-input__recent-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.blockly-color-input__choice {
+  aspect-ratio: 1;
+  border: 1px solid rgba(28, 26, 23, 0.18);
+  border-radius: 0.55rem;
+  background: #fffdf9;
   cursor: pointer;
+  padding: 0;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.blockly-color-input__choice:hover {
+  transform: translateY(-1px);
+}
+
+.blockly-color-input__choice--selected {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px rgba(28, 26, 23, 0.14);
+}
+
+.blockly-color-input__custom {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.blockly-color-input__recent-empty {
+  grid-column: 1 / -1;
+  border: 1px dashed var(--line);
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  color: var(--muted);
+  font-size: 0.86rem;
+  background: #fffdf9;
 }
 
 .blockly-color-input__value {
@@ -13344,6 +15231,15 @@ code {
   background: #fffdf9;
   text-align: center;
   font-family: "Consolas", "Courier New", monospace;
+}
+
+.blockly-color-input__picker {
+  width: 100%;
+  height: 2.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: #fffdf9;
+  cursor: pointer;
 }
 
 .blockly-column-multiselect__search {
@@ -13544,6 +15440,10 @@ code {
   color: var(--muted);
 }
 
+.empty-panel--compact {
+  padding: 0.75rem 0.85rem;
+}
+
 .issue-list {
   list-style: none;
   margin: 0;
@@ -13552,11 +15452,19 @@ code {
   gap: 0.7rem;
 }
 
+.issue-list--compact {
+  gap: 0.5rem;
+}
+
 .issue-item {
   padding: 0.85rem 0.95rem;
   border: 1px solid #dfc5bb;
   border-radius: 0.8rem;
   background: #fff4ef;
+}
+
+.issue-item--compact {
+  padding: 0.65rem 0.8rem;
 }
 
 .issue-item strong,
@@ -13600,6 +15508,11 @@ code {
   margin: 0;
 }
 
+.result-stats--compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
 .result-stats div {
   border: 1px solid var(--line);
   border-radius: 0.8rem;
@@ -13618,6 +15531,19 @@ code {
 .result-stats dd {
   margin: 0;
   font-weight: 700;
+}
+
+.result-stats--compact div {
+  padding: 0.7rem 0.8rem;
+}
+
+.result-stats--compact dt {
+  margin-bottom: 0.18rem;
+  font-size: 0.74rem;
+}
+
+.result-stats--compact dd {
+  font-size: 1rem;
 }
 
 @media (max-width: 1024px) {
@@ -13645,6 +15571,10 @@ code {
   .panel-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .panel-header--compact p {
+    white-space: normal;
   }
 
   .workflow-actions {
@@ -13692,6 +15622,10 @@ code {
   }
 
   .result-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .result-stats--compact {
     grid-template-columns: 1fr;
   }
 }
@@ -14412,7 +16346,7 @@ function validateCellPatch(
     if (!patch.format.fillColor) {
       issues.push(makeIssue('invalidExpression', `Format patch in step '${stepId}' must define at least one formatting property.`, `${path}.format`, stepId));
     } else if (!isValidFillColor(patch.format.fillColor)) {
-      issues.push(makeIssue('invalidColor', `Step '${stepId}' must use a hex color like '#fff2cc'.`, `${path}.format.fillColor`, stepId));
+      issues.push(makeIssue('invalidColor', `Step '${stepId}' must use a hex color like '#ffeb9c'.`, `${path}.format.fillColor`, stepId));
     }
   }
 
@@ -15371,46 +17305,34 @@ function applyScopedRuleStep(
     const stylesByColumnId = cloneStylesByColumnId(row.stylesByColumnId);
 
     step.columnIds.forEach((columnId) => {
-      const currentValue = row.cellsByColumnId[columnId] ?? null;
-      const patch = selectScopedRulePatch(step, row, currentValue, runTimestamp);
+      const originalValue = row.cellsByColumnId[columnId] ?? null;
+      const originalStyle = stylesByColumnId[columnId];
+      const resolvedPatch = resolveScopedRulePatch(step, row, originalValue, originalStyle, runTimestamp);
 
-      if (!patch) {
+      if (!resolvedPatch.matched) {
         return;
       }
 
       summary.matchedCellCount += 1;
-      let valueChanged = false;
-      let formatChanged = false;
+      const valueChanged = resolvedPatch.valueApplied && !Object.is(originalValue, resolvedPatch.nextValue);
+      const formatChanged =
+        resolvedPatch.formatApplied
+        && !Object.is(getComparableCellStyle(originalStyle), getComparableCellStyle(resolvedPatch.nextStyle));
 
-      if (patch.value) {
-        const nextValue = toCellValue(evaluateExpression(patch.value, {
-          runTimestamp,
-          row,
-          currentValue,
-        }));
-
-        if (!Object.is(currentValue, nextValue)) {
-          valueChanged = true;
-          summary.valueChangedCellCount += 1;
-        }
-
-        cellsByColumnId[columnId] = nextValue;
+      if (resolvedPatch.valueApplied) {
+        cellsByColumnId[columnId] = resolvedPatch.nextValue;
       }
 
-      if (patch.format?.fillColor) {
-        const previousStyle = getComparableCellStyle(stylesByColumnId[columnId]);
-        const nextStyle = {
-          ...stylesByColumnId[columnId],
-          fillColor: normalizeFillColor(patch.format.fillColor),
-        };
-        const nextComparableStyle = getComparableCellStyle(nextStyle);
+      if (resolvedPatch.formatApplied && resolvedPatch.nextStyle) {
+        stylesByColumnId[columnId] = resolvedPatch.nextStyle;
+      }
 
-        stylesByColumnId[columnId] = nextStyle;
+      if (valueChanged) {
+        summary.valueChangedCellCount += 1;
+      }
 
-        if (!Object.is(previousStyle, nextComparableStyle)) {
-          formatChanged = true;
-          summary.formatChangedCellCount += 1;
-        }
+      if (formatChanged) {
+        summary.formatChangedCellCount += 1;
       }
 
       if (valueChanged || formatChanged) {
@@ -16006,7 +17928,7 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
         .join('');
     case 'isEmpty': {
       const value = evaluateExpression(expression.args[0], context);
-      return !Array.isArray(value) && isEmptyValue(value);
+      return !Array.isArray(value) && isBlankLikeValue(value);
     }
     case 'not':
       return !Boolean(evaluateExpression(expression.args[0], context));
@@ -16142,23 +18064,74 @@ function getProjectedScopedRuleLogicalType(
   return mergeLogicalTypes(projectedTypes).logicalType;
 }
 
-function selectScopedRulePatch(
+function resolveScopedRulePatch(
   step: Extract<WorkflowStep, { type: 'scopedRule' }>,
   row: TableRow,
   currentValue: CellValue,
+  currentStyle: CellStyle | undefined,
   runTimestamp: string,
 ) {
+  let workingValue = currentValue;
+  let workingStyle = currentStyle ? { ...currentStyle } : undefined;
+  let matched = false;
+  let valueApplied = false;
+  let formatApplied = false;
+
   for (const ruleCase of step.cases ?? []) {
-    if (Boolean(evaluateExpression(ruleCase.when, {
+    if (!Boolean(evaluateExpression(ruleCase.when, {
       runTimestamp,
       row,
-      currentValue,
+      currentValue: workingValue,
     }))) {
-      return ruleCase.then;
+      continue;
+    }
+
+    matched = true;
+
+    if (ruleCase.then.value) {
+      workingValue = toCellValue(evaluateExpression(ruleCase.then.value, {
+        runTimestamp,
+        row,
+        currentValue: workingValue,
+      }));
+      valueApplied = true;
+    }
+
+    if (ruleCase.then.format?.fillColor) {
+      workingStyle = {
+        ...workingStyle,
+        fillColor: normalizeFillColor(ruleCase.then.format.fillColor),
+      };
+      formatApplied = true;
     }
   }
 
-  return step.defaultPatch;
+  if (!matched && step.defaultPatch) {
+    if (step.defaultPatch.value) {
+      workingValue = toCellValue(evaluateExpression(step.defaultPatch.value, {
+        runTimestamp,
+        row,
+        currentValue: workingValue,
+      }));
+      valueApplied = true;
+    }
+
+    if (step.defaultPatch.format?.fillColor) {
+      workingStyle = {
+        ...workingStyle,
+        fillColor: normalizeFillColor(step.defaultPatch.format.fillColor),
+      };
+      formatApplied = true;
+    }
+  }
+
+  return {
+    matched: matched || Boolean(step.defaultPatch),
+    valueApplied,
+    nextValue: workingValue,
+    formatApplied,
+    nextStyle: workingStyle,
+  };
 }
 
 function normalizeCellFormatPatch(format: WorkflowCellFormatPatch | undefined) {
@@ -16390,6 +18363,10 @@ function getDisplayNameKey(displayName: string) {
 
 function isEmptyValue(value: CellValue) {
   return value === null || value === '';
+}
+
+function isBlankLikeValue(value: CellValue) {
+  return value === null || (typeof value === 'string' && value.trim() === '');
 }
 
 function getComparableCellStyle(style: CellStyle | undefined) {
@@ -17356,7 +19333,7 @@ describe('workflow validation and execution', () => {
           rowCondition: call('equals', column('col_vip'), literal(true)),
           defaultPatch: {
             format: {
-              fillColor: '#fff2cc',
+              fillColor: '#ffeb9c',
             },
           },
         },
@@ -17370,9 +19347,80 @@ describe('workflow validation and execution', () => {
     expect(execution.validationErrors).toEqual([]);
     expect(execution.changedRowCount).toBe(2);
     expect(execution.changedCellCount).toBe(2);
-    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
+    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_status).toEqual({ fillColor: '#ffeb9c' });
     expect(execution.transformedTable?.rowsById.row_2.stylesByColumnId.col_status).toBeUndefined();
-    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#fff2cc' });
+    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_status).toEqual({ fillColor: '#ffeb9c' });
+  });
+
+  it('treats whitespace-only strings as empty for isEmpty filters', () => {
+    const table = loadCsvTable('email\r\n   \r\nalice@example.com\r\n""\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_whitespace_is_empty',
+      name: 'Whitespace is empty',
+      steps: [
+        {
+          id: 'step_keep_empty_email',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('isEmpty', column('col_email')),
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowOrder).toEqual(['row_1', 'row_3']);
+    expect(execution.removedRowCount).toBe(1);
+  });
+
+  it('applies multiple matching scoped-rule cases in order so later matches can add formatting', () => {
+    const table = loadCsvTable('email,email_2\r\n,backup@example.com\r\n,\r\nprimary@example.com,\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_email_fallback_and_highlight',
+      name: 'Email fallback and highlight',
+      steps: [
+        {
+          id: 'step_email_rule',
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: call('isEmpty', value()),
+              then: {
+                value: column('col_email_2'),
+              },
+            },
+            {
+              when: call(
+                'and',
+                call('isEmpty', value()),
+                call('isEmpty', column('col_email_2')),
+              ),
+              then: {
+                value: value(),
+                format: {
+                  fillColor: '#ff0000',
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.changedRowCount).toBe(2);
+    expect(execution.changedCellCount).toBe(2);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_email).toBe('backup@example.com');
+    expect(execution.transformedTable?.rowsById.row_1.stylesByColumnId.col_email).toBeUndefined();
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_email).toBeNull();
+    expect(execution.transformedTable?.rowsById.row_2.stylesByColumnId.col_email).toEqual({ fillColor: '#ff0000' });
+    expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_email).toBeUndefined();
   });
 
   it('structurally validates switch expressions', () => {

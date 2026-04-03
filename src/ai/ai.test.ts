@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, generateGeminiDraftTurn, parseGeminiWorkflowResponse, replaceWorkflowSteps, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
+import { assignWorkflowStepIds, buildGeminiRequestExport, buildGeminiSystemInstruction, buildRepairUserMessage, generateGeminiDraftTurn, parseGeminiWorkflowResponse, replaceWorkflowSteps, runGeminiDraftTurn, type AISettings, type AIPromptContext } from './index';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
@@ -11,7 +11,7 @@ describe('AI workflow copilot helpers', () => {
     const instruction = buildGeminiSystemInstruction(context);
 
     expect(instruction).toContain('col_email | Email | string');
-    expect(instruction).toContain('Current block workspace snapshot:');
+    expect(instruction).not.toContain('Current block workspace snapshot:');
     expect(instruction).toContain('Current workflow/editor issues:');
     expect(instruction).toContain('Current workflow steps without IDs:');
     expect(instruction).toContain('Current workflow summary:');
@@ -22,6 +22,10 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('scopedRule cases are checked top to bottom and every matching case applies in order');
     expect(instruction).toContain('null is represented as { "kind": "literal", "value": null }');
     expect(instruction).toContain('The returned steps are a full workflow replacement candidate.');
+    expect(instruction).toContain('DO NOT use { "kind": "value" } in deriveColumn.expression, filterRows.condition, or scopedRule.rowCondition');
+    expect(instruction).toContain('must appear in JSON as "\\\\d+"');
+    expect(instruction).toContain('Columns marked "mixed" contain incompatible runtime values.');
+    expect(instruction).toContain('Combine First Name and Last Name into Full Name, then drop the originals.');
     expect(instruction).not.toContain('alice@example.com');
   });
 
@@ -39,6 +43,7 @@ describe('AI workflow copilot helpers', () => {
     const instruction = buildGeminiSystemInstruction(context);
 
     expect(instruction).toContain('last valid snapshot');
+    expect(instruction).toContain('Current block workspace snapshot:');
     expect(instruction).toContain("missingColumns: Block 'scoped_rule_cases_step' must target at least one column.");
     expect(instruction).toContain('"type": "scoped_rule_cases_step"');
   });
@@ -70,7 +75,7 @@ describe('AI workflow copilot helpers', () => {
     ]);
     expect(requestExport.requestBody.systemInstruction.parts[0]?.text).toBe(requestExport.systemInstructionText);
     expect(requestExport.requestBody.contents).toEqual(requestExport.contents);
-    expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(1024);
+    expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(4096);
     expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as {
       oneOf?: Array<Record<string, unknown>>;
@@ -80,17 +85,45 @@ describe('AI workflow copilot helpers', () => {
       steps?: { items?: { oneOf?: Array<Record<string, unknown>> } };
     } | undefined)?.steps?.items?.oneOf;
 
+    expect(responseJsonSchema.oneOf).toHaveLength(2);
+    expect(draftResponseSchema?.additionalProperties).toBe(false);
     expect(draftStepSchemas).toHaveLength(10);
     expect(
       draftStepSchemas?.every((variant) => {
         const required = Array.isArray(variant.required) ? variant.required : [];
         const properties = variant.properties as Record<string, unknown> | undefined;
         const typeProperty = properties?.type as { const?: string } | undefined;
+        const additionalProperties = (variant as { additionalProperties?: unknown }).additionalProperties;
 
-        return required.includes('type') && !required.includes('id') && !properties?.id && typeof typeProperty?.const === 'string';
+        return additionalProperties === false
+          && required.includes('type')
+          && !required.includes('id')
+          && !properties?.id
+          && typeof typeProperty?.const === 'string';
       }),
     ).toBe(true);
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
+  });
+
+  it('includes authoritative schema reminders in repair prompts', () => {
+    const context = createPromptContext();
+
+    const repairMessage = buildRepairUserMessage(
+      '{"mode":"draft","assistantMessage":"Done.","assumptions":[],"steps":[{"type":"filterRows","mode":"drop","condition":{"kind":"call","name":"isEmpty","args":[{"kind":"column","columnId":"col_missing"}]}}]}',
+      [
+        {
+          code: 'missingColumn',
+          path: 'steps[0].condition.args[0].columnId',
+          message: "Column 'col_missing' does not exist.",
+        },
+      ],
+      context,
+    );
+
+    expect(repairMessage).toContain('Reminder of available columns:');
+    expect(repairMessage).toContain('- col_email | Email | string');
+    expect(repairMessage).toContain('- col_status | Status | string');
+    expect(repairMessage).not.toContain('col_missing |');
   });
 
   it('maps the thinking toggle onto Gemini 2.5 and Gemini 3 request configs', () => {

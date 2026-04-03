@@ -132,6 +132,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         message: issue.message,
         stepId: issue.stepId,
       })),
+      options.context,
     ),
   );
   emitProgress(options, 'request_repair', 'Sending repair request to Gemini.');

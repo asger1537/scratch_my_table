@@ -40,7 +40,7 @@ export const GEMINI_MODEL_OPTIONS = [
 ] as const;
 const GEMINI_MODEL_OPTION_VALUES = new Set<string>(GEMINI_MODEL_OPTIONS.map((option) => option.value));
 const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
-const GEMINI_MAX_OUTPUT_TOKENS = 1024;
+const GEMINI_MAX_OUTPUT_TOKENS = 4096;
 const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
 
 export interface GeminiRequestExport {
