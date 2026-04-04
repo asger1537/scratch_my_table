@@ -1003,6 +1003,52 @@ describe('block-based workflow authoring', () => {
     ]);
   });
 
+  it('reports multiple invalid action inputs in a scoped rule alongside floating orphan expression blocks', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem);
+    const whenBlock = workspace.newBlock(BLOCK_TYPES.unaryPredicateFunction);
+    const valueBlock = workspace.newBlock(BLOCK_TYPES.currentValueExpression);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const orphanComparisonBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    whenBlock.setFieldValue('isEmpty', 'OPERATOR');
+
+    scopedRuleBlock.getInput('CASES')?.connection?.connect(ruleCaseBlock.previousConnection!);
+    ruleCaseBlock.getInput('WHEN')?.connection?.connect(whenBlock.outputConnection!);
+    whenBlock.getInput('INPUT')?.connection?.connect(valueBlock.outputConnection!);
+    ruleCaseBlock.getInput('ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.nextConnection?.connect(highlightActionBlock.previousConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        {
+          code: 'missingInput',
+          message: `Block '${BLOCK_TYPES.setValueActionItem}' is missing required input 'VALUE'.`,
+          blockId: setValueActionBlock.id,
+          blockType: BLOCK_TYPES.setValueActionItem,
+        },
+        {
+          code: 'missingInput',
+          message: `Block '${BLOCK_TYPES.highlightActionItem}' is missing required input 'COLOR'.`,
+          blockId: highlightActionBlock.id,
+          blockType: BLOCK_TYPES.highlightActionItem,
+        },
+        {
+          code: 'orphanBlock',
+          message: `Block '${BLOCK_TYPES.comparisonFunction}' is not connected to a workflow step.`,
+          blockId: orphanComparisonBlock.id,
+          blockType: BLOCK_TYPES.comparisonFunction,
+        },
+      ]),
+    );
+  });
+
   it('still roundtrips canonical workflow JSON without editor-only data leaking into persistence', () => {
     const workflow = buildAllStepsWorkflow();
     const json = workflowToJson(workflow);

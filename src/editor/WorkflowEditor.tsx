@@ -7,6 +7,7 @@ import type { Workflow } from '../workflow';
 
 import type { AuthoringWorkflowMetadata } from './authoring';
 import { BLOCK_TYPES, registerWorkflowBlocks } from './blocks';
+import { shouldIgnoreSemanticMove } from './changeSemantics';
 import {
   createWorkspacePromptSnapshot,
   createDefaultWorkflow,
@@ -24,6 +25,7 @@ import {
   registerWorkflowToolboxCategoryCallbacks,
 } from './toolbox';
 import type { EditorWorkspaceChange } from './types';
+import { buildValidationDisplayItems } from './validationDisplay';
 
 interface WorkflowEditorProps {
   table: Table;
@@ -112,7 +114,8 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
   const [canDeleteSelection, setCanDeleteSelection] = useState(false);
   const [toolboxSearchQuery, setToolboxSearchQuery] = useState('');
   const isFullscreen = isFallbackFullscreen;
-  const issueCount = issues.length + (jsonError ? 1 : 0);
+  const validationItems = buildValidationDisplayItems(issues, jsonError);
+  const issueCount = validationItems.length;
 
   latestInputsRef.current = {
     table,
@@ -508,13 +511,12 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
           <h2>Validation</h2>
           <p>{issueCount === 0 ? 'No issues' : `${issueCount} issue${issueCount === 1 ? '' : 's'}`}</p>
         </div>
-        {jsonError ? <pre className="json-error-panel workflow-editor-validation__json-error">{jsonError}</pre> : null}
-        {issues.length === 0 ? (
-          jsonError ? null : <div className="empty-panel empty-panel--compact">No current workflow issues.</div>
+        {validationItems.length === 0 ? (
+          <div className="empty-panel empty-panel--compact">No current workflow issues.</div>
         ) : (
           <div className="panel-scroll-region workflow-editor-validation__body">
             <ul className="issue-list issue-list--compact">
-              {issues.map((issue, index) => (
+              {validationItems.map((issue, index) => (
                 <li className="issue-item issue-item--compact" key={`${issue.code}-${index}`}>
                   <strong>{issue.code}</strong>
                   <p>{issue.message}</p>
@@ -598,13 +600,18 @@ function isSemanticNoOpMoveEvent(workspace: Blockly.Workspace, event: Blockly.Ev
 
   const block = getEventBlock(workspace, event);
 
-  if (block && ORDER_SENSITIVE_BLOCK_TYPES.has(block.type)) {
-    return false;
-  }
-
-  return event.oldParentId === event.newParentId
-    && event.oldInputName === event.newInputName
-    && Boolean(event.oldCoordinate || event.newCoordinate);
+  return shouldIgnoreSemanticMove({
+    blockType: block?.type ?? null,
+    isOrderSensitive: block ? ORDER_SENSITIVE_BLOCK_TYPES.has(block.type) : false,
+    isStepBlockType: block ? isStepBlockType(block.type) : false,
+    hasParent: Boolean(block?.getParent()),
+    oldParentId: event.oldParentId,
+    newParentId: event.newParentId,
+    oldInputName: event.oldInputName,
+    newInputName: event.newInputName,
+    oldCoordinate: event.oldCoordinate,
+    newCoordinate: event.newCoordinate,
+  });
 }
 
 function shouldProjectSchemaForEvent(workspace: Blockly.Workspace, event: Blockly.Events.Abstract) {

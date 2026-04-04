@@ -93,25 +93,17 @@ export function getWorkspaceMetadata(workspace: Blockly.Workspace): AuthoringWor
 export function workspaceToAuthoringWorkflow(workspace: Blockly.Workspace): { workflow: AuthoringWorkflow | null; issues: EditorIssue[] } {
   registerWorkflowBlocks();
 
-  const topBlocks = workspace.getTopBlocks(false);
-  const orphanBlocks = topBlocks.filter((block) => !isStepBlockType(block.type));
-
-  if (orphanBlocks.length > 0) {
-    return {
-      workflow: null,
-      issues: orphanBlocks.map((block) => ({
-        code: 'orphanBlock',
-        message: `Block '${block.type}' is not connected to a workflow step.`,
-        blockId: block.id,
-        blockType: block.type,
-      })),
-    };
-  }
+  const topBlocks = sortBlocksByPosition(workspace.getTopBlocks(false));
 
   const steps: AuthoringStep[] = [];
   const issues: EditorIssue[] = [];
 
-  sortBlocksByPosition(topBlocks).forEach((topBlock) => {
+  topBlocks.forEach((topBlock) => {
+    if (!isStepBlockType(topBlock.type)) {
+      issues.push(orphanBlockIssue(topBlock));
+      return;
+    }
+
     const stepResult = readStepChain(topBlock);
 
     if (stepResult.issues.length > 0) {
@@ -182,7 +174,7 @@ export function projectWorkspaceStepSchemas(workspace: Blockly.Workspace, table:
 
     const stepResult = readStepBlock(block);
 
-    if (stepResult.issue) {
+    if (stepResult.issues.length > 0 || !stepResult.step) {
       return;
     }
 
@@ -287,9 +279,10 @@ function readStepChain(firstBlock: Blockly.Block | null): { steps: AuthoringStep
   while (block) {
     const stepResult = readStepBlock(block);
 
-    if (stepResult.issue) {
-      issues.push(stepResult.issue);
-      return { steps: [], issues };
+    if (stepResult.issues.length > 0 || !stepResult.step) {
+      issues.push(...stepResult.issues);
+      block = block.getNextBlock();
+      continue;
     }
 
     steps.push(stepResult.step);
@@ -440,7 +433,7 @@ function collectStepScopedBlocks(stepBlock: Blockly.Block) {
   return scopedBlocks;
 }
 
-function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: EditorIssue } {
+function readStepBlock(block: Blockly.Block): { step?: AuthoringStep; issues: EditorIssue[] } {
   const stepMetadata = readBlockMetadata(block);
 
   switch (block.type) {
@@ -453,29 +446,31 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockType: block.type,
           text: getFieldString(block, 'TEXT'),
         },
+        issues: [],
       };
     case BLOCK_TYPES.scopedRuleCasesStep: {
+      const issues: EditorIssue[] = [];
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
       const rowCondition = readOptionalExpression(block, 'ROW_CONDITION');
 
+      const defaultPatch = readAuthoringCellPatchActions(block, 'DEFAULT_ACTIONS');
+      const cases = readOptionalRuleCases(block, 'CASES');
+      const resolvedColumnIds = 'issue' in columnIds ? [] : columnIds.columnIds;
+      const resolvedRowCondition = 'issue' in rowCondition ? undefined : rowCondition.expression;
+
       if ('issue' in columnIds) {
-        return { step: undefined as never, issue: columnIds.issue };
+        issues.push(columnIds.issue);
       }
 
       if ('issue' in rowCondition) {
-        return { step: undefined as never, issue: rowCondition.issue };
+        issues.push(rowCondition.issue);
       }
 
-      const defaultPatch = readAuthoringCellPatchActions(block, 'DEFAULT_ACTIONS');
+      issues.push(...defaultPatch.issues);
+      issues.push(...cases.issues);
 
-      if ('issue' in defaultPatch) {
-        return { step: undefined as never, issue: defaultPatch.issue };
-      }
-
-      const cases = readOptionalRuleCases(block, 'CASES');
-
-      if ('issue' in cases) {
-        return { step: undefined as never, issue: cases.issue };
+      if (issues.length > 0) {
+        return { issues };
       }
 
       const hasEffectiveCases = cases.cases.some((ruleCase) => isAuthoringCellPatchEnabled(ruleCase.then));
@@ -483,13 +478,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
 
       if (!hasEffectiveCases && !hasDefaultPatch) {
         return {
-          step: undefined as never,
-          issue: {
-            code: 'missingRuleCases',
-            message: `Block '${block.type}' must define at least one case or a default patch.`,
-            blockId: block.id,
-            blockType: block.type,
-          },
+          issues: [
+            {
+              code: 'missingRuleCases',
+              message: `Block '${block.type}' must define at least one case or a default patch.`,
+              blockId: block.id,
+              blockType: block.type,
+            },
+          ],
         };
       }
 
@@ -499,8 +495,8 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           stepId: stepMetadata.stepId,
           sourceBlockId: block.id,
           sourceBlockType: block.type,
-          columnIds: columnIds.columnIds,
-          rowCondition: rowCondition.expression,
+          columnIds: resolvedColumnIds,
+          rowCondition: resolvedRowCondition,
           mode: cases.caseCount === 0 && hasDefaultPatch ? 'single' : 'cases',
           singlePatch: cases.caseCount === 0 && hasDefaultPatch
             ? defaultPatch.patch
@@ -510,6 +506,7 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
             ? createEmptyAuthoringCellPatch()
             : defaultPatch.patch,
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.renameColumnStep:
@@ -522,12 +519,13 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           columnId: getFieldString(block, 'COLUMN_ID'),
           newDisplayName: getFieldString(block, 'NEW_DISPLAY_NAME'),
         },
+        issues: [],
       };
     case BLOCK_TYPES.dropColumnsStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
 
       if ('issue' in columnIds) {
-        return { step: undefined as never, issue: columnIds.issue };
+        return { issues: [columnIds.issue] };
       }
 
       return {
@@ -538,13 +536,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.deriveColumnStep: {
       const expression = readCreateColumnExpression(block);
 
       if ('issue' in expression) {
-        return { step: undefined as never, issue: expression.issue };
+        return { issues: [expression.issue] };
       }
 
       return {
@@ -556,13 +555,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           newColumn: readNewColumnFields(block),
           expression: expression.expression,
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.filterRowsStep: {
       const condition = readRequiredExpression(block, 'CONDITION');
 
       if ('issue' in condition) {
-        return { step: undefined as never, issue: condition.issue };
+        return { issues: [condition.issue] };
       }
 
       return {
@@ -574,13 +574,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           mode: getFieldString(block, 'MODE') as 'keep' | 'drop',
           condition: condition.expression,
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.splitColumnStep: {
       const outputColumns = readRequiredOutputColumns(block, 'OUTPUT_COLUMNS');
 
       if ('issue' in outputColumns) {
-        return { step: undefined as never, issue: outputColumns.issue };
+        return { issues: [outputColumns.issue] };
       }
 
       return {
@@ -593,13 +594,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           delimiter: getFieldString(block, 'DELIMITER'),
           outputColumns: outputColumns.outputColumns,
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.combineColumnsStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
 
       if ('issue' in columnIds) {
-        return { step: undefined as never, issue: columnIds.issue };
+        return { issues: [columnIds.issue] };
       }
 
       return {
@@ -612,13 +614,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           separator: getFieldString(block, 'SEPARATOR'),
           newColumn: readNewColumnFields(block),
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.deduplicateRowsStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
 
       if ('issue' in columnIds) {
-        return { step: undefined as never, issue: columnIds.issue };
+        return { issues: [columnIds.issue] };
       }
 
       return {
@@ -629,13 +632,14 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockType: block.type,
           columnIds: columnIds.columnIds,
         },
+        issues: [],
       };
     }
     case BLOCK_TYPES.sortRowsStep: {
       const sorts = readRequiredSorts(block, 'SORTS');
 
       if ('issue' in sorts) {
-        return { step: undefined as never, issue: sorts.issue };
+        return { issues: [sorts.issue] };
       }
 
       return {
@@ -646,17 +650,19 @@ function readStepBlock(block: Blockly.Block): { step: AuthoringStep; issue?: Edi
           sourceBlockType: block.type,
           sorts: sorts.sorts,
         },
+        issues: [],
       };
     }
     default:
       return {
-        step: undefined as never,
-        issue: {
-          code: 'unsupportedStepBlock',
-          message: `Unsupported step block '${block.type}'.`,
-          blockId: block.id,
-          blockType: block.type,
-        },
+        issues: [
+          {
+            code: 'unsupportedStepBlock',
+            message: `Unsupported step block '${block.type}'.`,
+            blockId: block.id,
+            blockType: block.type,
+          },
+        ],
       };
   }
 }
@@ -709,12 +715,13 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
 function readAuthoringCellPatchActions(
   block: Blockly.Block,
   inputName: string,
-): { patch: AuthoringCellPatch; actionCount: number } | { issue: EditorIssue } {
+): { patch: AuthoringCellPatch; actionCount: number; issues: EditorIssue[] } {
   let valueEnabled = false;
   let value: WorkflowExpression | undefined;
   let formatEnabled = false;
   let fillColor: string | undefined;
   let actionCount = 0;
+  const issues: EditorIssue[] = [];
   let current = block.getInputTargetBlock(inputName);
 
   while (current) {
@@ -722,15 +729,17 @@ function readAuthoringCellPatchActions(
 
     if (current.type === BLOCK_TYPES.setValueActionItem) {
       if (valueEnabled) {
-        return {
-          issue: duplicateCellActionIssue(block, current, 'set value'),
-        };
+        issues.push(duplicateCellActionIssue(block, current, 'set value'));
+        current = current.getNextBlock();
+        continue;
       }
 
       const expression = readRequiredExpression(current, 'VALUE');
 
       if ('issue' in expression) {
-        return expression;
+        issues.push(expression.issue);
+        current = current.getNextBlock();
+        continue;
       }
 
       valueEnabled = true;
@@ -741,15 +750,17 @@ function readAuthoringCellPatchActions(
 
     if (current.type === BLOCK_TYPES.highlightActionItem) {
       if (formatEnabled) {
-        return {
-          issue: duplicateCellActionIssue(block, current, 'highlight'),
-        };
+        issues.push(duplicateCellActionIssue(block, current, 'highlight'));
+        current = current.getNextBlock();
+        continue;
       }
 
       const colorLiteral = readRequiredColorLiteral(current, 'COLOR');
 
       if ('issue' in colorLiteral) {
-        return colorLiteral;
+        issues.push(colorLiteral.issue);
+        current = current.getNextBlock();
+        continue;
       }
 
       formatEnabled = true;
@@ -758,14 +769,13 @@ function readAuthoringCellPatchActions(
       continue;
     }
 
-    return {
-      issue: {
+    issues.push({
         code: 'invalidCellActionBlock',
         message: `Block '${block.type}' contains unsupported action block '${current.type}'.`,
         blockId: current.id,
         blockType: current.type,
-      },
-    };
+      });
+    current = current.getNextBlock();
   }
 
   return {
@@ -776,6 +786,7 @@ function readAuthoringCellPatchActions(
       ...(fillColor ? { fillColor } : {}),
     },
     actionCount,
+    issues,
   };
 }
 
@@ -818,35 +829,38 @@ function readRequiredColorLiteral(block: Blockly.Block, inputName: string): { fi
   };
 }
 
-function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[]; caseCount: number } | { issue: EditorIssue } {
+function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases: AuthoringRuleCase[]; caseCount: number; issues: EditorIssue[] } {
   const cases: AuthoringRuleCase[] = [];
   let caseCount = 0;
+  const issues: EditorIssue[] = [];
   let current = block.getInputTargetBlock(inputName);
 
   while (current) {
     caseCount += 1;
 
     if (current.type !== BLOCK_TYPES.ruleCaseItem) {
-      return {
-        issue: {
+      issues.push({
           code: 'invalidCaseBlock',
           message: `Block '${block.type}' contains unsupported case block '${current.type}'.`,
           blockId: current.id,
           blockType: current.type,
-        },
-      };
+        });
+      current = current.getNextBlock();
+      continue;
     }
 
     const when = readRequiredExpression(current, 'WHEN');
-
-    if ('issue' in when) {
-      return when;
-    }
-
     const then = readAuthoringCellPatchActions(current, 'ACTIONS');
 
-    if ('issue' in then) {
-      return then;
+    if ('issue' in when) {
+      issues.push(when.issue);
+    }
+
+    issues.push(...then.issues);
+
+    if ('issue' in when || then.issues.length > 0) {
+      current = current.getNextBlock();
+      continue;
     }
 
     cases.push({
@@ -856,7 +870,7 @@ function readOptionalRuleCases(block: Blockly.Block, inputName: string): { cases
     current = current.getNextBlock();
   }
 
-  return { cases, caseCount };
+  return { cases, caseCount, issues };
 }
 
 function isAuthoringCellPatchEnabled(patch: AuthoringCellPatch) {
@@ -2141,6 +2155,15 @@ function missingInputIssue(block: Blockly.Block, inputName: string): EditorIssue
   return {
     code: 'missingInput',
     message: `Block '${block.type}' is missing required input '${inputName}'.`,
+    blockId: block.id,
+    blockType: block.type,
+  };
+}
+
+function orphanBlockIssue(block: Blockly.Block): EditorIssue {
+  return {
+    code: 'orphanBlock',
+    message: `Block '${block.type}' is not connected to a workflow step.`,
     blockId: block.id,
     blockType: block.type,
   };

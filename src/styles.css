@@ -857,8 +857,10 @@ code {
 
 .workflow-editor-validation__body,
 .workflow-editor-validation__json-error {
-  max-height: 8rem;
+  max-height: min(10rem, 24vh);
+  min-height: 0;
   overflow: auto;
+  padding-right: 0.15rem;
 }
 
 .workflow-editor-validation__json-error {
