@@ -662,7 +662,6 @@ code {
 }
 
 .workflow-editor-shell {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
@@ -691,17 +690,19 @@ code {
   border: 0;
 }
 
+.workflow-editor-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: start;
+}
+
 .workflow-editor-fullscreen {
-  position: absolute;
-  top: 0.85rem;
-  right: 0.85rem;
-  z-index: 8;
   border: 1px solid rgba(28, 26, 23, 0.12);
   border-radius: 999px;
   padding: 0.55rem 0.85rem;
-  background: rgba(255, 253, 249, 0.94);
+  background: #fffdf9;
   color: var(--ink);
-  box-shadow: 0 8px 18px rgba(34, 26, 16, 0.12);
   cursor: pointer;
 }
 
@@ -713,7 +714,7 @@ code {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
   gap: 0.8rem;
-  padding-right: 8.5rem;
+  min-width: 0;
 }
 
 .workflow-meta-field {
@@ -786,6 +787,27 @@ code {
   min-width: 0;
 }
 
+.workflow-editor-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.workflow-editor-controls button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.65rem 0.95rem;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.workflow-editor-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .workflow-editor-toolbox-search__label {
   color: var(--muted);
   font-size: 0.82rem;
@@ -821,6 +843,26 @@ code {
   flex: 1;
   height: auto;
   min-height: 0;
+}
+
+.workflow-editor-validation {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: #fffaf4;
+}
+
+.workflow-editor-validation__body,
+.workflow-editor-validation__json-error {
+  max-height: 8rem;
+  overflow: auto;
+}
+
+.workflow-editor-validation__json-error {
+  margin: 0;
 }
 
 .workflow-editor-canvas > div {
@@ -1330,7 +1372,14 @@ code {
 
   .workflow-editor-metadata {
     grid-template-columns: 1fr;
-    padding-right: 0;
+  }
+
+  .workflow-editor-topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-editor-controls {
+    justify-content: flex-start;
   }
 
   .workflow-editor-toolbox-search {

@@ -718,41 +718,37 @@ export default function App() {
             title="Active table preview"
           />
 
-          <section className="editor-layout">
-            <section className="panel panel--editor">
-              <div className="panel-header">
-                <div>
-                  <h2>Workflow editor</h2>
-                  <p>Select columns, optionally scope rows, then apply an expression. The canonical workflow IR remains the runtime source of truth.</p>
-                </div>
-                <div className="workflow-actions">
-                  <button disabled={!authoredWorkflow} onClick={handleExportWorkflowJson} type="button">
-                    Export workflow JSON
-                  </button>
-                  <button onClick={handleOpenWorkflowImportDialog} type="button">
-                    Import workflow JSON
-                  </button>
-                  <button disabled={!canUseAI} onClick={handleOpenAIDialog} type="button">
-                    Ask AI
-                  </button>
-                  <button disabled={!canRunWorkflow} onClick={handleRunWorkflow} type="button">
-                    Run workflow
-                  </button>
-                </div>
+          <section className="panel panel--editor">
+            <div className="panel-header">
+              <div>
+                <h2>Workflow editor</h2>
+                <p>Select columns, optionally scope rows, then apply an expression. The canonical workflow IR remains the runtime source of truth.</p>
               </div>
+              <div className="workflow-actions">
+                <button disabled={!authoredWorkflow} onClick={handleExportWorkflowJson} type="button">
+                  Export workflow JSON
+                </button>
+                <button onClick={handleOpenWorkflowImportDialog} type="button">
+                  Import workflow JSON
+                </button>
+                <button disabled={!canUseAI} onClick={handleOpenAIDialog} type="button">
+                  Ask AI
+                </button>
+                <button disabled={!canRunWorkflow} onClick={handleRunWorkflow} type="button">
+                  Run workflow
+                </button>
+              </div>
+            </div>
 
-              <WorkflowEditor
-                extraColumnIds={workflowExtraColumnIds}
-                loadVersion={workflowLoadVersion}
-                loadWorkflow={loadWorkflow}
-                onWorkspaceChange={handleEditorWorkspaceChange}
-                table={activeTable}
-              />
-            </section>
-
-            <section className="panel-stack">
-              <ValidationPanel issues={allWorkflowIssues} jsonError={workflowJsonError} />
-            </section>
+            <WorkflowEditor
+              extraColumnIds={workflowExtraColumnIds}
+              issues={allWorkflowIssues}
+              jsonError={workflowJsonError}
+              loadVersion={workflowLoadVersion}
+              loadWorkflow={loadWorkflow}
+              onWorkspaceChange={handleEditorWorkspaceChange}
+              table={activeTable}
+            />
           </section>
 
           {executionResult ? (

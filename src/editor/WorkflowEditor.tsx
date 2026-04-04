@@ -30,6 +30,8 @@ interface WorkflowEditorProps {
   loadWorkflow: Workflow | null;
   loadVersion: number;
   extraColumnIds: string[];
+  issues: Array<{ code: string; message: string }>;
+  jsonError: string | null;
   onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
@@ -87,7 +89,7 @@ const SCHEMA_PROJECTION_DELAY_MS = 700;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 
-export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, onWorkspaceChange }: WorkflowEditorProps) {
+export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, issues, jsonError, onWorkspaceChange }: WorkflowEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
@@ -107,8 +109,10 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
   const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow));
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
   const [activeToolboxCategoryId, setActiveToolboxCategoryId] = useState<string | null>(null);
+  const [canDeleteSelection, setCanDeleteSelection] = useState(false);
   const [toolboxSearchQuery, setToolboxSearchQuery] = useState('');
   const isFullscreen = isFallbackFullscreen;
+  const issueCount = issues.length + (jsonError ? 1 : 0);
 
   latestInputsRef.current = {
     table,
@@ -132,10 +136,10 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         wheel: true,
       },
       zoom: {
-        controls: true,
+        controls: false,
         wheel: true,
       },
-      trashcan: true,
+      trashcan: false,
     });
 
     workspaceRef.current = workspace;
@@ -216,6 +220,8 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     };
 
     const handleWorkspaceChange = (event: Blockly.Events.Abstract) => {
+      syncSelectionState();
+
       if (suppressChangesRef.current) {
         return;
       }
@@ -278,6 +284,7 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
     syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
+    syncSelectionState();
     syncActiveToolboxCategory(getSelectedWorkflowToolboxCategoryId(workspace));
     resizeWorkspace(workspace, true);
 
@@ -403,30 +410,84 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
     }
   }
 
+  function syncSelectionState() {
+    const selected = Blockly.getSelected();
+
+    setCanDeleteSelection(Boolean(selected && 'dispose' in selected && typeof selected.dispose === 'function'));
+  }
+
+  function handleZoom(amount: number) {
+    const workspace = workspaceRef.current;
+
+    if (!workspace) {
+      return;
+    }
+
+    workspace.zoomCenter(amount);
+  }
+
+  function handleResetZoom() {
+    const workspace = workspaceRef.current;
+
+    if (!workspace) {
+      return;
+    }
+
+    workspace.setScale(workspace.options.zoomOptions.startScale);
+    workspace.scrollCenter();
+  }
+
+  function handleDeleteSelection() {
+    const selected = Blockly.getSelected();
+
+    if (!selected || !('dispose' in selected) || typeof selected.dispose !== 'function') {
+      return;
+    }
+
+    selected.dispose(true, true);
+    syncSelectionState();
+  }
+
   const activeToolboxCategory = getWorkflowToolboxCategory(activeToolboxCategoryId);
 
   return (
     <div className={`workflow-editor-shell${isFallbackFullscreen ? ' workflow-editor-shell--fullscreen' : ''}`} ref={shellRef}>
-      <button
-        aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
-        className="workflow-editor-fullscreen"
-        onClick={() => {
-          void handleToggleFullscreen();
-        }}
-        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        type="button"
-      >
-        {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-      </button>
-      <div className="workflow-editor-metadata">
-        <label className="workflow-meta-field">
-          <span>Workflow name</span>
-          <input onChange={handleMetadataChange('name')} type="text" value={metadata.name} />
-        </label>
-        <label className="workflow-meta-field workflow-meta-field--wide">
-          <span>Description</span>
-          <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
-        </label>
+      <div className="workflow-editor-topbar">
+        <div className="workflow-editor-metadata">
+          <label className="workflow-meta-field">
+            <span>Workflow name</span>
+            <input onChange={handleMetadataChange('name')} type="text" value={metadata.name} />
+          </label>
+          <label className="workflow-meta-field workflow-meta-field--wide">
+            <span>Description</span>
+            <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
+          </label>
+        </div>
+        <div className="workflow-editor-controls">
+          <button onClick={() => handleZoom(1)} type="button">
+            Zoom in
+          </button>
+          <button onClick={handleResetZoom} type="button">
+            Reset
+          </button>
+          <button onClick={() => handleZoom(-1)} type="button">
+            Zoom out
+          </button>
+          <button disabled={!canDeleteSelection} onClick={handleDeleteSelection} type="button">
+            Delete selected
+          </button>
+          <button
+            aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
+            className="workflow-editor-fullscreen"
+            onClick={() => {
+              void handleToggleFullscreen();
+            }}
+            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            type="button"
+          >
+            {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          </button>
+        </div>
       </div>
       {activeToolboxCategory ? (
         <div className="workflow-editor-toolbox-search" onMouseDown={handleToolboxSearchPointerDown}>
@@ -442,6 +503,27 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
         </div>
       ) : null}
       <div className="workflow-editor-canvas" ref={containerRef} />
+      <section className="workflow-editor-validation">
+        <div className="panel-header panel-header--compact">
+          <h2>Validation</h2>
+          <p>{issueCount === 0 ? 'No issues' : `${issueCount} issue${issueCount === 1 ? '' : 's'}`}</p>
+        </div>
+        {jsonError ? <pre className="json-error-panel workflow-editor-validation__json-error">{jsonError}</pre> : null}
+        {issues.length === 0 ? (
+          jsonError ? null : <div className="empty-panel empty-panel--compact">No current workflow issues.</div>
+        ) : (
+          <div className="panel-scroll-region workflow-editor-validation__body">
+            <ul className="issue-list issue-list--compact">
+              {issues.map((issue, index) => (
+                <li className="issue-item issue-item--compact" key={`${issue.code}-${index}`}>
+                  <strong>{issue.code}</strong>
+                  <p>{issue.message}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
