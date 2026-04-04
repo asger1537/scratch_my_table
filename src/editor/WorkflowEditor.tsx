@@ -396,6 +396,21 @@ export function WorkflowEditor({
     setIsFallbackFullscreen(true);
   }
 
+  function handleRunWorkflowAction() {
+    if (!isFullscreen) {
+      onRunWorkflow();
+      return;
+    }
+
+    setIsFallbackFullscreen(false);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        onRunWorkflow();
+      });
+    });
+  }
+
   function handleMetadataChange(field: keyof Pick<AuthoringWorkflowMetadata, 'name' | 'description'>) {
     return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       const workspace = workspaceRef.current;
@@ -500,7 +515,7 @@ export function WorkflowEditor({
             <WorkflowEditorButton disabled={!canUseAI} icon={<SparklesIcon />} onClick={onOpenAIDialog} type="button">
               Ask AI
             </WorkflowEditorButton>
-            <WorkflowEditorButton disabled={!canRunWorkflow} icon={<PlayIcon />} onClick={onRunWorkflow} type="button" variant="primary">
+            <WorkflowEditorButton disabled={!canRunWorkflow} icon={<PlayIcon />} onClick={handleRunWorkflowAction} type="button" variant="primary">
               Run workflow
             </WorkflowEditorButton>
             <WorkflowEditorButton

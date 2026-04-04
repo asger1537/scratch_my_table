@@ -651,11 +651,7 @@ export default function App() {
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">Selection-first authoring</p>
           <h1>Scratch My Table</h1>
-          <p className="hero-copy">
-            Import one table, author V1 workflows as compact scope-and-expression steps, validate them against the active schema, and run them through the existing executor.
-          </p>
         </div>
       </section>
 
@@ -750,6 +746,7 @@ export default function App() {
               />
               {resultTable ? (
                 <PreviewPanel
+                  allowFullscreen
                   description={`Showing ${resultPreviewRows.length} of ${resultTable.rowOrder.length} transformed rows.`}
                   previewRows={resultPreviewRows}
                   table={resultTable}
@@ -1468,7 +1465,10 @@ function PreviewPanel({
                 title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
                 type="button"
               >
-                {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                <span aria-hidden="true" className="preview-panel-fullscreen__icon">
+                  {isFullscreen ? <CollapseIcon /> : <FullscreenIcon />}
+                </span>
+                <span>{isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}</span>
               </button>
             ) : null}
           </div>
@@ -1513,6 +1513,28 @@ function PreviewPanel({
         </table>
       </div>
     </section>
+  );
+}
+
+function FullscreenIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M8 4H4v4" />
+      <path d="M16 4h4v4" />
+      <path d="M20 16v4h-4" />
+      <path d="M4 16v4h4" />
+    </svg>
+  );
+}
+
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M9 9H4V4" />
+      <path d="M15 9h5V4" />
+      <path d="M20 20h-5v-5" />
+      <path d="M4 20h5v-5" />
+    </svg>
   );
 }
 
