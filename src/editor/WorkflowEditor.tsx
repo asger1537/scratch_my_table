@@ -1,4 +1,4 @@
-import { type ChangeEvent, type MouseEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
+import { type ButtonHTMLAttributes, type ChangeEvent, type MouseEvent, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from 'react';
 
 import * as Blockly from 'blockly';
 
@@ -34,6 +34,13 @@ interface WorkflowEditorProps {
   extraColumnIds: string[];
   issues: Array<{ code: string; message: string }>;
   jsonError: string | null;
+  canExportWorkflowJson: boolean;
+  canUseAI: boolean;
+  canRunWorkflow: boolean;
+  onExportWorkflowJson: () => void;
+  onOpenWorkflowImportDialog: () => void;
+  onOpenAIDialog: () => void;
+  onRunWorkflow: () => void;
   onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
@@ -91,7 +98,22 @@ const SCHEMA_PROJECTION_DELAY_MS = 700;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 
-export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnIds, issues, jsonError, onWorkspaceChange }: WorkflowEditorProps) {
+export function WorkflowEditor({
+  table,
+  loadWorkflow,
+  loadVersion,
+  extraColumnIds,
+  issues,
+  jsonError,
+  canExportWorkflowJson,
+  canUseAI,
+  canRunWorkflow,
+  onExportWorkflowJson,
+  onOpenWorkflowImportDialog,
+  onOpenAIDialog,
+  onRunWorkflow,
+  onWorkspaceChange,
+}: WorkflowEditorProps) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
@@ -455,6 +477,50 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
 
   return (
     <div className={`workflow-editor-shell${isFallbackFullscreen ? ' workflow-editor-shell--fullscreen' : ''}`} ref={shellRef}>
+      <div className="workflow-editor-header">
+        <h2 className="workflow-editor-title">Workflow editor</h2>
+        <div className="workflow-editor-toolbar">
+          <div className="workflow-editor-actions">
+            <WorkflowEditorButton disabled={!canExportWorkflowJson} icon={<ExportIcon />} onClick={onExportWorkflowJson} type="button">
+              Export workflow JSON
+            </WorkflowEditorButton>
+            <WorkflowEditorButton icon={<ImportIcon />} onClick={onOpenWorkflowImportDialog} type="button">
+              Import workflow JSON
+            </WorkflowEditorButton>
+            <WorkflowEditorButton disabled={!canUseAI} icon={<SparklesIcon />} onClick={onOpenAIDialog} type="button">
+              Ask AI
+            </WorkflowEditorButton>
+            <WorkflowEditorButton disabled={!canRunWorkflow} icon={<PlayIcon />} onClick={onRunWorkflow} type="button" variant="primary">
+              Run workflow
+            </WorkflowEditorButton>
+          </div>
+          <div className="workflow-editor-controls">
+            <WorkflowEditorButton icon={<ZoomInIcon />} onClick={() => handleZoom(1)} type="button">
+              Zoom in
+            </WorkflowEditorButton>
+            <WorkflowEditorButton icon={<ResetIcon />} onClick={handleResetZoom} type="button">
+              Reset view
+            </WorkflowEditorButton>
+            <WorkflowEditorButton icon={<ZoomOutIcon />} onClick={() => handleZoom(-1)} type="button">
+              Zoom out
+            </WorkflowEditorButton>
+            <WorkflowEditorButton disabled={!canDeleteSelection} icon={<TrashIcon />} onClick={handleDeleteSelection} type="button">
+              Delete selected
+            </WorkflowEditorButton>
+            <WorkflowEditorButton
+              aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
+              icon={isFullscreen ? <CollapseIcon /> : <FullscreenIcon />}
+              onClick={() => {
+                void handleToggleFullscreen();
+              }}
+              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              type="button"
+            >
+              {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            </WorkflowEditorButton>
+          </div>
+        </div>
+      </div>
       <div className="workflow-editor-topbar">
         <div className="workflow-editor-metadata">
           <label className="workflow-meta-field">
@@ -465,31 +531,6 @@ export function WorkflowEditor({ table, loadWorkflow, loadVersion, extraColumnId
             <span>Description</span>
             <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
           </label>
-        </div>
-        <div className="workflow-editor-controls">
-          <button onClick={() => handleZoom(1)} type="button">
-            Zoom in
-          </button>
-          <button onClick={handleResetZoom} type="button">
-            Reset
-          </button>
-          <button onClick={() => handleZoom(-1)} type="button">
-            Zoom out
-          </button>
-          <button disabled={!canDeleteSelection} onClick={handleDeleteSelection} type="button">
-            Delete selected
-          </button>
-          <button
-            aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
-            className="workflow-editor-fullscreen"
-            onClick={() => {
-              void handleToggleFullscreen();
-            }}
-            title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-            type="button"
-          >
-            {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-          </button>
         </div>
       </div>
       {activeToolboxCategory ? (
@@ -681,6 +722,127 @@ function scheduleDeferredIdleWork(callback: () => void) {
   }
 
   return window.setTimeout(callback, 0);
+}
+
+interface WorkflowEditorButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  icon: ReactNode;
+  variant?: 'default' | 'primary';
+}
+
+function WorkflowEditorButton({ children, className = '', icon, variant = 'default', ...props }: WorkflowEditorButtonProps) {
+  const variantClassName = variant === 'primary' ? ' workflow-editor-button--primary' : '';
+  const nextClassName = `workflow-editor-button${variantClassName}${className ? ` ${className}` : ''}`;
+
+  return (
+    <button {...props} className={nextClassName}>
+      <span aria-hidden="true" className="workflow-editor-button__icon">
+        {icon}
+      </span>
+      <span>{children}</span>
+    </button>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 4v10" />
+      <path d="m8 8 4-4 4 4" />
+      <path d="M5 14v4a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-4" />
+    </svg>
+  );
+}
+
+function ImportIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 20V10" />
+      <path d="m8 16 4 4 4-4" />
+      <path d="M5 10V6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v4" />
+    </svg>
+  );
+}
+
+function SparklesIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="m12 3 1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3Z" />
+      <path d="m18.5 15 0.8 2.2 2.2 0.8-2.2 0.8-0.8 2.2-0.8-2.2-2.2-0.8 2.2-0.8 0.8-2.2Z" />
+      <path d="m5.5 14 0.6 1.6 1.6 0.6-1.6 0.6-0.6 1.6-0.6-1.6-1.6-0.6 1.6-0.6 0.6-1.6Z" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M8 6v12l10-6Z" />
+    </svg>
+  );
+}
+
+function ZoomInIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M20 20l-4.2-4.2" />
+      <path d="M11 8v6" />
+      <path d="M8 11h6" />
+    </svg>
+  );
+}
+
+function ZoomOutIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M20 20l-4.2-4.2" />
+      <path d="M8 11h6" />
+    </svg>
+  );
+}
+
+function ResetIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M4 12a8 8 0 1 0 2.3-5.7" />
+      <path d="M4 4v4h4" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M4 7h16" />
+      <path d="M9 7V4h6v3" />
+      <path d="M7 7v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function FullscreenIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M8 4H4v4" />
+      <path d="M16 4h4v4" />
+      <path d="M20 16v4h-4" />
+      <path d="M4 16v4h4" />
+    </svg>
+  );
+}
+
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M9 9H4V4" />
+      <path d="M15 9h5V4" />
+      <path d="M20 20h-5v-5" />
+      <path d="M4 20h5v-5" />
+    </svg>
+  );
 }
 
 function cancelDeferredIdleWork(handle: number) {
