@@ -108,8 +108,12 @@ code {
 .toolbar {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
   margin-bottom: 1rem;
+}
+
+.toolbar > :only-child {
+  grid-column: 1 / -1;
 }
 
 .summary-card {
@@ -664,8 +668,8 @@ code {
 .workflow-editor-shell {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
-  padding: 1rem;
+  gap: 0.75rem;
+  padding: 0.85rem;
   border: 1px solid var(--line);
   border-radius: 1rem;
   overflow: hidden;
@@ -692,26 +696,26 @@ code {
 
 .workflow-editor-topbar {
   display: grid;
-  gap: 0.9rem;
+  gap: 0.75rem;
 }
 
 .workflow-editor-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1rem;
-  align-items: start;
+  gap: 0.85rem;
 }
 
 .workflow-editor-title {
   margin: 0;
   font-size: 1.2rem;
+  white-space: nowrap;
 }
 
-.workflow-editor-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.65rem 0.8rem;
+.workflow-editor-header-main,
+.workflow-editor-header-secondary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.85rem;
+  align-items: center;
 }
 
 .workflow-editor-actions,
@@ -719,7 +723,16 @@ code {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0.65rem;
+  gap: 0.55rem;
+}
+
+.workflow-editor-actions--primary,
+.workflow-editor-controls {
+  justify-content: flex-end;
+}
+
+.workflow-editor-actions--secondary {
+  justify-content: flex-start;
 }
 
 .workflow-editor-button {
@@ -728,7 +741,7 @@ code {
   gap: 0.5rem;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 0.65rem 0.95rem;
+  padding: 0.58rem 0.88rem;
   background: #fffdf9;
   color: var(--ink);
   cursor: pointer;
@@ -774,7 +787,7 @@ code {
 .workflow-editor-metadata {
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
-  gap: 0.8rem;
+  gap: 0.7rem;
   min-width: 0;
 }
 
@@ -797,7 +810,7 @@ code {
   border: 1px solid var(--line);
   border-radius: 0.8rem;
   background: #fffdf9;
-  padding: 0.75rem 0.9rem;
+  padding: 0.68rem 0.85rem;
   color: var(--ink);
 }
 
@@ -869,8 +882,8 @@ code {
 
 .workflow-editor-canvas {
   position: relative;
-  height: 38rem;
-  min-height: 38rem;
+  height: clamp(24rem, 47vh, 33rem);
+  min-height: 24rem;
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.9rem;
@@ -889,7 +902,7 @@ code {
   display: grid;
   gap: 0.65rem;
   min-width: 0;
-  padding: 0.85rem 0.95rem;
+  padding: 0.75rem 0.85rem;
   border: 1px solid var(--line);
   border-radius: 0.9rem;
   background: #fffaf4;
@@ -897,7 +910,7 @@ code {
 
 .workflow-editor-validation__body,
 .workflow-editor-validation__json-error {
-  max-height: min(10rem, 24vh);
+  max-height: min(8rem, 20vh);
   min-height: 0;
   overflow: auto;
   padding-right: 0.15rem;
@@ -1413,10 +1426,14 @@ code {
   }
 
   .workflow-editor-header {
+    gap: 0.7rem;
+  }
+
+  .workflow-editor-header-main,
+  .workflow-editor-header-secondary {
     grid-template-columns: 1fr;
   }
 
-  .workflow-editor-toolbar,
   .workflow-editor-actions,
   .workflow-editor-controls {
     justify-content: flex-start;

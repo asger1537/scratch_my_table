@@ -97,6 +97,7 @@ const SEMANTIC_CHANGE_DELAY_MS = 1000;
 const SCHEMA_PROJECTION_DELAY_MS = 700;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
+const WORKSPACE_ZOOM_SCALE_SPEED = 1.08;
 
 export function WorkflowEditor({
   table,
@@ -134,6 +135,7 @@ export function WorkflowEditor({
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
   const [activeToolboxCategoryId, setActiveToolboxCategoryId] = useState<string | null>(null);
   const [canDeleteSelection, setCanDeleteSelection] = useState(false);
+  const [canDeleteAll, setCanDeleteAll] = useState(false);
   const [toolboxSearchQuery, setToolboxSearchQuery] = useState('');
   const isFullscreen = isFallbackFullscreen;
   const validationItems = buildValidationDisplayItems(issues, jsonError);
@@ -163,6 +165,7 @@ export function WorkflowEditor({
       zoom: {
         controls: false,
         wheel: true,
+        scaleSpeed: WORKSPACE_ZOOM_SCALE_SPEED,
       },
       trashcan: false,
     });
@@ -337,6 +340,7 @@ export function WorkflowEditor({
     loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
     syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
+    syncSelectionState();
     resizeWorkspace(workspace, true);
   }, [loadVersion]);
 
@@ -439,6 +443,7 @@ export function WorkflowEditor({
     const selected = Blockly.getSelected();
 
     setCanDeleteSelection(Boolean(selected && 'dispose' in selected && typeof selected.dispose === 'function'));
+    setCanDeleteAll(Boolean(workspaceRef.current && workspaceRef.current.getAllBlocks(false).length > 0));
   }
 
   function handleZoom(amount: number) {
@@ -473,25 +478,51 @@ export function WorkflowEditor({
     syncSelectionState();
   }
 
+  function handleDeleteAll() {
+    const workspace = workspaceRef.current;
+
+    if (!workspace || workspace.getAllBlocks(false).length === 0) {
+      return;
+    }
+
+    workspace.clear();
+    syncSelectionState();
+  }
+
   const activeToolboxCategory = getWorkflowToolboxCategory(activeToolboxCategoryId);
 
   return (
     <div className={`workflow-editor-shell${isFallbackFullscreen ? ' workflow-editor-shell--fullscreen' : ''}`} ref={shellRef}>
       <div className="workflow-editor-header">
-        <h2 className="workflow-editor-title">Workflow editor</h2>
-        <div className="workflow-editor-toolbar">
-          <div className="workflow-editor-actions">
-            <WorkflowEditorButton disabled={!canExportWorkflowJson} icon={<ExportIcon />} onClick={onExportWorkflowJson} type="button">
-              Export workflow JSON
-            </WorkflowEditorButton>
-            <WorkflowEditorButton icon={<ImportIcon />} onClick={onOpenWorkflowImportDialog} type="button">
-              Import workflow JSON
-            </WorkflowEditorButton>
+        <div className="workflow-editor-header-main">
+          <h2 className="workflow-editor-title">Workflow editor</h2>
+          <div className="workflow-editor-actions workflow-editor-actions--primary">
             <WorkflowEditorButton disabled={!canUseAI} icon={<SparklesIcon />} onClick={onOpenAIDialog} type="button">
               Ask AI
             </WorkflowEditorButton>
             <WorkflowEditorButton disabled={!canRunWorkflow} icon={<PlayIcon />} onClick={onRunWorkflow} type="button" variant="primary">
               Run workflow
+            </WorkflowEditorButton>
+            <WorkflowEditorButton
+              aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
+              icon={isFullscreen ? <CollapseIcon /> : <FullscreenIcon />}
+              onClick={() => {
+                void handleToggleFullscreen();
+              }}
+              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              type="button"
+            >
+              {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            </WorkflowEditorButton>
+          </div>
+        </div>
+        <div className="workflow-editor-header-secondary">
+          <div className="workflow-editor-actions workflow-editor-actions--secondary">
+            <WorkflowEditorButton disabled={!canExportWorkflowJson} icon={<ExportIcon />} onClick={onExportWorkflowJson} type="button">
+              Export workflow
+            </WorkflowEditorButton>
+            <WorkflowEditorButton icon={<ImportIcon />} onClick={onOpenWorkflowImportDialog} type="button">
+              Import workflow
             </WorkflowEditorButton>
           </div>
           <div className="workflow-editor-controls">
@@ -507,16 +538,8 @@ export function WorkflowEditor({
             <WorkflowEditorButton disabled={!canDeleteSelection} icon={<TrashIcon />} onClick={handleDeleteSelection} type="button">
               Delete selected
             </WorkflowEditorButton>
-            <WorkflowEditorButton
-              aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
-              icon={isFullscreen ? <CollapseIcon /> : <FullscreenIcon />}
-              onClick={() => {
-                void handleToggleFullscreen();
-              }}
-              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              type="button"
-            >
-              {isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            <WorkflowEditorButton disabled={!canDeleteAll} icon={<TrashAllIcon />} onClick={handleDeleteAll} type="button">
+              Delete all
             </WorkflowEditorButton>
           </div>
         </div>
@@ -732,9 +755,20 @@ interface WorkflowEditorButtonProps extends ButtonHTMLAttributes<HTMLButtonEleme
 function WorkflowEditorButton({ children, className = '', icon, variant = 'default', ...props }: WorkflowEditorButtonProps) {
   const variantClassName = variant === 'primary' ? ' workflow-editor-button--primary' : '';
   const nextClassName = `workflow-editor-button${variantClassName}${className ? ` ${className}` : ''}`;
+  const userOnMouseDown = props.onMouseDown;
 
   return (
-    <button {...props} className={nextClassName}>
+    <button
+      {...props}
+      className={nextClassName}
+      onMouseDown={(event) => {
+        userOnMouseDown?.(event);
+
+        if (!event.defaultPrevented) {
+          event.preventDefault();
+        }
+      }}
+    >
       <span aria-hidden="true" className="workflow-editor-button__icon">
         {icon}
       </span>
@@ -819,6 +853,21 @@ function TrashIcon() {
       <path d="M7 7v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7" />
       <path d="M10 11v5" />
       <path d="M14 11v5" />
+    </svg>
+  );
+}
+
+function TrashAllIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M4 7h16" />
+      <path d="M9 7V4h6v3" />
+      <path d="M7 7v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
+      <path d="M4 10h2" />
+      <path d="M4 14h2" />
+      <path d="M4 18h2" />
     </svg>
   );
 }
