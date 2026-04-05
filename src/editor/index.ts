@@ -1,4 +1,5 @@
 export { WorkflowEditor } from './WorkflowEditor';
+export type { WorkflowEditorHandle } from './WorkflowEditor';
 export { WorkflowBlockPreview } from './WorkflowBlockPreview';
 export { registerWorkflowBlocks } from './blocks';
 export { runWorkspaceWorkflow, validateWorkspaceWorkflow } from './integration';

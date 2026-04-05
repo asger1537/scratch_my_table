@@ -1,4 +1,15 @@
-import { type ButtonHTMLAttributes, type ChangeEvent, type MouseEvent, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  forwardRef,
+  type ButtonHTMLAttributes,
+  type ChangeEvent,
+  type MouseEvent,
+  type MutableRefObject,
+  type ReactNode,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 
 import * as Blockly from 'blockly';
 
@@ -30,17 +41,23 @@ import { buildValidationDisplayItems } from './validationDisplay';
 interface WorkflowEditorProps {
   table: Table;
   loadWorkflow: Workflow | null;
+  loadWorkflowState: Record<string, unknown> | null;
+  loadMetadata: AuthoringWorkflowMetadata;
   loadVersion: number;
   extraColumnIds: string[];
   issues: Array<{ code: string; message: string }>;
   jsonError: string | null;
-  canExportWorkflowJson: boolean;
+  workflowTabs?: ReactNode;
+  canExportWorkflows: boolean;
   canUseAI: boolean;
   canRunWorkflow: boolean;
-  onExportWorkflowJson: () => void;
+  canRunSequence: boolean;
+  onExportWorkflows: () => void;
   onOpenWorkflowImportDialog: () => void;
   onOpenAIDialog: () => void;
   onRunWorkflow: () => void;
+  onRunSequence: () => void;
+  onOpenRunOrderDialog: () => void;
   onWorkspaceChange: (result: EditorWorkspaceChange) => void;
 }
 
@@ -99,22 +116,32 @@ const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 const WORKSPACE_ZOOM_SCALE_SPEED = 1.08;
 
-export function WorkflowEditor({
+export interface WorkflowEditorHandle {
+  flushWorkspaceChange: () => void;
+}
+
+export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorProps>(function WorkflowEditor({
   table,
   loadWorkflow,
+  loadWorkflowState,
+  loadMetadata,
   loadVersion,
   extraColumnIds,
   issues,
   jsonError,
-  canExportWorkflowJson,
+  workflowTabs,
+  canExportWorkflows,
   canUseAI,
   canRunWorkflow,
-  onExportWorkflowJson,
+  canRunSequence,
+  onExportWorkflows,
   onOpenWorkflowImportDialog,
   onOpenAIDialog,
   onRunWorkflow,
+  onRunSequence,
+  onOpenRunOrderDialog,
   onWorkspaceChange,
-}: WorkflowEditorProps) {
+}: WorkflowEditorProps, ref) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
@@ -123,6 +150,8 @@ export function WorkflowEditor({
   const idleCallbackRef = useRef<number | null>(null);
   const schemaDebounceTimerRef = useRef<number | null>(null);
   const schemaIdleCallbackRef = useRef<number | null>(null);
+  const clearScheduledWorkRef = useRef<() => void>(() => {});
+  const flushWorkspaceChangeRef = useRef<(shouldProjectSchema: boolean) => void>(() => {});
   const latestInputsRef = useRef<DeferredWorkspaceInputs>({
     table,
     extraColumnIds,
@@ -131,7 +160,7 @@ export function WorkflowEditor({
   const activeToolboxCategoryIdRef = useRef<string | null>(null);
   const lastToolboxSearchPointerDownAtRef = useRef(0);
   const toolboxSearchQueryRef = useRef('');
-  const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow));
+  const [metadata, setMetadata] = useState<AuthoringWorkflowMetadata>(() => getDefaultMetadata(table, loadWorkflow, loadMetadata));
   const [isFallbackFullscreen, setIsFallbackFullscreen] = useState(false);
   const [activeToolboxCategoryId, setActiveToolboxCategoryId] = useState<string | null>(null);
   const [canDeleteSelection, setCanDeleteSelection] = useState(false);
@@ -147,6 +176,13 @@ export function WorkflowEditor({
     onWorkspaceChange,
   };
   toolboxSearchQueryRef.current = toolboxSearchQuery;
+
+  useImperativeHandle(ref, () => ({
+    flushWorkspaceChange: () => {
+      clearScheduledWorkRef.current();
+      flushWorkspaceChangeRef.current(true);
+    },
+  }), []);
 
   useEffect(() => {
     registerWorkflowBlocks();
@@ -220,6 +256,7 @@ export function WorkflowEditor({
         schemaIdleCallbackRef.current = null;
       }
     };
+    clearScheduledWorkRef.current = clearScheduledWork;
 
     const flushWorkspaceChange = (shouldProjectSchema: boolean) => {
       if (suppressChangesRef.current || workspace.isDragging()) {
@@ -246,6 +283,7 @@ export function WorkflowEditor({
         });
       }, SCHEMA_PROJECTION_DELAY_MS);
     };
+    flushWorkspaceChangeRef.current = flushWorkspaceChange;
 
     const handleWorkspaceChange = (event: Blockly.Events.Abstract) => {
       syncSelectionState();
@@ -309,7 +347,7 @@ export function WorkflowEditor({
 
     window.addEventListener('resize', handleResize);
 
-    loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), loadWorkflowState, loadMetadata, onWorkspaceChange, suppressChangesRef);
     syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
     syncSelectionState();
@@ -319,6 +357,8 @@ export function WorkflowEditor({
     return () => {
       window.removeEventListener('resize', handleResize);
       clearScheduledWork();
+      clearScheduledWorkRef.current = () => {};
+      flushWorkspaceChangeRef.current = () => {};
       workspace.dispose();
       workspaceRef.current = null;
     };
@@ -337,7 +377,7 @@ export function WorkflowEditor({
       return;
     }
 
-    loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), onWorkspaceChange, suppressChangesRef);
+    loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), loadWorkflowState, loadMetadata, onWorkspaceChange, suppressChangesRef);
     syncEditorSchema(workspace, table, extraColumnIds);
     setMetadata(getWorkspaceMetadata(workspace));
     syncSelectionState();
@@ -396,7 +436,14 @@ export function WorkflowEditor({
     setIsFallbackFullscreen(true);
   }
 
+  function flushPendingWorkspaceChange(shouldProjectSchema = true) {
+    clearScheduledWorkRef.current();
+    flushWorkspaceChangeRef.current(shouldProjectSchema);
+  }
+
   function handleRunWorkflowAction() {
+    flushPendingWorkspaceChange();
+
     if (!isFullscreen) {
       onRunWorkflow();
       return;
@@ -411,7 +458,24 @@ export function WorkflowEditor({
     });
   }
 
-  function handleMetadataChange(field: keyof Pick<AuthoringWorkflowMetadata, 'name' | 'description'>) {
+  function handleRunSequenceAction() {
+    flushPendingWorkspaceChange();
+
+    if (!isFullscreen) {
+      onRunSequence();
+      return;
+    }
+
+    setIsFallbackFullscreen(false);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        onRunSequence();
+      });
+    });
+  }
+
+  function handleMetadataChange(field: keyof Pick<AuthoringWorkflowMetadata, 'description'>) {
     return (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       const workspace = workspaceRef.current;
 
@@ -512,11 +576,22 @@ export function WorkflowEditor({
         <div className="workflow-editor-header-main">
           <h2 className="workflow-editor-title">Workflow editor</h2>
           <div className="workflow-editor-actions workflow-editor-actions--primary">
-            <WorkflowEditorButton disabled={!canUseAI} icon={<SparklesIcon />} onClick={onOpenAIDialog} type="button">
+            <WorkflowEditorButton
+              disabled={!canUseAI}
+              icon={<SparklesIcon />}
+              onClick={() => {
+                flushPendingWorkspaceChange(false);
+                onOpenAIDialog();
+              }}
+              type="button"
+            >
               Ask AI
             </WorkflowEditorButton>
             <WorkflowEditorButton disabled={!canRunWorkflow} icon={<PlayIcon />} onClick={handleRunWorkflowAction} type="button" variant="primary">
               Run workflow
+            </WorkflowEditorButton>
+            <WorkflowEditorButton disabled={!canRunSequence} icon={<SequenceIcon />} onClick={handleRunSequenceAction} type="button">
+              Run sequence
             </WorkflowEditorButton>
             <WorkflowEditorButton
               aria-label={isFullscreen ? 'Exit fullscreen editor' : 'Open fullscreen editor'}
@@ -533,14 +608,39 @@ export function WorkflowEditor({
         </div>
         <div className="workflow-editor-header-secondary">
           <div className="workflow-editor-actions workflow-editor-actions--secondary">
-            <WorkflowEditorButton disabled={!canExportWorkflowJson} icon={<ExportIcon />} onClick={onExportWorkflowJson} type="button">
-              Export workflow
+            <WorkflowEditorButton
+              disabled={!canExportWorkflows}
+              icon={<ExportIcon />}
+              onClick={() => {
+                flushPendingWorkspaceChange(false);
+                onExportWorkflows();
+              }}
+              type="button"
+            >
+              Export workflow(s)
             </WorkflowEditorButton>
-            <WorkflowEditorButton icon={<ImportIcon />} onClick={onOpenWorkflowImportDialog} type="button">
-              Import workflow
+            <WorkflowEditorButton
+              icon={<ImportIcon />}
+              onClick={() => {
+                flushPendingWorkspaceChange(false);
+                onOpenWorkflowImportDialog();
+              }}
+              type="button"
+            >
+              Import workflow(s)
             </WorkflowEditorButton>
           </div>
           <div className="workflow-editor-controls">
+            <WorkflowEditorButton
+              icon={<RunOrderIcon />}
+              onClick={() => {
+                flushPendingWorkspaceChange(false);
+                onOpenRunOrderDialog();
+              }}
+              type="button"
+            >
+              Run order
+            </WorkflowEditorButton>
             <WorkflowEditorButton icon={<ZoomInIcon />} onClick={() => handleZoom(1)} type="button">
               Zoom in
             </WorkflowEditorButton>
@@ -561,16 +661,13 @@ export function WorkflowEditor({
       </div>
       <div className="workflow-editor-topbar">
         <div className="workflow-editor-metadata">
-          <label className="workflow-meta-field">
-            <span>Workflow name</span>
-            <input onChange={handleMetadataChange('name')} type="text" value={metadata.name} />
-          </label>
           <label className="workflow-meta-field workflow-meta-field--wide">
             <span>Description</span>
             <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
           </label>
         </div>
       </div>
+      {workflowTabs ? <div className="workflow-editor-tabs">{workflowTabs}</div> : null}
       {activeToolboxCategory ? (
         <div className="workflow-editor-toolbox-search" onMouseDown={handleToolboxSearchPointerDown}>
           <span className="workflow-editor-toolbox-search__label">{activeToolboxCategory.name}</span>
@@ -607,18 +704,28 @@ export function WorkflowEditor({
       </section>
     </div>
   );
-}
+});
 
 function loadWorkspace(
   workspace: Blockly.Workspace,
   table: Table,
   workflow: Workflow,
+  workspaceState: Record<string, unknown> | null,
+  metadata: AuthoringWorkflowMetadata,
   onWorkspaceChange: (result: EditorWorkspaceChange) => void,
   suppressChangesRef: MutableRefObject<boolean>,
 ) {
   suppressChangesRef.current = true;
   setEditorSchemaColumns(table.schema.columns, collectWorkflowColumnIds(workflow));
-  workflowToWorkspace(workspace, workflow);
+  workspace.clear();
+
+  if (workspaceState) {
+    Blockly.serialization.workspaces.load(workspaceState, workspace);
+    setWorkspaceMetadata(workspace, metadata);
+  } else {
+    workflowToWorkspace(workspace, workflow);
+  }
+
   suppressChangesRef.current = false;
   onWorkspaceChange(buildEditorWorkspaceChange(workspace));
 }
@@ -651,7 +758,11 @@ function resizeWorkspace(workspace: Blockly.WorkspaceSvg, focusRoot = false) {
   });
 }
 
-function getDefaultMetadata(table: Table, workflow: Workflow | null): AuthoringWorkflowMetadata {
+function getDefaultMetadata(table: Table, workflow: Workflow | null, metadata?: AuthoringWorkflowMetadata): AuthoringWorkflowMetadata {
+  if (metadata) {
+    return metadata;
+  }
+
   const seedWorkflow = workflow ?? createDefaultWorkflow(table);
 
   return {
@@ -664,6 +775,8 @@ function getDefaultMetadata(table: Table, workflow: Workflow | null): AuthoringW
 function buildEditorWorkspaceChange(workspace: Blockly.Workspace): EditorWorkspaceChange {
   return {
     ...workspaceToWorkflow(workspace),
+    metadata: getWorkspaceMetadata(workspace),
+    workspaceState: Blockly.serialization.workspaces.save(workspace) as Record<string, unknown>,
     workspacePromptSnapshot: createWorkspacePromptSnapshot(workspace),
   };
 }
@@ -826,6 +939,30 @@ function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24">
       <path d="M8 6v12l10-6Z" />
+    </svg>
+  );
+}
+
+function SequenceIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M5 7h9" />
+      <path d="m11 4 3 3-3 3" />
+      <path d="M5 17h14" />
+      <path d="m16 14 3 3-3 3" />
+    </svg>
+  );
+}
+
+function RunOrderIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M8 6h11" />
+      <path d="M8 12h11" />
+      <path d="M8 18h11" />
+      <path d="M4 6h0.01" />
+      <path d="M4 12h0.01" />
+      <path d="M4 18h0.01" />
     </svg>
   );
 }

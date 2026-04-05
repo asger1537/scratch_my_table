@@ -1,4 +1,4 @@
-import { ChangeEvent, DragEvent, startTransition, useDeferredValue, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ChangeEvent, DragEvent, startTransition, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 
 import {
   DEFAULT_GEMINI_MODEL,
@@ -20,12 +20,12 @@ import {
 import {
   WorkflowBlockPreview,
   WorkflowEditor,
+  type WorkflowEditorHandle,
+  type AuthoringWorkflowMetadata,
   collectWorkflowColumnIds,
   createDefaultWorkflow,
-  parseWorkflowJson,
   type EditorWorkspaceChange,
   type EditorIssue,
-  workflowToJson,
 } from './editor';
 import { executeWorkflow, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
 import { createValidationWorkerTableSnapshot, validateWorkflowWithWorker } from './workflow/validationWorkerClient';
@@ -37,6 +37,23 @@ import {
   exportTableXlsxBlob,
   importWorkbookFromFile,
 } from './domain/workbookIO';
+import {
+  addWorkflowToPackage,
+  buildExportWorkflowPackage,
+  createWorkflowPackage,
+  createNewPackageWorkflow,
+  createSingleWorkflowPackage,
+  deleteWorkflowFromPackage,
+  flattenWorkflowSequence,
+  mergeWorkflowPackages,
+  parseWorkflowPackageJson,
+  renameWorkflowInPackage,
+  setActiveWorkflowInPackage,
+  setRunOrderInPackage,
+  updateWorkflowDescriptionInPackage,
+  type WorkflowPackageV1,
+  workflowPackageToJson,
+} from './workflowPackage';
 
 const PREVIEW_ROW_LIMIT = 50;
 const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
@@ -44,8 +61,108 @@ const GEMINI_API_KEY_STORAGE_KEY = 'scratch_my_table.gemini_api_key';
 const GEMINI_MODEL_STORAGE_KEY = 'scratch_my_table.gemini_model';
 const GEMINI_THINKING_ENABLED_STORAGE_KEY = 'scratch_my_table.gemini_thinking_enabled';
 
+type WorkflowImportMode = 'choice' | 'paste' | 'decision';
+
+interface WorkflowAIState {
+  messages: AIMessage[];
+  promptValue: string;
+  draft: AIDraft | null;
+  draftIssues: WorkflowValidationIssue[];
+  debugTrace: AIDebugTrace | null;
+  progressEvents: AIProgressEvent[];
+  error: string | null;
+  isLoading: boolean;
+}
+
+interface WorkflowTabRuntimeState {
+  editorIssues: EditorIssue[];
+  validationIssues: WorkflowValidationIssue[];
+  workspacePromptSnapshot: string;
+  workspaceState: Record<string, unknown> | null;
+  aiState: WorkflowAIState;
+}
+
+interface RunExecutionContext {
+  kind: 'workflow' | 'sequence';
+  workflowIds: string[];
+  workflowNames: string[];
+}
+
+function createEmptyAIState(): WorkflowAIState {
+  return {
+    messages: [],
+    promptValue: '',
+    draft: null,
+    draftIssues: [],
+    debugTrace: null,
+    progressEvents: [],
+    error: null,
+    isLoading: false,
+  };
+}
+
+function createWorkflowTabRuntimeState(): WorkflowTabRuntimeState {
+  return {
+    editorIssues: [],
+    validationIssues: [],
+    workspacePromptSnapshot: '',
+    workspaceState: null,
+    aiState: createEmptyAIState(),
+  };
+}
+
+function createWorkflowTabStates(workflows: Workflow[]): Record<string, WorkflowTabRuntimeState> {
+  return Object.fromEntries(workflows.map((workflow) => [workflow.workflowId, createWorkflowTabRuntimeState()]));
+}
+
+function getWorkflowTabState(tabStates: Record<string, WorkflowTabRuntimeState>, workflowId: string): WorkflowTabRuntimeState {
+  return tabStates[workflowId] ?? createWorkflowTabRuntimeState();
+}
+
+function getWorkflowById(workflowPackage: WorkflowPackageV1 | null, workflowId: string | null): Workflow | null {
+  if (!workflowPackage || !workflowId) {
+    return null;
+  }
+
+  return workflowPackage.workflows.find((workflow) => workflow.workflowId === workflowId) ?? null;
+}
+
+function getWorkflowMetadata(workflow: Workflow | null): AuthoringWorkflowMetadata {
+  if (!workflow) {
+    return {
+      workflowId: 'wf_workflow',
+      name: 'Workflow',
+      description: '',
+    };
+  }
+
+  return {
+    workflowId: workflow.workflowId,
+    name: workflow.name,
+    description: workflow.description,
+  };
+}
+
+function replaceWorkflowInPackage(workflowPackage: WorkflowPackageV1, workflowId: string, nextWorkflow: Workflow): WorkflowPackageV1 {
+  return createWorkflowPackage(
+    workflowPackage.workflows.map((workflow) => (workflow.workflowId === workflowId ? nextWorkflow : workflow)),
+    workflowPackage.activeWorkflowId,
+    workflowPackage.runOrderWorkflowIds,
+  );
+}
+
+function buildWorkflowPackageExportFileName(workflowPackage: WorkflowPackageV1) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const baseName = workflowPackage.workflows.length === 1
+    ? workflowPackage.workflows[0].workflowId
+    : workflowPackage.activeWorkflowId || 'workflow-package';
+
+  return `${baseName || 'workflow-package'}-${timestamp}.json`;
+}
+
 export default function App() {
   const uploadDragDepthRef = useRef(0);
+  const editorRef = useRef<WorkflowEditorHandle | null>(null);
   const workflowImportInputRef = useRef<HTMLInputElement | null>(null);
   const workflowImportDragDepthRef = useRef(0);
   const validationDebounceTimerRef = useRef<number | null>(null);
@@ -56,41 +173,109 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isUploadDragActive, setIsUploadDragActive] = useState(false);
-  const [authoredWorkflow, setAuthoredWorkflow] = useState<Workflow | null>(null);
-  const [lastValidWorkflow, setLastValidWorkflow] = useState<Workflow | null>(null);
-  const [editorIssues, setEditorIssues] = useState<EditorIssue[]>([]);
-  const [validationIssues, setValidationIssues] = useState<WorkflowValidationIssue[]>([]);
-  const [workspacePromptSnapshot, setWorkspacePromptSnapshot] = useState('');
-  const [loadWorkflow, setLoadWorkflow] = useState<Workflow | null>(null);
+  const [workflowPackage, setWorkflowPackage] = useState<WorkflowPackageV1 | null>(null);
+  const [workflowTabStates, setWorkflowTabStates] = useState<Record<string, WorkflowTabRuntimeState>>({});
   const [workflowLoadVersion, setWorkflowLoadVersion] = useState(0);
   const [workflowJsonError, setWorkflowJsonError] = useState<string | null>(null);
   const [isWorkflowImportDialogOpen, setIsWorkflowImportDialogOpen] = useState(false);
-  const [workflowImportMode, setWorkflowImportMode] = useState<'choice' | 'paste'>('choice');
+  const [workflowImportMode, setWorkflowImportMode] = useState<WorkflowImportMode>('choice');
   const [workflowImportPasteValue, setWorkflowImportPasteValue] = useState('');
   const [isWorkflowImportDragActive, setIsWorkflowImportDragActive] = useState(false);
+  const [pendingImportedWorkflowPackage, setPendingImportedWorkflowPackage] = useState<WorkflowPackageV1 | null>(null);
+  const [isWorkflowExportDialogOpen, setIsWorkflowExportDialogOpen] = useState(false);
+  const [isRunOrderDialogOpen, setIsRunOrderDialogOpen] = useState(false);
   const [executionResult, setExecutionResult] = useState<WorkflowExecutionResult | null>(null);
+  const [lastRunContext, setLastRunContext] = useState<RunExecutionContext | null>(null);
   const [isAIDialogOpen, setIsAIDialogOpen] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>(() => ({
     apiKey: readStoredValue(GEMINI_API_KEY_STORAGE_KEY),
     model: normalizeGeminiModelSelection(readStoredValue(GEMINI_MODEL_STORAGE_KEY) || DEFAULT_GEMINI_MODEL),
     thinkingEnabled: readStoredBoolean(GEMINI_THINKING_ENABLED_STORAGE_KEY),
   }));
-  const [aiMessages, setAIMessages] = useState<AIMessage[]>([]);
-  const [aiPromptValue, setAIPromptValue] = useState('');
-  const [aiDraft, setAIDraft] = useState<AIDraft | null>(null);
-  const [aiDraftIssues, setAIDraftIssues] = useState<WorkflowValidationIssue[]>([]);
-  const [aiDebugTrace, setAIDebugTrace] = useState<AIDebugTrace | null>(null);
-  const [aiProgressEvents, setAIProgressEvents] = useState<AIProgressEvent[]>([]);
-  const [aiError, setAIError] = useState<string | null>(null);
-  const [isAILoading, setIsAILoading] = useState(false);
 
   const activeTable = getActiveTable(workbook);
   const previewRows = activeTable ? getOrderedRows(activeTable).slice(0, PREVIEW_ROW_LIMIT) : [];
   const resultTable = executionResult?.transformedTable ?? null;
   const resultPreviewRows = resultTable ? getOrderedRows(resultTable).slice(0, PREVIEW_ROW_LIMIT) : [];
-  const deferredAuthoredWorkflow = useDeferredValue(authoredWorkflow);
-  const authoredWorkflowJson = deferredAuthoredWorkflow ? workflowToJson(deferredAuthoredWorkflow) : '';
   const selectedAIModel = normalizeGeminiModelSelection(aiSettings.model);
+  const activeWorkflowId = workflowPackage?.activeWorkflowId ?? null;
+  const activeWorkflow = getWorkflowById(workflowPackage, activeWorkflowId);
+  const activeTabState = activeWorkflowId ? getWorkflowTabState(workflowTabStates, activeWorkflowId) : null;
+  const activeEditorIssues = activeTabState?.editorIssues ?? [];
+  const activeValidationIssues = activeTabState?.validationIssues ?? [];
+  const visibleActiveValidationIssues = activeEditorIssues.length > 0 ? [] : activeValidationIssues;
+  const activeWorkflowIssues = mergeWorkflowIssues(activeEditorIssues, visibleActiveValidationIssues);
+  const activeWorkspaceState = activeTabState?.workspaceState ?? null;
+  const activeAIState = activeTabState?.aiState ?? createEmptyAIState();
+  const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
+  const workflowExtraColumnIds = activeWorkflow ? collectWorkflowColumnIds(activeWorkflow) : [];
+  const canRunWorkflow = Boolean(activeTable && activeWorkflow && activeEditorIssues.length === 0 && activeValidationIssues.length === 0);
+  const canRunSequence = Boolean(
+    activeTable
+      && workflowPackage
+      && workflowPackage.runOrderWorkflowIds.length > 0
+      && workflowPackage.runOrderWorkflowIds.every((workflowId) => {
+        const tabState = getWorkflowTabState(workflowTabStates, workflowId);
+        return tabState.editorIssues.length === 0 && tabState.validationIssues.length === 0;
+      }),
+  );
+  const canUseAI = Boolean(activeTable && activeWorkflow);
+  const aiUsesLastValidWorkflow = Boolean(activeWorkflow && activeEditorIssues.length > 0);
+  const aiWorkflowIssueNotice = activeWorkflowIssues.length === 0
+    ? null
+    : aiUsesLastValidWorkflow
+      ? 'The current block workspace has issues. AI will receive the live block snapshot and the issue list, and it will draft from the last valid workflow snapshot. Applying the draft will replace the broken workspace.'
+      : 'The current workflow has issues. AI will receive the live block snapshot and the issue list when drafting.';
+  const aiDraftPreviewWorkflow = buildDraftPreviewWorkflow(activeWorkflow, activeAIState.draft);
+  const aiDraftDebugJson = formatDraftStepsForDebug(activeAIState.draft);
+  const exportableWorkflowIds = useMemo(
+    () =>
+      workflowPackage
+        ? workflowPackage.workflows
+          .filter((workflow) => getWorkflowTabState(workflowTabStates, workflow.workflowId).editorIssues.length === 0)
+          .map((workflow) => workflow.workflowId)
+        : [],
+    [workflowPackage, workflowTabStates],
+  );
+
+  function updateWorkflowTabState(workflowId: string, updater: (state: WorkflowTabRuntimeState) => WorkflowTabRuntimeState) {
+    setWorkflowTabStates((current) => {
+      const currentState = getWorkflowTabState(current, workflowId);
+      return {
+        ...current,
+        [workflowId]: updater(currentState),
+      };
+    });
+  }
+
+  function updateWorkflowAIState(workflowId: string, updater: (state: WorkflowAIState) => WorkflowAIState) {
+    updateWorkflowTabState(workflowId, (currentState) => ({
+      ...currentState,
+      aiState: updater(currentState.aiState),
+    }));
+  }
+
+  function resetWorkflowImportDialogState() {
+    setWorkflowImportMode('choice');
+    setWorkflowImportPasteValue('');
+    workflowImportDragDepthRef.current = 0;
+    setIsWorkflowImportDragActive(false);
+    setPendingImportedWorkflowPackage(null);
+  }
+
+  function resetWorkflowPackage(nextWorkflowPackage: WorkflowPackageV1 | null) {
+    setWorkflowPackage(nextWorkflowPackage);
+    setWorkflowTabStates(nextWorkflowPackage ? createWorkflowTabStates(nextWorkflowPackage.workflows) : {});
+    setWorkflowLoadVersion((version) => version + 1);
+    setWorkflowJsonError(null);
+    setExecutionResult(null);
+    setLastRunContext(null);
+    setIsWorkflowImportDialogOpen(false);
+    setIsWorkflowExportDialogOpen(false);
+    setIsRunOrderDialogOpen(false);
+    setIsAIDialogOpen(false);
+    resetWorkflowImportDialogState();
+  }
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -106,8 +291,19 @@ export default function App() {
 
     cancelScheduledValidation();
 
-    if (!activeTable || !authoredWorkflow || editorIssues.length > 0) {
-      setValidationIssues([]);
+    if (!activeTable || !workflowPackage) {
+      setWorkflowTabStates((current) =>
+        Object.keys(current).length === 0
+          ? current
+          : Object.fromEntries(
+            Object.entries(current).map(([workflowId, state]) => [
+              workflowId,
+              {
+                ...state,
+                validationIssues: [],
+              },
+            ]),
+          ));
       return cancelScheduledValidation;
     }
 
@@ -118,14 +314,32 @@ export default function App() {
 
     validationDebounceTimerRef.current = window.setTimeout(() => {
       validationDebounceTimerRef.current = null;
-      void validateWorkflowWithWorker(authoredWorkflow, tableSnapshot, abortController.signal)
-        .then((issues) => {
+      void Promise.all(
+        workflowPackage.workflows.map(async (workflow) => ({
+          workflowId: workflow.workflowId,
+          issues: await validateWorkflowWithWorker(workflow, tableSnapshot, abortController.signal),
+        })),
+      )
+        .then((results) => {
           if (requestId !== validationRequestIdRef.current) {
             return;
           }
 
           startTransition(() => {
-            setValidationIssues(issues);
+            const issuesByWorkflowId = new Map(results.map((result) => [result.workflowId, result.issues] as const));
+            setWorkflowTabStates((current) =>
+              Object.fromEntries(
+                workflowPackage.workflows.map((workflow) => {
+                  const currentState = getWorkflowTabState(current, workflow.workflowId);
+                  return [
+                    workflow.workflowId,
+                    {
+                      ...currentState,
+                      validationIssues: issuesByWorkflowId.get(workflow.workflowId) ?? [],
+                    },
+                  ];
+                }),
+              ));
           });
         })
         .catch((caughtError) => {
@@ -136,7 +350,7 @@ export default function App() {
     }, 150);
 
     return cancelScheduledValidation;
-  }, [activeTable, authoredWorkflow, editorIssues]);
+  }, [activeTable, workflowPackage]);
 
   useEffect(() => {
     window.localStorage.setItem(GEMINI_API_KEY_STORAGE_KEY, aiSettings.apiKey);
@@ -146,14 +360,18 @@ export default function App() {
 
   useEffect(() => {
     setIsAIDialogOpen(false);
-    setAIMessages([]);
-    setAIDraft(null);
-    setAIDraftIssues([]);
-    setAIDebugTrace(null);
-    setAIProgressEvents([]);
-    setAIError(null);
-    setAIPromptValue('');
-    setIsAILoading(false);
+    setWorkflowTabStates((current) =>
+      Object.keys(current).length === 0
+        ? current
+        : Object.fromEntries(
+          Object.entries(current).map(([workflowId, state]) => [
+            workflowId,
+            {
+              ...state,
+              aiState: createEmptyAIState(),
+            },
+          ]),
+        ));
   }, [activeTable?.tableId]);
 
   useEffect(() => {
@@ -200,13 +418,13 @@ export default function App() {
       });
 
       if (importedTable) {
-        resetWorkflowEditor(createDefaultWorkflow(importedTable));
+        resetWorkflowPackage(createSingleWorkflowPackage(createDefaultWorkflow(importedTable)));
       } else {
-        resetWorkflowEditor(null);
+        resetWorkflowPackage(null);
       }
     } catch (caughtError) {
       setWorkbookState(null);
-      resetWorkflowEditor(null);
+      resetWorkflowPackage(null);
       setError(caughtError instanceof Error ? caughtError.message : 'Import failed.');
     } finally {
       setLoading(false);
@@ -255,17 +473,55 @@ export default function App() {
 
     setWorkbookState(setActiveTable(workbook, event.target.value));
     setExecutionResult(null);
+    setLastRunContext(null);
   }
 
   function handleEditorWorkspaceChange(result: EditorWorkspaceChange) {
-    startTransition(() => {
-      setAuthoredWorkflow(result.workflow);
-      setEditorIssues(result.issues);
-      setWorkspacePromptSnapshot(result.workspacePromptSnapshot);
+    if (!activeWorkflowId) {
+      return;
+    }
 
-      if (result.workflow) {
-        setLastValidWorkflow(result.workflow);
-      }
+    startTransition(() => {
+      setWorkflowTabStates((current) => {
+        const currentState = getWorkflowTabState(current, activeWorkflowId);
+
+        return {
+          ...current,
+          [activeWorkflowId]: {
+            ...currentState,
+            editorIssues: result.issues,
+            workspacePromptSnapshot: result.workspacePromptSnapshot,
+            workspaceState: result.workspaceState,
+          },
+        };
+      });
+      setWorkflowPackage((currentPackage) => {
+        if (!currentPackage) {
+          return currentPackage;
+        }
+
+        const currentWorkflow = getWorkflowById(currentPackage, activeWorkflowId);
+
+        if (!currentWorkflow) {
+          return currentPackage;
+        }
+
+        let nextPackage = updateWorkflowDescriptionInPackage(currentPackage, activeWorkflowId, result.metadata.description);
+
+        if (!result.workflow) {
+          return nextPackage;
+        }
+
+        nextPackage = replaceWorkflowInPackage(nextPackage, activeWorkflowId, {
+          version: result.workflow.version,
+          workflowId: currentWorkflow.workflowId,
+          name: currentWorkflow.name,
+          ...(result.metadata.description?.trim() ? { description: result.metadata.description.trim() } : {}),
+          steps: result.workflow.steps,
+        });
+
+        return nextPackage;
+      });
     });
   }
 
@@ -286,69 +542,72 @@ export default function App() {
   }
 
   function handleRunWorkflow() {
-    if (!activeTable || !authoredWorkflow) {
+    if (!activeTable || !activeWorkflow) {
       return;
     }
 
     pendingRunResultScrollRef.current = true;
-    setExecutionResult(executeWorkflow(authoredWorkflow, activeTable));
+    setExecutionResult(executeWorkflow(activeWorkflow, activeTable));
+    setLastRunContext({
+      kind: 'workflow',
+      workflowIds: [activeWorkflow.workflowId],
+      workflowNames: [activeWorkflow.name],
+    });
   }
 
-  function handleExportWorkflowJson() {
-    if (!authoredWorkflow) {
+  function handleRunSequence() {
+    if (!activeTable || !workflowPackage || workflowPackage.runOrderWorkflowIds.length === 0) {
       return;
     }
 
-    downloadBlob(new Blob([authoredWorkflowJson], { type: 'application/json;charset=utf-8' }), `${authoredWorkflow.workflowId || 'workflow'}.json`);
+    const flattenedSequence = flattenWorkflowSequence(workflowPackage.workflows, workflowPackage.runOrderWorkflowIds);
+
+    pendingRunResultScrollRef.current = true;
+    setExecutionResult(executeWorkflow(flattenedSequence.workflow, activeTable));
+    setLastRunContext({
+      kind: 'sequence',
+      workflowIds: flattenedSequence.workflowIds,
+      workflowNames: flattenedSequence.workflowNames,
+    });
   }
 
-  async function handleImportWorkflowJsonFile(event: ChangeEvent<HTMLInputElement>) {
+  async function handleImportWorkflowPackageFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
     if (!file) {
       return;
     }
 
-    await importWorkflowJsonFile(file);
+    await importWorkflowPackageFile(file);
     event.target.value = '';
   }
 
-  async function importWorkflowJsonFile(file: File) {
-    await importWorkflowJsonText(await file.text());
+  async function importWorkflowPackageFile(file: File) {
+    await importWorkflowPackageText(await file.text());
   }
 
-  async function importWorkflowJsonText(text: string) {
-    const parsed = parseWorkflowJson(text);
+  async function importWorkflowPackageText(text: string) {
+    const parsed = parseWorkflowPackageJson(text);
 
-    if (!parsed.workflow) {
+    if (!parsed.workflowPackage) {
       setWorkflowJsonError(parsed.issues.map((issue) => issue.message).join('\n'));
       return false;
     }
 
     setWorkflowJsonError(null);
-    setExecutionResult(null);
-    setLoadWorkflow(parsed.workflow);
-    setWorkflowLoadVersion((version) => version + 1);
-    setIsWorkflowImportDialogOpen(false);
-    setWorkflowImportMode('choice');
-    setWorkflowImportPasteValue('');
+    setPendingImportedWorkflowPackage(parsed.workflowPackage);
+    setWorkflowImportMode('decision');
     return true;
   }
 
   function handleOpenWorkflowImportDialog() {
-    setWorkflowImportMode('choice');
-    setWorkflowImportPasteValue('');
     setWorkflowJsonError(null);
-    workflowImportDragDepthRef.current = 0;
-    setIsWorkflowImportDragActive(false);
+    resetWorkflowImportDialogState();
     setIsWorkflowImportDialogOpen(true);
   }
 
   function handleCloseWorkflowImportDialog() {
-    setWorkflowImportMode('choice');
-    setWorkflowImportPasteValue('');
-    workflowImportDragDepthRef.current = 0;
-    setIsWorkflowImportDragActive(false);
+    resetWorkflowImportDialogState();
     setIsWorkflowImportDialogOpen(false);
   }
 
@@ -356,18 +615,119 @@ export default function App() {
     workflowImportInputRef.current?.click();
   }
 
+  function handleOpenWorkflowExportDialog() {
+    if (!workflowPackage) {
+      return;
+    }
+
+    setIsWorkflowExportDialogOpen(true);
+  }
+
+  function handleCloseWorkflowExportDialog() {
+    setIsWorkflowExportDialogOpen(false);
+  }
+
+  function handleExportWorkflowPackage(selectedWorkflowIds: string[]) {
+    if (!workflowPackage) {
+      return;
+    }
+
+    const exportWorkflowPackage = buildExportWorkflowPackage(workflowPackage, selectedWorkflowIds);
+
+    downloadBlob(
+      new Blob([workflowPackageToJson(exportWorkflowPackage)], { type: 'application/json;charset=utf-8' }),
+      buildWorkflowPackageExportFileName(exportWorkflowPackage),
+    );
+    setIsWorkflowExportDialogOpen(false);
+  }
+
+  function handleOpenRunOrderDialog() {
+    if (!workflowPackage) {
+      return;
+    }
+
+    setIsRunOrderDialogOpen(true);
+  }
+
+  function handleCloseRunOrderDialog() {
+    setIsRunOrderDialogOpen(false);
+  }
+
+  function handleApplyRunOrder(nextRunOrderWorkflowIds: string[]) {
+    setWorkflowPackage((currentPackage) =>
+      currentPackage
+        ? setRunOrderInPackage(currentPackage, nextRunOrderWorkflowIds)
+        : currentPackage);
+    setIsRunOrderDialogOpen(false);
+  }
+
   function handleOpenAIDialog() {
-    setAIError(null);
+    if (!activeWorkflowId) {
+      return;
+    }
+
+    updateWorkflowAIState(activeWorkflowId, (state) => ({
+      ...state,
+      error: null,
+    }));
     setIsAIDialogOpen(true);
   }
 
   function handleCloseAIDialog() {
-    setAIError(null);
+    if (activeWorkflowId) {
+      updateWorkflowAIState(activeWorkflowId, (state) => ({
+        ...state,
+        error: null,
+      }));
+    }
+
     setIsAIDialogOpen(false);
   }
 
   async function handleImportWorkflowPaste() {
-    await importWorkflowJsonText(workflowImportPasteValue);
+    await importWorkflowPackageText(workflowImportPasteValue);
+  }
+
+  function handleReplaceImportedWorkflowPackage() {
+    if (!pendingImportedWorkflowPackage) {
+      return;
+    }
+
+    resetWorkflowPackage(pendingImportedWorkflowPackage);
+  }
+
+  function handleMergeImportedWorkflowPackage() {
+    if (!pendingImportedWorkflowPackage) {
+      return;
+    }
+
+    setWorkflowPackage((currentPackage) => {
+      if (!currentPackage) {
+        return currentPackage;
+      }
+
+      const currentWorkflowIdSet = new Set(currentPackage.workflows.map((workflow) => workflow.workflowId));
+      const nextPackage = mergeWorkflowPackages(currentPackage, pendingImportedWorkflowPackage);
+
+      setWorkflowTabStates((current) => {
+        const nextStates = { ...current };
+
+        nextPackage.workflows.forEach((workflow) => {
+          if (!currentWorkflowIdSet.has(workflow.workflowId)) {
+            nextStates[workflow.workflowId] = createWorkflowTabRuntimeState();
+          }
+        });
+
+        return nextStates;
+      });
+
+      return nextPackage;
+    });
+
+    setWorkflowJsonError(null);
+    setExecutionResult(null);
+    setLastRunContext(null);
+    handleCloseWorkflowImportDialog();
   }
 
   function handleWorkflowImportDragEnter(event: DragEvent<HTMLButtonElement>) {
@@ -402,19 +762,7 @@ export default function App() {
       return;
     }
 
-    await importWorkflowJsonFile(file);
-  }
-
-  function resetWorkflowEditor(nextWorkflow: Workflow | null) {
-    setAuthoredWorkflow(nextWorkflow);
-    setLastValidWorkflow(nextWorkflow);
-    setEditorIssues([]);
-    setValidationIssues([]);
-    setWorkspacePromptSnapshot('');
-    setLoadWorkflow(nextWorkflow);
-    setWorkflowLoadVersion((version) => version + 1);
-    setWorkflowJsonError(null);
-    setExecutionResult(null);
+    await importWorkflowPackageFile(file);
   }
 
   async function validateCandidateWorkflow(candidateWorkflow: Workflow) {
@@ -427,26 +775,37 @@ export default function App() {
   }
 
   async function handleSendAIPrompt() {
-    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
+    if (!activeTable || !activeWorkflowId || !activeWorkflow) {
+      return;
+    }
 
-    if (!activeTable || !aiContextWorkflow || isAILoading) {
+    const currentTabState = getWorkflowTabState(workflowTabStates, activeWorkflowId);
+    const currentAIState = currentTabState.aiState;
+    const userText = currentAIState.promptValue.trim();
+
+    if (currentAIState.isLoading || userText === '') {
       return;
     }
 
     if (aiSettings.apiKey.trim() === '') {
-      setAIError('Enter a Gemini API key before sending a prompt.');
+      updateWorkflowAIState(activeWorkflowId, (state) => ({
+        ...state,
+        error: 'Enter a Gemini API key before sending a prompt.',
+      }));
       return;
     }
 
-    const userText = aiPromptValue.trim();
+    const currentIssues = mergeWorkflowIssues(
+      currentTabState.editorIssues,
+      currentTabState.editorIssues.length > 0 ? [] : currentTabState.validationIssues,
+    );
 
-    if (userText === '') {
-      return;
-    }
-
-    setIsAILoading(true);
-    setAIError(null);
-    setAIProgressEvents([]);
+    updateWorkflowAIState(activeWorkflowId, (state) => ({
+      ...state,
+      isLoading: true,
+      error: null,
+      progressEvents: [],
+    }));
     const turnId = createAITurnId();
     const turnStartedAt = Date.now();
 
@@ -456,7 +815,7 @@ export default function App() {
       prompt: userText,
       model: selectedAIModel,
       thinkingEnabled: aiSettings.thinkingEnabled,
-      workflowId: aiContextWorkflow.workflowId,
+      workflowId: activeWorkflow.workflowId,
       activeTableId: activeTable.tableId,
     });
 
@@ -469,20 +828,23 @@ export default function App() {
         },
         context: {
           table: activeTable,
-          workflow: aiContextWorkflow,
-          draft: aiDraft,
-          messages: aiMessages,
-          currentIssues: mergeWorkflowIssues(editorIssues, validationIssues).map((issue) => ({
+          workflow: activeWorkflow,
+          draft: currentAIState.draft,
+          messages: currentAIState.messages,
+          currentIssues: currentIssues.map((issue) => ({
             code: issue.code,
             message: issue.message,
           })),
-          workflowContextSource: authoredWorkflow ? 'current' : 'lastValidSnapshot',
-          workspacePromptSnapshot,
+          workflowContextSource: currentTabState.editorIssues.length === 0 ? 'current' : 'lastValidSnapshot',
+          workspacePromptSnapshot: currentTabState.workspacePromptSnapshot,
         },
         userText,
         validateCandidateWorkflow,
         onProgress: (event) => {
-          setAIProgressEvents((current) => [...current, event]);
+          updateWorkflowAIState(activeWorkflowId, (state) => ({
+            ...state,
+            progressEvents: [...state.progressEvents, event],
+          }));
           console.info(`[AI] ${event.stage}: ${event.message}`);
           void appendAIDevLog({
             turnId,
@@ -496,10 +858,6 @@ export default function App() {
           logGeminiClientEvent(turnId, event);
         },
       });
-
-      setAIMessages((current) => [...current, outcome.userMessage, outcome.assistantMessage]);
-      setAIDebugTrace(outcome.debugTrace);
-      setAIPromptValue('');
 
       void appendAIDevLog({
         turnId,
@@ -516,18 +874,36 @@ export default function App() {
             : {}),
       });
 
-      if (outcome.kind === 'draft') {
-        setAIDraft(outcome.draft);
-        setAIDraftIssues([]);
-        return;
-      }
+      updateWorkflowAIState(activeWorkflowId, (state) => {
+        const nextState: WorkflowAIState = {
+          ...state,
+          messages: [...state.messages, outcome.userMessage, outcome.assistantMessage],
+          debugTrace: outcome.debugTrace,
+          promptValue: '',
+          error: null,
+          isLoading: false,
+        };
 
-      if (outcome.kind === 'invalidDraft') {
-        setAIDraftIssues(outcome.validationIssues);
-        return;
-      }
+        if (outcome.kind === 'draft') {
+          return {
+            ...nextState,
+            draft: outcome.draft,
+            draftIssues: [],
+          };
+        }
 
-      setAIDraftIssues([]);
+        if (outcome.kind === 'invalidDraft') {
+          return {
+            ...nextState,
+            draftIssues: outcome.validationIssues,
+          };
+        }
+
+        return {
+          ...nextState,
+          draftIssues: [],
+        };
+      });
     } catch (caughtError) {
       console.error('[AI] error', caughtError);
       void appendAIDevLog({
@@ -536,70 +912,119 @@ export default function App() {
         durationMs: Date.now() - turnStartedAt,
         error: caughtError instanceof Error ? caughtError.message : 'Gemini request failed.',
       });
-      setAIProgressEvents((current) => [
-        ...current,
-        {
-          stage: 'error',
-          message: caughtError instanceof Error ? caughtError.message : 'Gemini request failed.',
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-      setAIError(caughtError instanceof Error ? caughtError.message : 'Gemini request failed.');
-    } finally {
-      setIsAILoading(false);
+      updateWorkflowAIState(activeWorkflowId, (state) => ({
+        ...state,
+        progressEvents: [
+          ...state.progressEvents,
+          {
+            stage: 'error',
+            message: caughtError instanceof Error ? caughtError.message : 'Gemini request failed.',
+            timestamp: new Date().toISOString(),
+          },
+        ],
+        error: caughtError instanceof Error ? caughtError.message : 'Gemini request failed.',
+        isLoading: false,
+      }));
     }
   }
 
   async function handleApplyAIDraft() {
-    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
-
-    if (!activeTable || !aiContextWorkflow || !aiDraft || isAILoading) {
+    if (!activeWorkflowId || !activeWorkflow) {
       return;
     }
 
-    setIsAILoading(true);
-    setAIError(null);
+    const currentAIState = getWorkflowTabState(workflowTabStates, activeWorkflowId).aiState;
+
+    if (!currentAIState.draft || currentAIState.isLoading) {
+      return;
+    }
+
+    updateWorkflowAIState(activeWorkflowId, (state) => ({
+      ...state,
+      isLoading: true,
+      error: null,
+    }));
 
     try {
-      const candidateWorkflow = replaceWorkflowSteps(aiContextWorkflow, aiDraft.steps);
+      const candidateWorkflow = replaceWorkflowSteps(activeWorkflow, currentAIState.draft.steps);
       const issues = await validateCandidateWorkflow(candidateWorkflow);
 
       if (issues.length > 0) {
-        setAIDraftIssues(issues);
-        setAIError('The current draft no longer validates against the latest workflow context.');
+        updateWorkflowAIState(activeWorkflowId, (state) => ({
+          ...state,
+          draftIssues: issues,
+          error: 'The current draft no longer validates against the latest workflow context.',
+          isLoading: false,
+        }));
         return;
       }
 
-      resetWorkflowEditor(candidateWorkflow);
-      setAIDraft(null);
-      setAIDraftIssues([]);
+      setWorkflowPackage((currentPackage) =>
+        currentPackage
+          ? replaceWorkflowInPackage(currentPackage, activeWorkflowId, candidateWorkflow)
+          : currentPackage);
+      setWorkflowTabStates((current) => {
+        const currentState = getWorkflowTabState(current, activeWorkflowId);
+        return {
+          ...current,
+          [activeWorkflowId]: {
+            ...currentState,
+            editorIssues: [],
+            validationIssues: [],
+            workspacePromptSnapshot: '',
+            workspaceState: null,
+            aiState: {
+              ...currentState.aiState,
+              draft: null,
+              draftIssues: [],
+              error: null,
+              isLoading: false,
+              promptValue: '',
+            },
+          },
+        };
+      });
+      setWorkflowLoadVersion((version) => version + 1);
       setIsAIDialogOpen(false);
     } catch (caughtError) {
-      setAIError(caughtError instanceof Error ? caughtError.message : 'Failed to apply the AI draft.');
-    } finally {
-      setIsAILoading(false);
+      updateWorkflowAIState(activeWorkflowId, (state) => ({
+        ...state,
+        error: caughtError instanceof Error ? caughtError.message : 'Failed to apply the AI draft.',
+        isLoading: false,
+      }));
     }
   }
 
   function handleDiscardAIDraft() {
-    setAIDraft(null);
-    setAIDraftIssues([]);
-    setAIError(null);
-  }
-
-  function handleDownloadAIPrompt() {
-    const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
-
-    if (!activeTable || !aiContextWorkflow) {
+    if (!activeWorkflowId) {
       return;
     }
 
-    const userText = aiPromptValue.trim();
+    updateWorkflowAIState(activeWorkflowId, (state) => ({
+      ...state,
+      draft: null,
+      draftIssues: [],
+      error: null,
+    }));
+  }
+
+  function handleDownloadAIPrompt() {
+    if (!activeTable || !activeWorkflowId || !activeWorkflow) {
+      return;
+    }
+
+    const currentTabState = getWorkflowTabState(workflowTabStates, activeWorkflowId);
+    const currentAIState = currentTabState.aiState;
+    const userText = currentAIState.promptValue.trim();
 
     if (userText === '') {
       return;
     }
 
+    const currentIssues = mergeWorkflowIssues(
+      currentTabState.editorIssues,
+      currentTabState.editorIssues.length > 0 ? [] : currentTabState.validationIssues,
+    );
     const requestExport = buildGeminiRequestExport({
       settings: {
         apiKey: aiSettings.apiKey.trim(),
@@ -608,15 +1033,15 @@ export default function App() {
       },
       context: {
         table: activeTable,
-        workflow: aiContextWorkflow,
-        draft: aiDraft,
-        messages: aiMessages,
-        currentIssues: mergeWorkflowIssues(editorIssues, validationIssues).map((issue) => ({
+        workflow: activeWorkflow,
+        draft: currentAIState.draft,
+        messages: currentAIState.messages,
+        currentIssues: currentIssues.map((issue) => ({
           code: issue.code,
           message: issue.message,
         })),
-        workflowContextSource: authoredWorkflow ? 'current' : 'lastValidSnapshot',
-        workspacePromptSnapshot,
+        workflowContextSource: currentTabState.editorIssues.length === 0 ? 'current' : 'lastValidSnapshot',
+        workspacePromptSnapshot: currentTabState.workspacePromptSnapshot,
       },
       userMessage: {
         role: 'user',
@@ -628,24 +1053,109 @@ export default function App() {
 
     downloadBlob(
       new Blob([JSON.stringify(requestExport, null, 2)], { type: 'application/json;charset=utf-8' }),
-      buildAIPromptExportFileName(aiContextWorkflow),
+      buildAIPromptExportFileName(activeWorkflow),
     );
   }
 
-  const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
-  const allWorkflowIssues = mergeWorkflowIssues(editorIssues, validationIssues);
-  const aiContextWorkflow = authoredWorkflow ?? lastValidWorkflow;
-  const workflowExtraColumnIds = deferredAuthoredWorkflow ? collectWorkflowColumnIds(deferredAuthoredWorkflow) : [];
-  const canRunWorkflow = Boolean(activeTable && authoredWorkflow && editorIssues.length === 0 && validationIssues.length === 0);
-  const canUseAI = Boolean(activeTable && aiContextWorkflow);
-  const aiUsesLastValidWorkflow = Boolean(!authoredWorkflow && aiContextWorkflow);
-  const aiWorkflowIssueNotice = allWorkflowIssues.length === 0
-    ? null
-    : aiUsesLastValidWorkflow
-      ? 'The current block workspace has issues. AI will receive the live block snapshot and the issue list, and it will draft from the last valid workflow snapshot. Applying the draft will replace the broken workspace.'
-      : 'The current workflow has issues. AI will receive the live block snapshot and the issue list when drafting.';
-  const aiDraftPreviewWorkflow = buildDraftPreviewWorkflow(aiContextWorkflow, aiDraft);
-  const aiDraftDebugJson = formatDraftStepsForDebug(aiDraft);
+  function handleSelectWorkflowTab(workflowId: string) {
+    if (!workflowPackage || workflowId === workflowPackage.activeWorkflowId) {
+      return;
+    }
+
+    editorRef.current?.flushWorkspaceChange();
+    setWorkflowPackage((currentPackage) =>
+      currentPackage
+        ? setActiveWorkflowInPackage(currentPackage, workflowId)
+        : currentPackage);
+    setWorkflowLoadVersion((version) => version + 1);
+    setIsAIDialogOpen(false);
+  }
+
+  function handleCreateWorkflowTab() {
+    editorRef.current?.flushWorkspaceChange();
+
+    let createdWorkflowId = '';
+
+    setWorkflowPackage((currentPackage) => {
+      if (!currentPackage) {
+        return currentPackage;
+      }
+
+      const newWorkflow = createNewPackageWorkflow(currentPackage.workflows);
+      createdWorkflowId = newWorkflow.workflowId;
+      return addWorkflowToPackage(currentPackage, newWorkflow, true);
+    });
+
+    if (createdWorkflowId === '') {
+      return;
+    }
+
+    setWorkflowTabStates((current) => ({
+      ...current,
+      [createdWorkflowId]: createWorkflowTabRuntimeState(),
+    }));
+    setWorkflowLoadVersion((version) => version + 1);
+    setIsAIDialogOpen(false);
+  }
+
+  function handleRenameWorkflowTab(workflowId: string, nextName: string) {
+    const normalizedName = nextName.trim();
+
+    if (normalizedName === '') {
+      return;
+    }
+
+    if (workflowId === activeWorkflowId) {
+      editorRef.current?.flushWorkspaceChange();
+    }
+
+    setWorkflowPackage((currentPackage) =>
+      currentPackage
+        ? renameWorkflowInPackage(currentPackage, workflowId, normalizedName)
+        : currentPackage);
+
+    if (workflowId === activeWorkflowId) {
+      setWorkflowLoadVersion((version) => version + 1);
+    }
+  }
+
+  function handleDeleteWorkflowTab(workflowId: string) {
+    if (!workflowPackage) {
+      return;
+    }
+
+    if (workflowPackage.workflows.length <= 1) {
+      window.alert('Cannot delete the final workflow.');
+      return;
+    }
+
+    const workflowToDelete = getWorkflowById(workflowPackage, workflowId);
+
+    if (!workflowToDelete || !window.confirm(`Are you sure you want to delete "${workflowToDelete.name}"?`)) {
+      return;
+    }
+
+    const deletingActiveWorkflow = workflowId === workflowPackage.activeWorkflowId;
+
+    if (deletingActiveWorkflow) {
+      editorRef.current?.flushWorkspaceChange();
+    }
+
+    setWorkflowPackage((currentPackage) =>
+      currentPackage
+        ? deleteWorkflowFromPackage(currentPackage, workflowId)
+        : currentPackage);
+    setWorkflowTabStates((current) => {
+      const nextStates = { ...current };
+      delete nextStates[workflowId];
+      return nextStates;
+    });
+
+    if (deletingActiveWorkflow) {
+      setWorkflowLoadVersion((version) => version + 1);
+      setIsAIDialogOpen(false);
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -714,24 +1224,43 @@ export default function App() {
             title="Active table preview"
           />
 
-          <section className="panel panel--editor">
-            <WorkflowEditor
-              canExportWorkflowJson={Boolean(authoredWorkflow)}
-              canRunWorkflow={canRunWorkflow}
-              canUseAI={canUseAI}
-              extraColumnIds={workflowExtraColumnIds}
-              issues={allWorkflowIssues}
-              jsonError={workflowJsonError}
-              loadVersion={workflowLoadVersion}
-              loadWorkflow={loadWorkflow}
-              onExportWorkflowJson={handleExportWorkflowJson}
-              onOpenAIDialog={handleOpenAIDialog}
-              onOpenWorkflowImportDialog={handleOpenWorkflowImportDialog}
-              onRunWorkflow={handleRunWorkflow}
-              onWorkspaceChange={handleEditorWorkspaceChange}
-              table={activeTable}
-            />
-          </section>
+          {workflowPackage && activeWorkflow ? (
+            <section className="panel panel--editor">
+              <WorkflowEditor
+                ref={editorRef}
+                canExportWorkflows={exportableWorkflowIds.length > 0}
+                canRunSequence={canRunSequence}
+                canRunWorkflow={canRunWorkflow}
+                canUseAI={canUseAI}
+                extraColumnIds={workflowExtraColumnIds}
+                issues={activeWorkflowIssues}
+                jsonError={workflowJsonError}
+                loadMetadata={getWorkflowMetadata(activeWorkflow)}
+                loadVersion={workflowLoadVersion}
+                loadWorkflow={activeWorkflow}
+                loadWorkflowState={activeWorkspaceState}
+                onExportWorkflows={handleOpenWorkflowExportDialog}
+                onOpenAIDialog={handleOpenAIDialog}
+                onOpenRunOrderDialog={handleOpenRunOrderDialog}
+                onOpenWorkflowImportDialog={handleOpenWorkflowImportDialog}
+                onRunSequence={handleRunSequence}
+                onRunWorkflow={handleRunWorkflow}
+                onWorkspaceChange={handleEditorWorkspaceChange}
+                table={activeTable}
+                workflowTabs={
+                  <WorkflowTabs
+                    activeWorkflowId={workflowPackage.activeWorkflowId}
+                    onCreateWorkflow={handleCreateWorkflowTab}
+                    onDeleteWorkflow={handleDeleteWorkflowTab}
+                    onRenameWorkflow={handleRenameWorkflowTab}
+                    onSelectWorkflow={handleSelectWorkflowTab}
+                    workflowTabStates={workflowTabStates}
+                    workflows={workflowPackage.workflows}
+                  />
+                }
+              />
+            </section>
+          ) : null}
 
           {executionResult ? (
             <section className="panel-stack" ref={runResultSectionRef}>
@@ -743,6 +1272,7 @@ export default function App() {
                 onExportXlsx={() => {
                   handleExportTableXlsx(resultTable);
                 }}
+                runContext={lastRunContext}
               />
               {resultTable ? (
                 <PreviewPanel
@@ -761,7 +1291,7 @@ export default function App() {
       <input
         accept=".json,application/json"
         className="workflow-hidden-input"
-        onChange={handleImportWorkflowJsonFile}
+        onChange={handleImportWorkflowPackageFile}
         ref={workflowImportInputRef}
         type="file"
       />
@@ -772,8 +1302,8 @@ export default function App() {
           <section className="workflow-import-modal__panel">
             <div className="panel-header">
               <div>
-                <h2 id="workflow-import-title">Import workflow JSON</h2>
-                <p>Choose whether to load a workflow from a file or paste canonical workflow JSON directly.</p>
+                <h2 id="workflow-import-title">Import workflow(s)</h2>
+                <p>Load canonical workflow package JSON from a file or paste it directly.</p>
               </div>
             </div>
 
@@ -793,19 +1323,19 @@ export default function App() {
                   type="button"
                 >
                   <strong>Import from file</strong>
-                  <span>Open the file selector or drop a `.json` workflow file here.</span>
+                  <span>Open the file selector or drop a `.json` workflow package here.</span>
                 </button>
                 <button className="workflow-import-option" onClick={() => setWorkflowImportMode('paste')} type="button">
-                  <strong>Paste workflow JSON</strong>
-                  <span>Paste canonical workflow JSON into a text area and import it directly.</span>
+                  <strong>Paste workflow package JSON</strong>
+                  <span>Paste canonical workflow package JSON into a text area and validate it directly.</span>
                 </button>
               </div>
-            ) : (
+            ) : workflowImportMode === 'paste' ? (
               <div className="workflow-import-paste">
                 <textarea
                   className="json-viewer"
                   onChange={(event) => setWorkflowImportPasteValue(event.target.value)}
-                  placeholder="Paste workflow JSON here"
+                  placeholder="Paste workflow package JSON here"
                   value={workflowImportPasteValue}
                 />
                 <div className="workflow-import-actions">
@@ -813,11 +1343,35 @@ export default function App() {
                     Back
                   </button>
                   <button disabled={workflowImportPasteValue.trim() === ''} onClick={() => void handleImportWorkflowPaste()} type="button">
-                    Import pasted JSON
+                    Validate package
                   </button>
                 </div>
               </div>
-            )}
+            ) : pendingImportedWorkflowPackage ? (
+              <div className="workflow-import-paste workflow-package-summary">
+                <strong>{pendingImportedWorkflowPackage.workflows.length} workflow{pendingImportedWorkflowPackage.workflows.length === 1 ? '' : 's'} ready to import</strong>
+                <p>Choose whether to replace the current package or merge the imported workflows into it.</p>
+                <ul className="workflow-package-summary__list">
+                  {pendingImportedWorkflowPackage.workflows.map((workflow) => (
+                    <li key={workflow.workflowId}>
+                      <strong>{workflow.name}</strong>
+                      <span>{workflow.workflowId}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="workflow-import-actions">
+                  <button onClick={() => setWorkflowImportMode('choice')} type="button">
+                    Back
+                  </button>
+                  <button onClick={handleReplaceImportedWorkflowPackage} type="button">
+                    Replace current package
+                  </button>
+                  <button onClick={handleMergeImportedWorkflowPackage} type="button">
+                    Merge into current package
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             <div className="workflow-import-actions">
               <button onClick={handleCloseWorkflowImportDialog} type="button">
@@ -828,30 +1382,52 @@ export default function App() {
         </div>
       ) : null}
 
+      {isWorkflowExportDialogOpen && workflowPackage ? (
+        <WorkflowExportDialog
+          exportableWorkflowIds={exportableWorkflowIds}
+          onClose={handleCloseWorkflowExportDialog}
+          onExport={handleExportWorkflowPackage}
+          workflowPackage={workflowPackage}
+        />
+      ) : null}
+
+      {isRunOrderDialogOpen && workflowPackage ? (
+        <RunOrderDialog onApply={handleApplyRunOrder} onClose={handleCloseRunOrderDialog} workflowPackage={workflowPackage} />
+      ) : null}
+
       {isAIDialogOpen ? (
         <AIAssistantModal
-          aiDraft={aiDraft}
+          aiDraft={activeAIState.draft}
           aiDraftDebugJson={aiDraftDebugJson}
-          aiDraftIssues={aiDraftIssues}
+          aiDraftIssues={activeAIState.draftIssues}
           aiDraftPreviewWorkflow={aiDraftPreviewWorkflow}
-          aiDebugTrace={aiDebugTrace}
-          aiProgressEvents={aiProgressEvents}
-          aiError={aiError}
-          aiMessages={aiMessages}
-          aiPromptValue={aiPromptValue}
+          aiDebugTrace={activeAIState.debugTrace}
+          aiProgressEvents={activeAIState.progressEvents}
+          aiError={activeAIState.error}
+          aiMessages={activeAIState.messages}
+          aiPromptValue={activeAIState.promptValue}
           aiSettings={aiSettings}
-          canApplyDraft={Boolean(aiDraft && aiDraftIssues.length === 0 && aiContextWorkflow && !isAILoading)}
-          canDiscardDraft={Boolean(aiDraft || aiDraftIssues.length > 0)}
-          canDownloadPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '')}
-          canSendPrompt={Boolean(canUseAI && aiPromptValue.trim() !== '' && !isAILoading)}
-          isLoading={isAILoading}
+          canApplyDraft={Boolean(activeAIState.draft && activeAIState.draftIssues.length === 0 && activeWorkflow && !activeAIState.isLoading)}
+          canDiscardDraft={Boolean(activeAIState.draft || activeAIState.draftIssues.length > 0)}
+          canDownloadPrompt={Boolean(canUseAI && activeAIState.promptValue.trim() !== '')}
+          canSendPrompt={Boolean(canUseAI && activeAIState.promptValue.trim() !== '' && !activeAIState.isLoading)}
+          isLoading={activeAIState.isLoading}
           onApplyDraft={() => {
             void handleApplyAIDraft();
           }}
           onClose={handleCloseAIDialog}
           onDiscardDraft={handleDiscardAIDraft}
           onDownloadPrompt={handleDownloadAIPrompt}
-          onPromptChange={setAIPromptValue}
+          onPromptChange={(value) => {
+            if (!activeWorkflowId) {
+              return;
+            }
+
+            updateWorkflowAIState(activeWorkflowId, (state) => ({
+              ...state,
+              promptValue: value,
+            }));
+          }}
           onSendPrompt={() => {
             void handleSendAIPrompt();
           }}
@@ -862,6 +1438,348 @@ export default function App() {
         />
       ) : null}
     </main>
+  );
+}
+
+function WorkflowTabs({
+  activeWorkflowId,
+  onCreateWorkflow,
+  onDeleteWorkflow,
+  onRenameWorkflow,
+  onSelectWorkflow,
+  workflowTabStates,
+  workflows,
+}: {
+  activeWorkflowId: string;
+  onCreateWorkflow: () => void;
+  onDeleteWorkflow: (workflowId: string) => void;
+  onRenameWorkflow: (workflowId: string, nextName: string) => void;
+  onSelectWorkflow: (workflowId: string) => void;
+  workflowTabStates: Record<string, WorkflowTabRuntimeState>;
+  workflows: Workflow[];
+}) {
+  const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
+  const [draftWorkflowName, setDraftWorkflowName] = useState('');
+  const [openMenuWorkflowId, setOpenMenuWorkflowId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!openMenuWorkflowId) {
+      return;
+    }
+
+    const handlePointerDown = () => {
+      setOpenMenuWorkflowId(null);
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [openMenuWorkflowId]);
+
+  function beginRename(workflow: Workflow) {
+    setOpenMenuWorkflowId(null);
+    setEditingWorkflowId(workflow.workflowId);
+    setDraftWorkflowName(workflow.name);
+  }
+
+  function commitRename(workflow: Workflow) {
+    const normalizedName = draftWorkflowName.trim();
+
+    setEditingWorkflowId(null);
+    setDraftWorkflowName('');
+
+    if (normalizedName === '' || normalizedName === workflow.name) {
+      return;
+    }
+
+    onRenameWorkflow(workflow.workflowId, normalizedName);
+  }
+
+  return (
+    <div className="workflow-tab-strip" role="tablist" aria-label="Workflow tabs">
+      {workflows.map((workflow) => {
+        const isActive = workflow.workflowId === activeWorkflowId;
+        const isEditing = workflow.workflowId === editingWorkflowId;
+        const tabState = getWorkflowTabState(workflowTabStates, workflow.workflowId);
+        const issueCount = tabState.editorIssues.length + tabState.validationIssues.length;
+
+        return (
+          <div className={`workflow-tab${isActive ? ' workflow-tab--active' : ''}`} key={workflow.workflowId}>
+            {isEditing ? (
+              <input
+                autoFocus
+                className="workflow-tab__input"
+                onBlur={() => commitRename(workflow)}
+                onChange={(event) => setDraftWorkflowName(event.target.value)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    commitRename(workflow);
+                  } else if (event.key === 'Escape') {
+                    setEditingWorkflowId(null);
+                    setDraftWorkflowName('');
+                  }
+                }}
+                value={draftWorkflowName}
+              />
+            ) : (
+              <button
+                aria-selected={isActive}
+                className="workflow-tab__button"
+                onClick={() => onSelectWorkflow(workflow.workflowId)}
+                onDoubleClick={() => beginRename(workflow)}
+                role="tab"
+                type="button"
+              >
+                <span className="workflow-tab__label">{workflow.name}</span>
+                {issueCount > 0 ? <span className="workflow-tab__status" title={`${issueCount} issue${issueCount === 1 ? '' : 's'}`} /> : null}
+              </button>
+            )}
+            <button
+              aria-label={`Open workflow menu for ${workflow.name}`}
+              className="workflow-tab__menu-trigger"
+              onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+                event.stopPropagation();
+                setOpenMenuWorkflowId((current) => (current === workflow.workflowId ? null : workflow.workflowId));
+              }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+              }}
+              type="button"
+            >
+              <MenuIcon />
+            </button>
+            {openMenuWorkflowId === workflow.workflowId ? (
+              <div
+                className="workflow-tab__menu"
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+              >
+                <button
+                  onClick={() => beginRename(workflow)}
+                  type="button"
+                >
+                  Rename
+                </button>
+                <button
+                  onClick={() => {
+                    setOpenMenuWorkflowId(null);
+                    onDeleteWorkflow(workflow.workflowId);
+                  }}
+                  type="button"
+                >
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+      <button className="workflow-tab workflow-tab--create" onClick={onCreateWorkflow} type="button">
+        <PlusIcon />
+      </button>
+    </div>
+  );
+}
+
+function WorkflowExportDialog({
+  exportableWorkflowIds,
+  onClose,
+  onExport,
+  workflowPackage,
+}: {
+  exportableWorkflowIds: string[];
+  onClose: () => void;
+  onExport: (workflowIds: string[]) => void;
+  workflowPackage: WorkflowPackageV1;
+}) {
+  const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>(exportableWorkflowIds);
+  const exportableWorkflowIdSet = useMemo(() => new Set(exportableWorkflowIds), [exportableWorkflowIds]);
+
+  useEffect(() => {
+    setSelectedWorkflowIds(exportableWorkflowIds);
+  }, [exportableWorkflowIds]);
+
+  function toggleSelection(workflowId: string) {
+    setSelectedWorkflowIds((current) =>
+      current.includes(workflowId)
+        ? current.filter((currentWorkflowId) => currentWorkflowId !== workflowId)
+        : [...current, workflowId]);
+  }
+
+  return (
+    <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="workflow-export-title">
+      <div className="workflow-import-modal__scrim" onClick={onClose} />
+      <section className="workflow-import-modal__panel">
+        <div className="panel-header">
+          <div>
+            <h2 id="workflow-export-title">Export workflow(s)</h2>
+            <p>Select the workflows to include in the exported package JSON.</p>
+          </div>
+        </div>
+
+        <div className="workflow-selection-list">
+          {workflowPackage.workflows.map((workflow) => {
+            const isExportable = exportableWorkflowIdSet.has(workflow.workflowId);
+            const isSelected = selectedWorkflowIds.includes(workflow.workflowId);
+
+            return (
+              <label className={`workflow-selection-item${isExportable ? '' : ' workflow-selection-item--disabled'}`} key={workflow.workflowId}>
+                <input
+                  checked={isSelected}
+                  disabled={!isExportable}
+                  onChange={() => toggleSelection(workflow.workflowId)}
+                  type="checkbox"
+                />
+                <div>
+                  <strong>{workflow.name}</strong>
+                  <span>{workflow.workflowId}</span>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="workflow-import-actions workflow-import-actions--spread">
+          <div className="workflow-import-actions">
+            <button onClick={() => setSelectedWorkflowIds(exportableWorkflowIds)} type="button">
+              Select all valid
+            </button>
+            <button onClick={() => setSelectedWorkflowIds([])} type="button">
+              Clear
+            </button>
+          </div>
+          <div className="workflow-import-actions">
+            <button onClick={onClose} type="button">
+              Close
+            </button>
+            <button disabled={selectedWorkflowIds.length === 0} onClick={() => onExport(selectedWorkflowIds)} type="button">
+              Export selected
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RunOrderDialog({
+  onApply,
+  onClose,
+  workflowPackage,
+}: {
+  onApply: (workflowIds: string[]) => void;
+  onClose: () => void;
+  workflowPackage: WorkflowPackageV1;
+}) {
+  const [draftRunOrderWorkflowIds, setDraftRunOrderWorkflowIds] = useState<string[]>(workflowPackage.runOrderWorkflowIds);
+
+  useEffect(() => {
+    setDraftRunOrderWorkflowIds(workflowPackage.runOrderWorkflowIds);
+  }, [workflowPackage.runOrderWorkflowIds]);
+
+  const workflowById = useMemo(
+    () => new Map(workflowPackage.workflows.map((workflow) => [workflow.workflowId, workflow] as const)),
+    [workflowPackage.workflows],
+  );
+  const includedWorkflowIdSet = new Set(draftRunOrderWorkflowIds);
+  const orderedWorkflows = [
+    ...draftRunOrderWorkflowIds
+      .map((workflowId) => workflowById.get(workflowId))
+      .filter((workflow): workflow is Workflow => Boolean(workflow)),
+    ...workflowPackage.workflows.filter((workflow) => !includedWorkflowIdSet.has(workflow.workflowId)),
+  ];
+
+  function toggleIncluded(workflowId: string) {
+    setDraftRunOrderWorkflowIds((current) =>
+      current.includes(workflowId)
+        ? current.filter((currentWorkflowId) => currentWorkflowId !== workflowId)
+        : [...current, workflowId]);
+  }
+
+  function moveWorkflow(workflowId: string, direction: -1 | 1) {
+    setDraftRunOrderWorkflowIds((current) => {
+      const index = current.indexOf(workflowId);
+
+      if (index < 0) {
+        return current;
+      }
+
+      const targetIndex = index + direction;
+
+      if (targetIndex < 0 || targetIndex >= current.length) {
+        return current;
+      }
+
+      const next = [...current];
+      const [movedWorkflowId] = next.splice(index, 1);
+
+      next.splice(targetIndex, 0, movedWorkflowId);
+      return next;
+    });
+  }
+
+  return (
+    <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="run-order-title">
+      <div className="workflow-import-modal__scrim" onClick={onClose} />
+      <section className="workflow-import-modal__panel">
+        <div className="panel-header">
+          <div>
+            <h2 id="run-order-title">Run order</h2>
+            <p>Select which workflows belong to the saved sequence and arrange their execution order.</p>
+          </div>
+        </div>
+
+        <div className="workflow-selection-list">
+          {orderedWorkflows.map((workflow) => {
+            const sequenceIndex = draftRunOrderWorkflowIds.indexOf(workflow.workflowId);
+            const isIncluded = sequenceIndex >= 0;
+
+            return (
+              <div className="workflow-selection-item workflow-selection-item--row" key={workflow.workflowId}>
+                <label className="workflow-selection-item__main">
+                  <input
+                    checked={isIncluded}
+                    onChange={() => toggleIncluded(workflow.workflowId)}
+                    type="checkbox"
+                  />
+                  <div>
+                    <strong>{workflow.name}</strong>
+                    <span>{workflow.workflowId}</span>
+                  </div>
+                </label>
+                <div className="workflow-selection-item__actions">
+                  <button disabled={!isIncluded || sequenceIndex === 0} onClick={() => moveWorkflow(workflow.workflowId, -1)} type="button">
+                    Move up
+                  </button>
+                  <button
+                    disabled={!isIncluded || sequenceIndex === draftRunOrderWorkflowIds.length - 1}
+                    onClick={() => moveWorkflow(workflow.workflowId, 1)}
+                    type="button"
+                  >
+                    Move down
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="workflow-import-actions">
+          <button onClick={onClose} type="button">
+            Close
+          </button>
+          <button onClick={() => onApply(draftRunOrderWorkflowIds)} type="button">
+            Save run order
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -966,10 +1884,12 @@ function RunResultPanel({
   executionResult,
   onExportCsv,
   onExportXlsx,
+  runContext,
 }: {
   executionResult: WorkflowExecutionResult | null;
   onExportCsv: () => void;
   onExportXlsx: () => void;
+  runContext: RunExecutionContext | null;
 }) {
   if (!executionResult) {
     return null;
@@ -982,7 +1902,13 @@ function RunResultPanel({
       <div className="panel-header">
         <div>
           <h2>Run summary</h2>
-          <p>Compact metadata for the latest workflow run.</p>
+          <p>
+            {runContext
+              ? runContext.kind === 'sequence'
+                ? `Sequence: ${runContext.workflowNames.join(' -> ')}`
+                : `Workflow: ${runContext.workflowNames[0] ?? 'Workflow'}`
+              : 'Compact metadata for the latest workflow run.'}
+          </p>
         </div>
         {canExport ? (
           <div className="export-actions export-actions--compact">
@@ -1083,6 +2009,7 @@ function AIAssistantModal({
   workflowIssueNotice: string | null;
 }) {
   const [isDraftPreviewOpen, setIsDraftPreviewOpen] = useState(false);
+  const chatLogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!isDraftPreviewOpen) {
@@ -1106,6 +2033,16 @@ function AIAssistantModal({
       window.removeEventListener('keydown', handleEscape);
     };
   }, [isDraftPreviewOpen]);
+
+  useEffect(() => {
+    const container = chatLogRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  }, [aiMessages, isLoading]);
 
   return (
     <div className="workflow-import-modal" role="dialog" aria-modal="true" aria-labelledby="ai-assistant-title">
@@ -1177,7 +2114,7 @@ function AIAssistantModal({
         {aiError ? <pre className="json-error-panel">{aiError}</pre> : null}
 
         <div className="ai-assistant-layout">
-          <section className="ai-assistant-panel">
+          <section className="ai-assistant-panel ai-assistant-panel--conversation">
             <div className="panel-header">
               <div>
                 <h2>Conversation</h2>
@@ -1185,9 +2122,9 @@ function AIAssistantModal({
               </div>
             </div>
 
-            <div className="ai-chat-log">
+            <div className="ai-chat-log" ref={chatLogRef}>
               {aiMessages.length === 0 ? (
-                <div className="empty-panel">Start with a natural-language request like “remove rows with invalid emails”.</div>
+                <div className="empty-panel">Start with a natural-language request like "remove rows with invalid emails".</div>
               ) : (
                 aiMessages.map((message, index) => (
                   <article className={`ai-chat-message ai-chat-message--${message.role}`} key={`${message.timestamp}-${index}`}>
@@ -1195,27 +2132,6 @@ function AIAssistantModal({
                     <p>{message.text}</p>
                   </article>
                 ))
-              )}
-            </div>
-
-            <div className="ai-assistant-activity">
-              <div className="panel-header">
-                <div>
-                  <h2>Activity</h2>
-                  <p>Live client-side AI turn stages. These are mirrored to the browser console as <code>[AI]</code> logs and, in dev mode, appended to <code>.logs/ai-debug.log</code>.</p>
-                </div>
-              </div>
-              {aiProgressEvents.length === 0 ? (
-                <div className="empty-panel">No AI activity yet.</div>
-              ) : (
-                <ul className="ai-activity-log">
-                  {aiProgressEvents.map((event, index) => (
-                    <li className="ai-activity-log__item" key={`${event.timestamp}-${event.stage}-${index}`}>
-                      <strong>{formatTime(event.timestamp)}</strong>
-                      <span>{event.message}</span>
-                    </li>
-                  ))}
-                </ul>
               )}
             </div>
 
@@ -1237,7 +2153,7 @@ function AIAssistantModal({
             </div>
           </section>
 
-          <section className="ai-assistant-panel">
+          <section className="ai-assistant-panel ai-assistant-panel--draft">
             <div className="panel-header">
               <div>
                 <h2>Draft</h2>
@@ -1288,6 +2204,25 @@ function AIAssistantModal({
                 </button>
               </div>
             ) : null}
+
+            <details className="ai-debug-trace">
+              <summary>Activity log</summary>
+              <div className="ai-debug-trace__section">
+                <p className="ai-debug-trace__note">Live client-side AI turn stages. These are mirrored to the browser console as <code>[AI]</code> logs and, in dev mode, appended to <code>.logs/ai-debug.log</code>.</p>
+                {aiProgressEvents.length === 0 ? (
+                  <div className="empty-panel empty-panel--compact">No AI activity yet.</div>
+                ) : (
+                  <ul className="ai-activity-log">
+                    {aiProgressEvents.map((event, index) => (
+                      <li className="ai-activity-log__item" key={`${event.timestamp}-${event.stage}-${index}`}>
+                        <strong>{formatTime(event.timestamp)}</strong>
+                        <span>{event.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </details>
 
             {aiDraft ? (
               <details className="ai-debug-trace ai-draft-debug">
@@ -1534,6 +2469,25 @@ function CollapseIcon() {
       <path d="M15 9h5V4" />
       <path d="M20 20h-5v-5" />
       <path d="M4 20h5v-5" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M6 12h0.01" />
+      <path d="M12 12h0.01" />
+      <path d="M18 12h0.01" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
     </svg>
   );
 }
