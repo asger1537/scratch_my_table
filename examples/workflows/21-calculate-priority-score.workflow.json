@@ -11,114 +11,47 @@
         "displayName": "priority_score"
       },
       "expression": {
-        "kind": "call",
-        "name": "round",
-        "args": [
+        "kind": "match",
+        "subject": {
+          "kind": "call",
+          "name": "toNumber",
+          "args": [
+            {
+              "kind": "column",
+              "columnId": "col_balance"
+            }
+          ]
+        },
+        "cases": [
           {
-            "kind": "call",
-            "name": "divide",
-            "args": [
-              {
-                "kind": "call",
-                "name": "add",
-                "args": [
-                  {
-                    "kind": "call",
-                    "name": "multiply",
-                    "args": [
-                      {
-                        "kind": "call",
-                        "name": "switch",
-                        "args": [
-                          {
-                            "kind": "call",
-                            "name": "lower",
-                            "args": [
-                              {
-                                "kind": "call",
-                                "name": "trim",
-                                "args": [
-                                  {
-                                    "kind": "column",
-                                    "columnId": "col_status"
-                                  }
-                                ]
-                              }
-                            ]
-                          },
-                          {
-                            "kind": "literal",
-                            "value": "active"
-                          },
-                          {
-                            "kind": "literal",
-                            "value": 10
-                          },
-                          {
-                            "kind": "literal",
-                            "value": "pending"
-                          },
-                          {
-                            "kind": "literal",
-                            "value": 7
-                          },
-                          {
-                            "kind": "literal",
-                            "value": "inactive"
-                          },
-                          {
-                            "kind": "literal",
-                            "value": 3
-                          },
-                          {
-                            "kind": "literal",
-                            "value": "suspended"
-                          },
-                          {
-                            "kind": "literal",
-                            "value": 1
-                          },
-                          {
-                            "kind": "literal",
-                            "value": 0
-                          }
-                        ]
-                      },
-                      {
-                        "kind": "literal",
-                        "value": 2
-                      }
-                    ]
-                  },
-                  {
-                    "kind": "call",
-                    "name": "switch",
-                    "args": [
-                      {
-                        "kind": "column",
-                        "columnId": "col_vip"
-                      },
-                      {
-                        "kind": "literal",
-                        "value": true
-                      },
-                      {
-                        "kind": "literal",
-                        "value": 5
-                      },
-                      {
-                        "kind": "literal",
-                        "value": 0
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "kind": "literal",
-                "value": 3
-              }
-            ]
+            "pattern": {
+              "kind": "range",
+              "lt": 0
+            },
+            "then": {
+              "kind": "literal",
+              "value": 3
+            }
+          },
+          {
+            "pattern": {
+              "kind": "range",
+              "gte": 0,
+              "lte": 200
+            },
+            "then": {
+              "kind": "literal",
+              "value": 2
+            }
+          },
+          {
+            "pattern": {
+              "kind": "wildcard"
+            },
+            "then": {
+              "kind": "literal",
+              "value": 1
+            }
           }
         ]
       }

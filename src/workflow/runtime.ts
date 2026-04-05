@@ -21,6 +21,9 @@ import type {
   WorkflowExecutionWarning,
   WorkflowExpression,
   WorkflowExpressionValidationResult,
+  WorkflowMatchCase,
+  WorkflowMatchExpression,
+  WorkflowMatchPattern,
   WorkflowRuleCase,
   WorkflowSemanticStepResult,
   WorkflowSemanticValidationResult,
@@ -567,6 +570,8 @@ function validateExpression(
     }
     case 'call':
       return validateCallExpression(expression, table, path, stepId, context);
+    case 'match':
+      return validateMatchExpression(expression, table, path, stepId, context);
     default:
       return {
         logicalType: 'unknown',
@@ -678,6 +683,227 @@ function scopedRuleRetainsOriginalValueType(step: Extract<WorkflowStep, { type: 
     || !step.defaultPatch?.value
     || (step.cases ?? []).some((ruleCase) => !ruleCase.then.value),
   );
+}
+
+function validateMatchExpression(
+  expression: WorkflowMatchExpression,
+  table: Table,
+  path: string,
+  stepId: string,
+  context: ExpressionContext,
+): WorkflowExpressionValidationResult {
+  const subjectResult = validateExpression(expression.subject, table, `${path}.subject`, stepId, {
+    ...context,
+    allowValueReference: false,
+  });
+  const issues = [...subjectResult.issues];
+
+  if (subjectResult.valueKind !== 'scalar') {
+    issues.push(makeIssue('invalidExpression', `Match subject must resolve to a scalar value.`, `${path}.subject`, stepId));
+  }
+
+  if (expression.cases.length === 0) {
+    issues.push(makeIssue('invalidExpression', `Match expressions require at least one case.`, `${path}.cases`, stepId));
+  }
+
+  let wildcardSeen = false;
+  const thenResults: WorkflowExpressionValidationResult[] = [];
+
+  expression.cases.forEach((matchCase, caseIndex) => {
+    const casePath = `${path}.cases[${caseIndex}]`;
+
+    if (wildcardSeen) {
+      issues.push(makeIssue('invalidExpression', `Match cases after a wildcard case are unreachable.`, casePath, stepId));
+    }
+
+    issues.push(...validateMatchPattern(matchCase.pattern, subjectResult.logicalType, `${casePath}.pattern`, stepId));
+
+    if (matchCase.pattern.kind === 'wildcard') {
+      if (wildcardSeen) {
+        issues.push(makeIssue('invalidExpression', `Match expressions may include at most one wildcard case.`, `${casePath}.pattern`, stepId));
+      }
+
+      wildcardSeen = true;
+
+      if (caseIndex !== expression.cases.length - 1) {
+        issues.push(makeIssue('invalidExpression', `Wildcard match cases must be last.`, `${casePath}.pattern`, stepId));
+      }
+    }
+
+    if (matchCase.when) {
+      issues.push(...validateBooleanExpressionWithContext(matchCase.when, table, `${casePath}.when`, stepId, context));
+    }
+
+    const thenResult = validateExpression(matchCase.then, table, `${casePath}.then`, stepId, context);
+    issues.push(...thenResult.issues);
+
+    if (thenResult.valueKind !== 'scalar') {
+      issues.push(makeIssue('invalidExpression', `Match case results must resolve to a scalar value.`, `${casePath}.then`, stepId));
+    }
+
+    thenResults.push(thenResult);
+  });
+
+  const mergedResultType = mergeLogicalTypes(thenResults.map((result) => result.logicalType));
+
+  if (!mergedResultType.valid) {
+    issues.push(
+      makeIssue(
+        'incompatibleType',
+        `Match case results must resolve to one compatible type.`,
+        path,
+        stepId,
+        { logicalTypes: mergedResultType.logicalTypes },
+      ),
+    );
+  }
+
+  return {
+    logicalType: mergedResultType.logicalType,
+    valueKind: 'scalar',
+    issues,
+  };
+}
+
+function validateMatchPattern(
+  pattern: WorkflowMatchPattern,
+  subjectLogicalType: LogicalType,
+  path: string,
+  stepId: string,
+): WorkflowValidationIssue[] {
+  switch (pattern.kind) {
+    case 'literal':
+      return validateMatchLiteralComparability(pattern.value, subjectLogicalType, path, stepId);
+    case 'oneOf': {
+      const issues: WorkflowValidationIssue[] = [];
+
+      if (pattern.values.length === 0) {
+        issues.push(makeIssue('invalidExpression', `One-of match patterns require at least one literal value.`, `${path}.values`, stepId));
+      }
+
+      pattern.values.forEach((value, index) => {
+        issues.push(...validateMatchLiteralComparability(value, subjectLogicalType, `${path}.values[${index}]`, stepId));
+      });
+
+      return issues;
+    }
+    case 'range':
+      return validateMatchRangePattern(pattern, subjectLogicalType, path, stepId);
+    case 'wildcard':
+      return [];
+    default:
+      return [makeIssue('invalidExpression', `Unsupported match pattern.`, path, stepId)];
+  }
+}
+
+function validateMatchLiteralComparability(
+  value: CellValue,
+  subjectLogicalType: LogicalType,
+  path: string,
+  stepId: string,
+): WorkflowValidationIssue[] {
+  const valueLogicalType = inferLiteralLogicalType(value);
+
+  if (!areComparableEqualityTypes(subjectLogicalType, valueLogicalType)) {
+    return [
+      makeIssue(
+        'incompatibleType',
+        `Match literal patterns must be comparable to the match subject.`,
+        path,
+        stepId,
+        { subjectLogicalType, valueLogicalType },
+      ),
+    ];
+  }
+
+  return [];
+}
+
+function validateMatchRangePattern(
+  pattern: Extract<WorkflowMatchPattern, { kind: 'range' }>,
+  subjectLogicalType: LogicalType,
+  path: string,
+  stepId: string,
+): WorkflowValidationIssue[] {
+  const issues: WorkflowValidationIssue[] = [];
+  const bounds = getMatchRangeBounds(pattern);
+
+  if (bounds.length === 0) {
+    issues.push(makeIssue('invalidExpression', `Range match patterns require at least one bound.`, path, stepId));
+    return issues;
+  }
+
+  if (pattern.gt !== undefined && pattern.gte !== undefined) {
+    issues.push(makeIssue('invalidExpression', `Range match patterns cannot define both 'gt' and 'gte'.`, path, stepId));
+  }
+
+  if (pattern.lt !== undefined && pattern.lte !== undefined) {
+    issues.push(makeIssue('invalidExpression', `Range match patterns cannot define both 'lt' and 'lte'.`, path, stepId));
+  }
+
+  const boundTypes = [...new Set(bounds.map((bound) => inferLiteralLogicalType(bound.value)).filter((logicalType) => logicalType !== 'unknown'))];
+
+  if (boundTypes.some((logicalType) => !isOrderingType(logicalType))) {
+    issues.push(makeIssue('incompatibleType', `Range match bounds must use ordered scalar values.`, path, stepId));
+  }
+
+  if (boundTypes.length > 1) {
+    issues.push(
+      makeIssue(
+        'incompatibleType',
+        `Range match bounds must all use one compatible ordered type.`,
+        path,
+        stepId,
+        { logicalTypes: boundTypes },
+      ),
+    );
+  }
+
+  bounds.forEach((bound) => {
+    const boundLogicalType = inferLiteralLogicalType(bound.value);
+
+    if (!areComparableOrderingTypes(subjectLogicalType, boundLogicalType)) {
+      issues.push(
+        makeIssue(
+          'incompatibleType',
+          `Range match bounds must be comparable to the match subject.`,
+          `${path}.${bound.operator}`,
+          stepId,
+          { subjectLogicalType, boundLogicalType },
+        ),
+      );
+    }
+  });
+
+  const lowerBound = pattern.gt !== undefined
+    ? { value: pattern.gt, exclusive: true }
+    : pattern.gte !== undefined
+      ? { value: pattern.gte, exclusive: false }
+      : null;
+  const upperBound = pattern.lt !== undefined
+    ? { value: pattern.lt, exclusive: true }
+    : pattern.lte !== undefined
+      ? { value: pattern.lte, exclusive: false }
+      : null;
+
+  if (lowerBound && upperBound && isMatchRangeComparableValue(lowerBound.value) && isMatchRangeComparableValue(upperBound.value)) {
+    const comparison = compareExpressionValues(lowerBound.value, upperBound.value);
+
+    if (comparison > 0 || (comparison === 0 && (lowerBound.exclusive || upperBound.exclusive))) {
+      issues.push(makeIssue('invalidExpression', `Range match bounds must define a reachable interval.`, path, stepId));
+    }
+  }
+
+  return issues;
+}
+
+function getMatchRangeBounds(pattern: Extract<WorkflowMatchPattern, { kind: 'range' }>) {
+  return ([
+    pattern.gt !== undefined ? { operator: 'gt' as const, value: pattern.gt } : null,
+    pattern.gte !== undefined ? { operator: 'gte' as const, value: pattern.gte } : null,
+    pattern.lt !== undefined ? { operator: 'lt' as const, value: pattern.lt } : null,
+    pattern.lte !== undefined ? { operator: 'lte' as const, value: pattern.lte } : null,
+  ]).filter((bound): bound is { operator: 'gt' | 'gte' | 'lt' | 'lte'; value: string | number | boolean } => Boolean(bound));
 }
 
 function validateCallExpression(
@@ -1109,80 +1335,6 @@ function validateCallExpression(
           makeIssue(
             'incompatibleType',
             `Function 'coalesce' inputs must resolve to one compatible type.`,
-            path,
-            stepId,
-            { logicalTypes: concreteTypes },
-          ),
-        );
-      }
-
-      return {
-        logicalType: (concreteTypes[0] ?? 'unknown') as LogicalType,
-        valueKind: 'scalar',
-        issues,
-      };
-    }
-    case 'switch': {
-      if (results.length < 4 || results.length % 2 !== 0) {
-        issues.push(
-          makeIssue(
-            'invalidExpression',
-            `Function 'switch' requires an even number of arguments and at least four total arguments.`,
-            path,
-            stepId,
-          ),
-        );
-        return {
-          logicalType: 'unknown',
-          valueKind: 'scalar',
-          issues,
-        };
-      }
-
-      const target = results[0];
-
-      if (target.valueKind !== 'scalar') {
-        issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts a scalar target.`, `${path}.args[0]`, stepId));
-      }
-
-      for (let index = 1; index < results.length - 1; index += 2) {
-        const match = results[index];
-
-        if (match.valueKind !== 'scalar') {
-          issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts scalar match inputs.`, `${path}.args[${index}]`, stepId));
-          continue;
-        }
-
-        if (!areComparableEqualityTypes(target.logicalType, match.logicalType)) {
-          issues.push(
-            makeIssue(
-              'incompatibleType',
-              `Function 'switch' requires the target and every match input to be comparable.`,
-              `${path}.args[${index}]`,
-              stepId,
-            ),
-          );
-        }
-      }
-
-      const branchResults = results.filter((result, index) => index === results.length - 1 || (index >= 2 && index % 2 === 0));
-
-      branchResults.forEach((result, index) => {
-        if (result.valueKind !== 'scalar') {
-          const argIndex = index === branchResults.length - 1 ? results.length - 1 : 2 + (index * 2);
-          issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts scalar result inputs.`, `${path}.args[${argIndex}]`, stepId));
-        }
-      });
-
-      const concreteTypes = [...new Set(branchResults.map((result) => result.logicalType).filter((logicalType) => logicalType !== 'unknown'))];
-
-      if (concreteTypes.includes('mixed')) {
-        issues.push(makeIssue('incompatibleType', `Function 'switch' must not include mixed result branches.`, path, stepId));
-      } else if (concreteTypes.length > 1) {
-        issues.push(
-          makeIssue(
-            'incompatibleType',
-            `Function 'switch' result branches must resolve to one compatible type.`,
             path,
             stepId,
             { logicalTypes: concreteTypes },
@@ -1947,8 +2099,76 @@ function evaluateExpression(expression: WorkflowExpression, context: ExpressionE
       return context.row.cellsByColumnId[expression.columnId] ?? null;
     case 'call':
       return evaluateCallExpression(expression, context);
+    case 'match':
+      return evaluateMatchExpression(expression, context);
     default:
       return null;
+  }
+}
+
+function evaluateMatchExpression(expression: WorkflowMatchExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
+  const subjectValue = evaluateExpression(expression.subject, context);
+
+  for (const matchCase of expression.cases) {
+    if (!evaluateMatchPattern(matchCase.pattern, subjectValue)) {
+      continue;
+    }
+
+    if (matchCase.when && !Boolean(evaluateExpression(matchCase.when, context))) {
+      continue;
+    }
+
+    return evaluateExpression(matchCase.then, context);
+  }
+
+  return null;
+}
+
+function evaluateMatchPattern(pattern: WorkflowMatchPattern, subjectValue: ExpressionRuntimeValue) {
+  if (Array.isArray(subjectValue)) {
+    return false;
+  }
+
+  switch (pattern.kind) {
+    case 'literal':
+      return Object.is(subjectValue, pattern.value);
+    case 'oneOf':
+      return pattern.values.some((value) => Object.is(subjectValue, value));
+    case 'range': {
+      if (!isMatchRangeComparableValue(subjectValue)) {
+        return false;
+      }
+
+      if (pattern.gt !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.gt) || compareExpressionValues(subjectValue, pattern.gt) <= 0) {
+          return false;
+        }
+      }
+
+      if (pattern.gte !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.gte) || compareExpressionValues(subjectValue, pattern.gte) < 0) {
+          return false;
+        }
+      }
+
+      if (pattern.lt !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.lt) || compareExpressionValues(subjectValue, pattern.lt) >= 0) {
+          return false;
+        }
+      }
+
+      if (pattern.lte !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.lte) || compareExpressionValues(subjectValue, pattern.lte) > 0) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+    case 'wildcard':
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -2234,17 +2454,6 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       }
 
       return evaluateExpression(expression.args[1], context);
-    }
-    case 'switch': {
-      const target = evaluateExpression(expression.args[0], context);
-
-      for (let index = 1; index < expression.args.length - 1; index += 2) {
-        if (Object.is(target, evaluateExpression(expression.args[index], context))) {
-          return evaluateExpression(expression.args[index + 1], context);
-        }
-      }
-
-      return evaluateExpression(expression.args[expression.args.length - 1], context);
     }
     case 'concat':
       return expression.args
@@ -2878,6 +3087,10 @@ function compareExpressionValues(left: CellValue, right: CellValue) {
   }
 
   return 0;
+}
+
+function isMatchRangeComparableValue(value: CellValue) {
+  return typeof value === 'number' || typeof value === 'string';
 }
 
 function compareSortValues(left: CellValue, right: CellValue, logicalType: LogicalType) {

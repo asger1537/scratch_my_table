@@ -184,6 +184,90 @@ const CURATED_EXAMPLES = [
     },
   },
   {
+    user: 'Map status values to readable labels.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will derive a status label column using match-based classification with a fallback.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_label',
+            displayName: 'Status Label',
+          },
+          expression: {
+            kind: 'match',
+            subject: {
+              kind: 'call',
+              name: 'lower',
+              args: [
+                {
+                  kind: 'call',
+                  name: 'trim',
+                  args: [{ kind: 'column', columnId: 'col_status' }],
+                },
+              ],
+            },
+            cases: [
+              {
+                pattern: { kind: 'literal', value: 'active' },
+                then: { kind: 'literal', value: 'Active customer' },
+              },
+              {
+                pattern: { kind: 'literal', value: 'inactive' },
+                then: { kind: 'literal', value: 'Inactive customer' },
+              },
+              {
+                pattern: { kind: 'wildcard' },
+                then: { kind: 'literal', value: 'Other' },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
+    user: 'If balance is negative set priority score to 3, if balance is 0 to 200 set it to 2, otherwise set it to 1.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will derive a priority score column using ordered match ranges on the normalized balance.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'Priority Score',
+          },
+          expression: {
+            kind: 'match',
+            subject: {
+              kind: 'call',
+              name: 'toNumber',
+              args: [{ kind: 'column', columnId: 'col_balance' }],
+            },
+            cases: [
+              {
+                pattern: { kind: 'range', lt: 0 },
+                then: { kind: 'literal', value: 3 },
+              },
+              {
+                pattern: { kind: 'range', gte: 0, lte: 200 },
+                then: { kind: 'literal', value: 2 },
+              },
+              {
+                pattern: { kind: 'wildcard' },
+                then: { kind: 'literal', value: 1 },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
     user: 'Clean the name column.',
     assistant: {
       mode: 'clarify',
@@ -276,13 +360,18 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- sortRows',
     '',
     'Expression AST rules:',
-    '- expression kinds: value, literal, column, call',
+    '- expression kinds: value, literal, column, call, match',
     '- "value" is only valid inside scopedRule.cases[*].when, scopedRule.cases[*].then.value, and scopedRule.defaultPatch.value',
     '- DO NOT use { "kind": "value" } in deriveColumn.expression, filterRows.condition, or scopedRule.rowCondition; use { "kind": "column", "columnId": "..." } to read row data there',
     '- sortRows, splitColumn, combineColumns, and deduplicateRows must reference columns through their columnId fields, never through { "kind": "value" }',
     '- "value" is represented exactly as { "kind": "value" } with no extra properties',
     '- null is represented as { "kind": "literal", "value": null }',
     '- filterRows.condition and scopedRule.rowCondition must resolve to boolean expressions',
+    '- Use match for exclusive classification and bucketing. Match cases are ordered and exclusive: the first matching case wins and later cases do not run.',
+    '- A match case has pattern, optional when, and then. Supported pattern kinds are literal, oneOf, range, and wildcard.',
+    '- Wildcard match cases are optional, but if present they must be unique and last.',
+    '- Do not emulate match with nested equals/or chains or any equality-only switch-style construct.',
+    '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
     '- scopedRule is the only canonical cell-level step',
     '- scopedRule cases are checked top to bottom and every matching case applies in order',
     '- later matching scopedRule cases see the current cell value after earlier matching cases have already applied',
@@ -291,7 +380,7 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '',
     'Built-in call names:',
     '- logic: equals, contains, startsWith, endsWith, matchesRegex, greaterThan, lessThan, and, or, not, isEmpty',
-    '- string/list: trim, lower, upper, collapseWhitespace, substring, replace, extractRegex, replaceRegex, split, atIndex, first, last, coalesce, concat, switch',
+    '- string/list: trim, lower, upper, collapseWhitespace, substring, replace, extractRegex, replaceRegex, split, atIndex, first, last, coalesce, concat',
     '- casting: toNumber, toString, toBoolean',
     '- math: add, subtract, multiply, divide, modulo, round, floor, ceil, abs',
     '- date/time: now, datePart, dateDiff, dateAdd',

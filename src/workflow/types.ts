@@ -59,7 +59,6 @@ export type WorkflowExpressionFunctionName =
   | 'first'
   | 'last'
   | 'coalesce'
-  | 'switch'
   | 'concat'
   | 'equals'
   | 'contains'
@@ -77,7 +76,8 @@ export type WorkflowExpression =
   | WorkflowValueExpression
   | WorkflowLiteralExpression
   | WorkflowColumnExpression
-  | WorkflowCallExpression;
+  | WorkflowCallExpression
+  | WorkflowMatchExpression;
 
 export interface WorkflowValueExpression {
   kind: 'value';
@@ -97,6 +97,46 @@ export interface WorkflowCallExpression {
   kind: 'call';
   name: WorkflowExpressionFunctionName;
   args: WorkflowExpression[];
+}
+
+export type WorkflowMatchPattern =
+  | WorkflowMatchLiteralPattern
+  | WorkflowMatchOneOfPattern
+  | WorkflowMatchRangePattern
+  | WorkflowMatchWildcardPattern;
+
+export interface WorkflowMatchLiteralPattern {
+  kind: 'literal';
+  value: WorkflowScalar;
+}
+
+export interface WorkflowMatchOneOfPattern {
+  kind: 'oneOf';
+  values: WorkflowScalar[];
+}
+
+export interface WorkflowMatchRangePattern {
+  kind: 'range';
+  gt?: WorkflowNonNullScalar;
+  gte?: WorkflowNonNullScalar;
+  lt?: WorkflowNonNullScalar;
+  lte?: WorkflowNonNullScalar;
+}
+
+export interface WorkflowMatchWildcardPattern {
+  kind: 'wildcard';
+}
+
+export interface WorkflowMatchCase {
+  pattern: WorkflowMatchPattern;
+  when?: WorkflowExpression;
+  then: WorkflowExpression;
+}
+
+export interface WorkflowMatchExpression {
+  kind: 'match';
+  subject: WorkflowExpression;
+  cases: WorkflowMatchCase[];
 }
 
 export interface WorkflowCellFormatPatch {

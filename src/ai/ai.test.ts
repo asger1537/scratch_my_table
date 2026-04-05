@@ -27,6 +27,9 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Columns marked "mixed" contain incompatible runtime values.');
     expect(instruction).toContain('Combine First Name and Last Name into Full Name, then drop the originals.');
     expect(instruction).toContain('casting: toNumber, toString, toBoolean');
+    expect(instruction).toContain('Use match for exclusive classification and bucketing.');
+    expect(instruction).toContain('Map status values to readable labels.');
+    expect(instruction).toContain('If balance is negative set priority score to 3');
     expect(instruction).not.toContain('alice@example.com');
   });
 
@@ -79,12 +82,18 @@ describe('AI workflow copilot helpers', () => {
     expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(4096);
     expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as {
+      $defs?: Record<string, unknown>;
       oneOf?: Array<Record<string, unknown>>;
     };
     const draftResponseSchema = responseJsonSchema.oneOf?.[1];
     const draftStepSchemas = (draftResponseSchema?.properties as {
       steps?: { items?: { oneOf?: Array<Record<string, unknown>> } };
     } | undefined)?.steps?.items?.oneOf;
+    const deriveColumnSchema = draftStepSchemas?.find((variant) => {
+      const typeProperty = (variant.properties as { type?: { const?: string } } | undefined)?.type;
+      return typeProperty?.const === 'deriveColumn';
+    });
+    const deriveExpressionSchema = (deriveColumnSchema?.properties as { expression?: Record<string, unknown> } | undefined)?.expression;
 
     expect(responseJsonSchema.oneOf).toHaveLength(2);
     expect(draftResponseSchema?.additionalProperties).toBe(false);
@@ -103,6 +112,26 @@ describe('AI workflow copilot helpers', () => {
           && typeof typeProperty?.const === 'string';
       }),
     ).toBe(true);
+    expect(deriveExpressionSchema).toEqual(
+      expect.objectContaining({
+        type: 'object',
+        additionalProperties: true,
+        required: ['kind'],
+      }),
+    );
+    expect((deriveExpressionSchema?.properties as { kind?: { enum?: string[] }; args?: { items?: { type?: string; additionalProperties?: boolean } } } | undefined)?.kind?.enum).toEqual(
+      ['value', 'literal', 'column', 'call', 'match'],
+    );
+    expect((deriveExpressionSchema?.properties as { args?: { items?: { type?: string; additionalProperties?: boolean } } } | undefined)?.args?.items).toEqual(
+      expect.objectContaining({
+        type: 'object',
+        additionalProperties: true,
+      }),
+    );
+    expect(responseJsonSchema.$defs).toBeUndefined();
+    expect(JSON.stringify(responseJsonSchema)).not.toContain('#/$defs/expression');
+    expect(JSON.stringify(responseJsonSchema)).not.toContain('#/$defs/matchCase');
+    expect(JSON.stringify(responseJsonSchema)).not.toContain('#/$defs/matchPattern');
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
   });
 
@@ -191,6 +220,80 @@ describe('AI workflow copilot helpers', () => {
         fetchFn,
       ),
     ).rejects.toThrow('Gemini returned an invalid JSON HTTP response body.');
+  });
+
+  it('retries once with a minimal fallback schema after a Gemini schema-complexity failure', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiErrorResponse('Limits exceeded while trying to flatten schema. Schema is too complex to process.'),
+      )
+      .mockResolvedValueOnce(
+        createGeminiResponse('{"mode":"draft","assistantMessage":"I added the score column.","assumptions":[],"steps":[{"type":"deriveColumn","newColumn":{"columnId":"col_priority_score","displayName":"Priority Score"},"expression":{"kind":"match","subject":{"kind":"call","name":"toNumber","args":[{"kind":"column","columnId":"col_status"}]},"cases":[{"pattern":{"kind":"wildcard"},"then":{"kind":"literal","value":1}}]}}]}'),
+      );
+    const logEvents: Array<{ kind: string; message: string }> = [];
+
+    const result = await generateGeminiDraftTurn(
+      {
+        settings: createAISettings(),
+        context: createPromptContext(),
+        userMessage: {
+          role: 'user',
+          text: 'Add a score column.',
+          timestamp: '2026-03-31T09:00:00.000Z',
+        },
+        phase: 'initial',
+        onLogEvent: (event) => {
+          logEvents.push({
+            kind: event.kind,
+            message: event.message,
+          });
+        },
+      },
+      fetchFn,
+    );
+
+    const firstRequestBody = JSON.parse(fetchFn.mock.calls[0]?.[1]?.body as string) as {
+      generationConfig: { responseJsonSchema: { oneOf?: Array<Record<string, unknown>> } };
+    };
+    const secondRequestBody = JSON.parse(fetchFn.mock.calls[1]?.[1]?.body as string) as {
+      generationConfig: { responseJsonSchema: { oneOf?: Array<Record<string, unknown>> } };
+    };
+    const firstDraftStepItems = (firstRequestBody.generationConfig.responseJsonSchema.oneOf?.[1]?.properties as {
+      steps?: { items?: Record<string, unknown> };
+    } | undefined)?.steps?.items;
+    const secondDraftStepItems = (secondRequestBody.generationConfig.responseJsonSchema.oneOf?.[1]?.properties as {
+      steps?: { items?: Record<string, unknown> };
+    } | undefined)?.steps?.items;
+
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(firstDraftStepItems).toEqual(
+      expect.objectContaining({
+        oneOf: expect.any(Array),
+      }),
+    );
+    expect(secondDraftStepItems).toEqual({
+      type: 'object',
+      additionalProperties: true,
+    });
+    expect(logEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'request_failed',
+          message: 'Limits exceeded while trying to flatten schema. Schema is too complex to process.',
+        }),
+        expect.objectContaining({
+          kind: 'request_started',
+          message: 'Gemini request started with fallback schema after primary schema complexity failure.',
+        }),
+      ]),
+    );
+    expect(result.response).toEqual(
+      expect.objectContaining({
+        mode: 'draft',
+        assistantMessage: 'I added the score column.',
+      }),
+    );
   });
 
   it('parses clarify and draft Gemini responses and rejects malformed payloads', () => {
@@ -767,6 +870,21 @@ function createGeminiResponse(text: string): Response {
   return {
     ok: true,
     status: 200,
+    text: async () => JSON.stringify(payload),
+    json: async () => payload,
+  } as Response;
+}
+
+function createGeminiErrorResponse(message: string, status = 400): Response {
+  const payload = {
+    error: {
+      message,
+    },
+  };
+
+  return {
+    ok: false,
+    status,
     text: async () => JSON.stringify(payload),
     json: async () => payload,
   } as Response;

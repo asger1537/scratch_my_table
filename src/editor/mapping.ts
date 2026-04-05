@@ -712,6 +712,58 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
   return readExpression(expressionBlock);
 }
 
+function readRequiredLiteralExpression(
+  block: Blockly.Block,
+  inputName: string,
+): { value: string | number | boolean | null } | { issue: EditorIssue } {
+  const expression = readRequiredExpression(block, inputName);
+
+  if ('issue' in expression) {
+    return expression;
+  }
+
+  if (expression.expression.kind !== 'literal') {
+    return {
+      issue: {
+        code: 'invalidLiteralPatternValue',
+        message: `Block '${block.type}' requires a literal value for '${inputName}'.`,
+        blockId: block.getInputTargetBlock(inputName)?.id ?? block.id,
+        blockType: block.getInputTargetBlock(inputName)?.type ?? block.type,
+      },
+    };
+  }
+
+  return {
+    value: expression.expression.value,
+  };
+}
+
+function readRequiredNonNullLiteralExpression(
+  block: Blockly.Block,
+  inputName: string,
+): { value: string | number | boolean } | { issue: EditorIssue } {
+  const literal = readRequiredLiteralExpression(block, inputName);
+
+  if ('issue' in literal) {
+    return literal;
+  }
+
+  if (literal.value === null) {
+    return {
+      issue: {
+        code: 'invalidNonNullLiteralPatternValue',
+        message: `Block '${block.type}' requires a non-null literal for '${inputName}'.`,
+        blockId: block.getInputTargetBlock(inputName)?.id ?? block.id,
+        blockType: block.getInputTargetBlock(inputName)?.type ?? block.type,
+      },
+    };
+  }
+
+  return {
+    value: literal.value,
+  };
+}
+
 function readAuthoringCellPatchActions(
   block: Blockly.Block,
   inputName: string,
@@ -913,6 +965,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return { expression: { kind: 'literal', value: null } };
     case BLOCK_TYPES.columnExpression:
       return { expression: { kind: 'column', columnId: getFieldString(block, 'COLUMN_ID') } };
+    case BLOCK_TYPES.matchExpression:
+      return readMatchExpression(block);
     case BLOCK_TYPES.trimFunction:
       return readUnaryCall(block, 'trim');
     case BLOCK_TYPES.lowerFunction:
@@ -1023,8 +1077,6 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, getFieldString(block, 'OPERATOR') as 'round' | 'floor' | 'ceil' | 'abs', ['INPUT']);
     case BLOCK_TYPES.coalesceFunction:
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.switchFunction:
-      return readSwitchExpression(block);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
     case BLOCK_TYPES.arithmeticFunction:
@@ -1086,7 +1138,6 @@ function readFixedArityCall(
     | 'modulo'
     | 'coalesce'
     | 'concat'
-    | 'switch'
     | 'trim'
     | 'lower'
     | 'upper'
@@ -1130,48 +1181,215 @@ function readFixedArityCall(
   };
 }
 
-function readSwitchExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
-  const target = readRequiredExpression(block, 'TARGET');
+function readMatchExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const subject = readRequiredExpression(block, 'SUBJECT');
 
-  if ('issue' in target) {
-    return target;
+  if ('issue' in subject) {
+    return subject;
   }
 
-  const args: WorkflowExpression[] = [target.expression];
-  let index = 0;
+  const matchCases = readRequiredMatchCases(block, 'CASES');
 
-  while (block.getInput(`MATCH${index}`)) {
-    const match = readRequiredExpression(block, `MATCH${index}`);
-
-    if ('issue' in match) {
-      return match;
-    }
-
-    const returnValue = readRequiredExpression(block, `RETURN${index}`);
-
-    if ('issue' in returnValue) {
-      return returnValue;
-    }
-
-    args.push(match.expression, returnValue.expression);
-    index += 1;
+  if ('issue' in matchCases) {
+    return matchCases;
   }
-
-  const defaultResult = readRequiredExpression(block, 'DEFAULT');
-
-  if ('issue' in defaultResult) {
-    return defaultResult;
-  }
-
-  args.push(defaultResult.expression);
 
   return {
     expression: {
-      kind: 'call',
-      name: 'switch',
-      args,
+      kind: 'match',
+      subject: subject.expression,
+      cases: matchCases.cases,
     },
   };
+}
+
+function readRequiredMatchCases(
+  block: Blockly.Block,
+  inputName: string,
+): {
+  cases: Array<{
+    pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+    when?: WorkflowExpression;
+    then: WorkflowExpression;
+  }>;
+} | { issue: EditorIssue } {
+  const firstBlock = block.getInputTargetBlock(inputName);
+
+  if (!firstBlock) {
+    return {
+      issue: missingInputIssue(block, inputName),
+    };
+  }
+
+  const cases: Array<{
+    pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+    when?: WorkflowExpression;
+    then: WorkflowExpression;
+  }> = [];
+  let current: Blockly.Block | null = firstBlock;
+
+  while (current) {
+    if (current.type !== BLOCK_TYPES.matchCaseItem) {
+      return {
+        issue: {
+          code: 'invalidMatchCaseBlock',
+          message: `Block '${block.type}' contains unsupported case block '${current.type}'.`,
+          blockId: current.id,
+          blockType: current.type,
+        },
+      };
+    }
+
+    const pattern = readRequiredMatchPattern(current, 'PATTERN');
+
+    if ('issue' in pattern) {
+      return pattern;
+    }
+
+    const when = readOptionalExpression(current, 'WHEN');
+
+    if ('issue' in when) {
+      return when;
+    }
+
+    const then = readRequiredExpression(current, 'THEN');
+
+    if ('issue' in then) {
+      return then;
+    }
+
+    cases.push({
+      pattern: pattern.pattern,
+      ...(when.expression ? { when: when.expression } : {}),
+      then: then.expression,
+    });
+    current = current.getNextBlock();
+  }
+
+  return { cases };
+}
+
+function readRequiredMatchPattern(
+  block: Blockly.Block,
+  inputName: string,
+): {
+  pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+} | { issue: EditorIssue } {
+  const patternBlock = block.getInputTargetBlock(inputName);
+
+  if (!patternBlock) {
+    return {
+      issue: missingInputIssue(block, inputName),
+    };
+  }
+
+  return readMatchPattern(patternBlock);
+}
+
+function readMatchPattern(
+  block: Blockly.Block,
+): {
+  pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+} | { issue: EditorIssue } {
+  switch (block.type) {
+    case BLOCK_TYPES.matchLiteralPattern: {
+      const literal = readRequiredLiteralExpression(block, 'VALUE');
+
+      if ('issue' in literal) {
+        return literal;
+      }
+
+      return {
+        pattern: {
+          kind: 'literal',
+          value: literal.value,
+        },
+      };
+    }
+    case BLOCK_TYPES.matchOneOfPattern: {
+      const values: Array<string | number | boolean | null> = [];
+      let index = 0;
+
+      while (block.getInput(`VALUE${index}`)) {
+        const literal = readRequiredLiteralExpression(block, `VALUE${index}`);
+
+        if ('issue' in literal) {
+          return literal;
+        }
+
+        values.push(literal.value);
+        index += 1;
+      }
+
+      return {
+        pattern: {
+          kind: 'oneOf',
+          values,
+        },
+      };
+    }
+    case BLOCK_TYPES.matchRangePattern: {
+      const lowerOperator = getFieldString(block, 'LOWER_OPERATOR');
+      const upperOperator = getFieldString(block, 'UPPER_OPERATOR');
+      const pattern: {
+        kind: 'range';
+        gt?: string | number | boolean;
+        gte?: string | number | boolean;
+        lt?: string | number | boolean;
+        lte?: string | number | boolean;
+      } = {
+        kind: 'range',
+      };
+
+      if (lowerOperator !== 'none') {
+        const literal = readRequiredNonNullLiteralExpression(block, 'LOWER_VALUE');
+
+        if ('issue' in literal) {
+          return literal;
+        }
+
+        pattern[lowerOperator as 'gt' | 'gte'] = literal.value;
+      }
+
+      if (upperOperator !== 'none') {
+        const literal = readRequiredNonNullLiteralExpression(block, 'UPPER_VALUE');
+
+        if ('issue' in literal) {
+          return literal;
+        }
+
+        pattern[upperOperator as 'lt' | 'lte'] = literal.value;
+      }
+
+      if (lowerOperator === 'none' && upperOperator === 'none') {
+        return {
+          issue: {
+            code: 'missingMatchRangeBound',
+            message: `Block '${block.type}' must define at least one range bound.`,
+            blockId: block.id,
+            blockType: block.type,
+          },
+        };
+      }
+
+      return { pattern };
+    }
+    case BLOCK_TYPES.matchWildcardPattern:
+      return {
+        pattern: {
+          kind: 'wildcard',
+        },
+      };
+    default:
+      return {
+        issue: {
+          code: 'invalidMatchPatternBlock',
+          message: `Block '${block.type}' is not a supported match pattern block.`,
+          blockId: block.id,
+          blockType: block.type,
+        },
+      };
+  }
 }
 
 function readConcatCall(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -1755,12 +1973,104 @@ function createExpressionBlock(workspace: Blockly.Workspace, expression: Workflo
       block.setFieldValue(expression.columnId, 'COLUMN_ID');
       return block;
     }
+    case 'match':
+      return createMatchExpressionBlock(workspace, expression);
     case 'call': {
       const block = createCallBlock(workspace, expression);
       return block;
     }
     default:
       throw new Error(`Unsupported expression kind '${(expression as WorkflowExpression).kind}'.`);
+  }
+}
+
+function createMatchExpressionBlock(
+  workspace: Blockly.Workspace,
+  expression: Extract<WorkflowExpression, { kind: 'match' }>,
+) {
+  const block = createBlock(workspace, BLOCK_TYPES.matchExpression);
+
+  connectValueBlock(block, 'SUBJECT', createExpressionBlock(workspace, expression.subject));
+  connectStatementChain(block, 'CASES', expression.cases.map((matchCase) => createMatchCaseBlock(workspace, matchCase)));
+  return block;
+}
+
+function createMatchCaseBlock(
+  workspace: Blockly.Workspace,
+  matchCase: Extract<WorkflowExpression, { kind: 'match' }>['cases'][number],
+) {
+  const block = createBlock(workspace, BLOCK_TYPES.matchCaseItem);
+
+  connectValueBlock(block, 'PATTERN', createMatchPatternBlock(workspace, matchCase.pattern));
+
+  if (matchCase.when) {
+    connectValueBlock(block, 'WHEN', createExpressionBlock(workspace, matchCase.when));
+  }
+
+  connectValueBlock(block, 'THEN', createExpressionBlock(workspace, matchCase.then));
+  return block;
+}
+
+function createMatchPatternBlock(
+  workspace: Blockly.Workspace,
+  pattern: Extract<WorkflowExpression, { kind: 'match' }>['cases'][number]['pattern'],
+) {
+  switch (pattern.kind) {
+    case 'literal': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchLiteralPattern);
+
+      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, pattern.value));
+      return block;
+    }
+    case 'oneOf': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchOneOfPattern);
+      const oneOfBlock = block as Blockly.Block & {
+        loadExtraState?: (state: { itemCount?: number }) => void;
+        itemCount_?: number;
+        updateShape_?: () => void;
+      };
+
+      oneOfBlock.loadExtraState?.({ itemCount: Math.max(1, pattern.values.length) });
+
+      if (!oneOfBlock.loadExtraState) {
+        oneOfBlock.itemCount_ = Math.max(1, pattern.values.length);
+        oneOfBlock.updateShape_?.();
+      }
+
+      pattern.values.forEach((value, index) => {
+        connectValueBlock(block, `VALUE${index}`, createLiteralBlock(workspace, value));
+      });
+      return block;
+    }
+    case 'range': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchRangePattern);
+
+      if (pattern.gt !== undefined) {
+        block.setFieldValue('gt', 'LOWER_OPERATOR');
+        connectValueBlock(block, 'LOWER_VALUE', createLiteralBlock(workspace, pattern.gt));
+      } else if (pattern.gte !== undefined) {
+        block.setFieldValue('gte', 'LOWER_OPERATOR');
+        connectValueBlock(block, 'LOWER_VALUE', createLiteralBlock(workspace, pattern.gte));
+      } else {
+        block.setFieldValue('none', 'LOWER_OPERATOR');
+      }
+
+      if (pattern.lt !== undefined) {
+        block.setFieldValue('lt', 'UPPER_OPERATOR');
+        connectValueBlock(block, 'UPPER_VALUE', createLiteralBlock(workspace, pattern.lt));
+      } else if (pattern.lte !== undefined) {
+        block.setFieldValue('lte', 'UPPER_OPERATOR');
+        connectValueBlock(block, 'UPPER_VALUE', createLiteralBlock(workspace, pattern.lte));
+      } else {
+        block.setFieldValue('none', 'UPPER_OPERATOR');
+      }
+
+      return block;
+    }
+    case 'wildcard':
+      return createBlock(workspace, BLOCK_TYPES.matchWildcardPattern);
+    default:
+      throw new Error(`Unsupported match pattern kind '${(pattern as { kind: string }).kind}'.`);
   }
 }
 
@@ -1901,32 +2211,6 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
       block.setFieldValue(expression.name, 'OPERATOR');
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
-      return block;
-    }
-    case 'switch': {
-      const block = createBlock(workspace, BLOCK_TYPES.switchFunction);
-      const switchBlock = block as Blockly.Block & {
-        loadExtraState?: (state: { itemCount?: number }) => void;
-        itemCount_?: number;
-        updateShape_?: () => void;
-      };
-      const caseCount = Math.max(1, Math.floor((expression.args.length - 2) / 2));
-
-      if (switchBlock.loadExtraState) {
-        switchBlock.loadExtraState({ itemCount: caseCount });
-      } else {
-        switchBlock.itemCount_ = caseCount;
-        switchBlock.updateShape_?.();
-      }
-
-      connectValueBlock(block, 'TARGET', createExpressionBlock(workspace, expression.args[0]));
-
-      for (let index = 0; index < caseCount; index += 1) {
-        connectValueBlock(block, `MATCH${index}`, createExpressionBlock(workspace, expression.args[1 + (index * 2)]));
-        connectValueBlock(block, `RETURN${index}`, createExpressionBlock(workspace, expression.args[2 + (index * 2)]));
-      }
-
-      connectValueBlock(block, 'DEFAULT', createExpressionBlock(workspace, expression.args[expression.args.length - 1]));
       return block;
     }
     case 'contains':

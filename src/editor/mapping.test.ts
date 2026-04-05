@@ -528,45 +528,85 @@ describe('block-based workflow authoring', () => {
     expect(blockTypes).toContain(BLOCK_TYPES.toBooleanFunction);
   });
 
-  it('reconstructs switch function trees with dynamic case inputs', () => {
+  it('reconstructs match expression trees with literal, one-of, range, guarded, and wildcard patterns', () => {
     const workflow: Workflow = {
       version: 2,
-      workflowId: 'wf_switch_roundtrip',
-      name: 'Switch roundtrip',
+      workflowId: 'wf_match_roundtrip',
+      name: 'Match roundtrip',
       steps: [
         {
-          id: 'step_switch_status',
+          id: 'step_match_status',
           type: 'deriveColumn',
           newColumn: {
             columnId: 'col_status_label',
             displayName: 'status_label',
           },
-          expression: call(
-            'switch',
-            column('col_status'),
-            literal('active'),
-            literal('A'),
-            literal('inactive'),
-            literal('I'),
-            literal('other'),
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              {
+                pattern: matchLiteral('active'),
+                then: literal('A'),
+              },
+              {
+                pattern: matchOneOf('inactive', 'disabled'),
+                when: call('equals', column('col_region'), literal('west')),
+                then: literal('I'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_match_priority',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'priority_score',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchRange({ gte: 0, lte: 200 }),
+                then: literal(2),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal(1),
+              },
+            ],
           ),
         },
       ],
     };
 
-    const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_status_label'], workflow);
+    const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_region', 'col_balance', 'col_status_label', 'col_priority_score'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
-    const switchBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.switchFunction);
+    const matchBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.matchExpression);
+    const matchCaseBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchCaseItem);
+    const oneOfPatternBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.matchOneOfPattern);
+    const rangePatternBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchRangePattern);
+    const wildcardPatternBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchWildcardPattern);
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
-    expect(switchBlock).toBeTruthy();
-    expect(switchBlock?.getInput('TARGET')).toBeTruthy();
-    expect(switchBlock?.getInput('MATCH0')).toBeTruthy();
-    expect(switchBlock?.getInput('RETURN0')).toBeTruthy();
-    expect(switchBlock?.getInput('MATCH1')).toBeTruthy();
-    expect(switchBlock?.getInput('RETURN1')).toBeTruthy();
-    expect(switchBlock?.getInput('DEFAULT')).toBeTruthy();
+    expect(matchBlock).toBeTruthy();
+    expect(matchBlock?.getInput('SUBJECT')).toBeTruthy();
+    expect(matchBlock?.getInput('CASES')).toBeTruthy();
+    expect(matchCaseBlocks.length).toBeGreaterThanOrEqual(3);
+    expect(oneOfPatternBlock).toBeTruthy();
+    expect(oneOfPatternBlock?.getInput('VALUE0')).toBeTruthy();
+    expect(oneOfPatternBlock?.getInput('VALUE1')).toBeTruthy();
+    expect(rangePatternBlocks).toHaveLength(2);
+    expect(wildcardPatternBlocks.length).toBeGreaterThanOrEqual(2);
   });
 
   it('reconstructs arithmetic and rounding function trees', () => {
@@ -1558,6 +1598,9 @@ function column(columnId: string): WorkflowExpression {
   };
 }
 
+type MatchCase = Extract<WorkflowExpression, { kind: 'match' }>['cases'][number];
+type MatchPattern = MatchCase['pattern'];
+
 function call(
   name:
     | 'now'
@@ -1589,7 +1632,6 @@ function call(
     | 'first'
     | 'last'
     | 'coalesce'
-    | 'switch'
     | 'concat'
     | 'equals'
     | 'contains'
@@ -1608,6 +1650,46 @@ function call(
     kind: 'call',
     name,
     args,
+  };
+}
+
+function match(subject: WorkflowExpression, cases: MatchCase[]): WorkflowExpression {
+  return {
+    kind: 'match',
+    subject,
+    cases,
+  };
+}
+
+function matchLiteral(value: string | number | boolean | null): MatchPattern {
+  return {
+    kind: 'literal',
+    value,
+  };
+}
+
+function matchOneOf(...values: Array<string | number | boolean | null>): MatchPattern {
+  return {
+    kind: 'oneOf',
+    values,
+  };
+}
+
+function matchRange(bounds: {
+  gt?: string | number | boolean;
+  gte?: string | number | boolean;
+  lt?: string | number | boolean;
+  lte?: string | number | boolean;
+}): MatchPattern {
+  return {
+    kind: 'range',
+    ...bounds,
+  };
+}
+
+function matchWildcard(): MatchPattern {
+  return {
+    kind: 'wildcard',
   };
 }
 

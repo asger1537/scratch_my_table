@@ -113,15 +113,15 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 - File: `19-normalize-phone-digits-regex.workflow.json`
 - Uses `replaceRegex(customer_id, "[^0-9]", "")` to keep digits only.
 
-## 20. Map Status Labels With Switch
+## 20. Map Status Labels With Match
 
-- File: `20-map-status-label-with-switch.workflow.json`
-- Uses `switch(lower(trim(status)), ...)` to map status values to readable labels with a default fallback.
+- File: `20-map-status-label-with-match.workflow.json`
+- Uses `match(lower(trim(status)), ...)` to map status values to readable labels with ordered literal, one-of, and wildcard cases.
 
 ## 21. Calculate Priority Score
 
 - File: `21-calculate-priority-score.workflow.json`
-- Uses `switch`, `multiply`, `add`, `divide`, and `round` to derive a numeric `priority_score` from `status` and `VIP?`.
+- Uses `match(toNumber(balance), ...)` with ordered range buckets to derive a numeric `priority_score`.
 
 ## 22. Derive Signup Date Metrics
 

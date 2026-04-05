@@ -1,5 +1,5 @@
 Project overview
-Generated: 2026-04-05 10:39:53 +02:00
+Generated: 2026-04-05 11:47:58 +02:00
 
 Included files
 --------------
@@ -418,6 +418,7 @@ Expression node kinds:
 - `literal`
 - `column`
 - `call`
+- `match`
 
 Rules:
 
@@ -428,6 +429,7 @@ Rules:
 - `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
 - `literal` may be `string`, `number`, `boolean`, or `null`
 - `call` applies one built-in pure function
+- `match` applies ordered exclusive classification over one subject expression
 
 Built-in function semantics:
 
@@ -460,7 +462,7 @@ Built-in function semantics:
 - `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
 - `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
-- `switch(target, match1, result1, ..., defaultResult)`: evaluates `target` and returns the `result` of the first matching `match` value. If no match is found, returns `defaultResult`. Requires an even number of arguments (at least 4).
+- `match(subject, cases)`: evaluates `subject` once and returns the `then` expression from the first case whose pattern matches and whose optional `when` guard is true. Wildcard fallback is optional; if no case matches, the result is `null`.
 - `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
 - `isEmpty(x)`: returns `true` when `x` is `null`, `""`, or a whitespace-only string
 - `equals(a, b)`: exact scalar equality
@@ -494,6 +496,8 @@ Determinism rules:
 - No function mutates other cells, rows, or schema.
 - Workflow IR v2 does not support user-defined functions, loops, or recursion.
 - Explicit casts are the intended way to normalize messy imported values before math, sorting, or boolean logic.
+- `match` is the intended classification and bucketing construct for deriving labels or scores.
+- `scopedRule` remains the cumulative cell-rewrite construct; multiple `scopedRule` cases may apply in sequence to the evolving current cell value.
 
 ## Cell Formatting Semantics
 
@@ -732,15 +736,15 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 - File: `19-normalize-phone-digits-regex.workflow.json`
 - Uses `replaceRegex(customer_id, "[^0-9]", "")` to keep digits only.
 
-## 20. Map Status Labels With Switch
+## 20. Map Status Labels With Match
 
-- File: `20-map-status-label-with-switch.workflow.json`
-- Uses `switch(lower(trim(status)), ...)` to map status values to readable labels with a default fallback.
+- File: `20-map-status-label-with-match.workflow.json`
+- Uses `match(lower(trim(status)), ...)` to map status values to readable labels with ordered literal, one-of, and wildcard cases.
 
 ## 21. Calculate Priority Score
 
 - File: `21-calculate-priority-score.workflow.json`
-- Uses `switch`, `multiply`, `add`, `divide`, and `round` to derive a numeric `priority_score` from `status` and `VIP?`.
+- Uses `match(toNumber(balance), ...)` with ordered range buckets to derive a numeric `priority_score`.
 
 ## 22. Derive Signup Date Metrics
 
@@ -849,6 +853,7 @@ Workflow IR v2 uses one shared expression AST:
 - `literal`
 - `column`
 - `call`
+- `match`
 
 Rules:
 
@@ -858,6 +863,7 @@ Rules:
 - `column` is valid anywhere row-scoped expressions are evaluated
 - `literal` is always structurally valid
 - `call` must use one supported built-in function name and the correct arity
+- `match` must define one `subject` and a non-empty `cases` array
 - logical checks in `filterRows.condition`, `scopedRule.rowCondition`, and `scopedRule.cases[*].when` are ordinary expressions and must resolve to boolean
 
 Function rules:
@@ -868,9 +874,13 @@ Function rules:
 - `replace`, `replaceRegex`, `dateDiff`, and `dateAdd` require 3 arguments
 - `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `add`, `subtract`, `multiply`, `divide`, `modulo`, and `datePart` require exactly 2 arguments
 - `and`, `or`, and `concat` require at least 2 arguments
-- `switch` requires at least 4 arguments and must have an even number of arguments
 - `split` returns an intermediate list value
 - final `scopedRule` patch values and `deriveColumn` expressions must resolve to scalar cell values
+- `match.subject` must resolve to a scalar value and must not use `value`
+- every `match.cases[*].then` must resolve to a scalar value
+- `match.cases[*].when`, if present, must resolve to boolean
+- `match.cases[*].pattern.kind = wildcard` is optional, but if present it must be unique and last
+- `match.cases[*].pattern.kind = range` requires at least one bound and cannot mix `gt` with `gte` or `lt` with `lte`
 
 Type rules:
 
@@ -890,7 +900,9 @@ Type rules:
 - `round`, `floor`, `ceil`, and `abs` require numeric inputs and return `number`
 - `add`, `subtract`, `multiply`, `divide`, and `modulo` require numeric inputs and return `number`
 - `coalesce` requires scalar inputs with compatible logical types
-- `switch` requires the `target` to be comparable to all `match` inputs. All `result` inputs and the `defaultResult` must resolve to compatible logical types
+- `match` literal and one-of patterns must be comparable to the `subject`
+- `match` range bounds must be comparable to the `subject` and must all use one compatible ordered type
+- `match` case results must resolve to one compatible logical type
 - `concat` accepts scalar inputs and returns `string`
 - `isEmpty` requires a scalar input and returns `boolean`
 - `not` requires a boolean-like input and returns `boolean`
@@ -1192,6 +1204,7 @@ Expression kinds:
 - `literal`
 - `column`
 - `call`
+- `match`
 
 Rules:
 
@@ -1202,6 +1215,7 @@ Rules:
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
+- `match` classifies one subject expression using ordered exclusive cases; the first matching case wins.
 
 Built-in call names:
 
@@ -1209,8 +1223,17 @@ Built-in call names:
 - casting: `toNumber`, `toString`, `toBoolean`
 - date / time: `now`, `datePart`, `dateDiff`, `dateAdd`
 - math: `round`, `floor`, `ceil`, `abs`, `add`, `subtract`, `multiply`, `divide`, `modulo`
-- list / utility: `split`, `atIndex`, `first`, `last`, `coalesce`, `switch`, `concat`
+- list / utility: `split`, `atIndex`, `first`, `last`, `coalesce`, `concat`
 - logic: `isEmpty`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `and`, `or`, `not`
+
+`match` rules:
+
+- `subject` is evaluated once per row
+- cases are ordered and exclusive; the first matching case wins
+- each case has `pattern`, optional `when`, and `then`
+- pattern kinds are `literal`, `oneOf`, `range`, and `wildcard`
+- `wildcard`, if present, must be unique and last
+- if no case matches and there is no wildcard case, the expression returns `null`
 
 Examples:
 
@@ -1284,6 +1307,54 @@ Examples:
           "value": "A"
         }
       ]
+    }
+  ]
+}
+```
+
+```json
+{
+  "kind": "match",
+  "subject": {
+    "kind": "call",
+    "name": "toNumber",
+    "args": [
+      {
+        "kind": "column",
+        "columnId": "col_balance"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "pattern": {
+        "kind": "range",
+        "lt": 0
+      },
+      "then": {
+        "kind": "literal",
+        "value": 3
+      }
+    },
+    {
+      "pattern": {
+        "kind": "range",
+        "gte": 0,
+        "lte": 200
+      },
+      "then": {
+        "kind": "literal",
+        "value": 2
+      }
+    },
+    {
+      "pattern": {
+        "kind": "wildcard"
+      },
+      "then": {
+        "kind": "literal",
+        "value": 1
+      }
     }
   ]
 }
@@ -1673,6 +1744,120 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
         }
       }
     },
+    "matchPattern": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "value"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": {
+              "$ref": "#/$defs/scalar"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "values"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "oneOf"
+            },
+            "values": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/scalar"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "range"
+            },
+            "gt": {
+              "$ref": "#/$defs/nonNullScalar"
+            },
+            "gte": {
+              "$ref": "#/$defs/nonNullScalar"
+            },
+            "lt": {
+              "$ref": "#/$defs/nonNullScalar"
+            },
+            "lte": {
+              "$ref": "#/$defs/nonNullScalar"
+            }
+          },
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "required": ["gt"]
+                },
+                {
+                  "required": ["gte"]
+                },
+                {
+                  "required": ["lt"]
+                },
+                {
+                  "required": ["lte"]
+                }
+              ]
+            },
+            {
+              "not": {
+                "required": ["gt", "gte"]
+              }
+            },
+            {
+              "not": {
+                "required": ["lt", "lte"]
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "wildcard"
+            }
+          }
+        }
+      ]
+    },
+    "matchCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "then"],
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/matchPattern"
+        },
+        "when": {
+          "$ref": "#/$defs/expression"
+        },
+        "then": {
+          "$ref": "#/$defs/expression"
+        }
+      }
+    },
     "expression": {
       "oneOf": [
         {
@@ -1711,6 +1896,27 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
             },
             "columnId": {
               "$ref": "#/$defs/id"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "subject", "cases"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "match"
+            },
+            "subject": {
+              "$ref": "#/$defs/expression"
+            },
+            "cases": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/matchCase"
+              }
             }
           }
         },
@@ -1773,28 +1979,6 @@ C005,Erin,Stone Park,erin.stone@example.com,Denver,CO,2025-01-24
               "type": "array",
               "minItems": 1,
               "maxItems": 1,
-              "items": {
-                "$ref": "#/$defs/expression"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "name", "args"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "call"
-            },
-            "name": {
-              "type": "string",
-              "const": "switch"
-            },
-            "args": {
-              "type": "array",
-              "minItems": 4,
               "items": {
                 "$ref": "#/$defs/expression"
               }
@@ -2241,6 +2425,9 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Columns marked "mixed" contain incompatible runtime values.');
     expect(instruction).toContain('Combine First Name and Last Name into Full Name, then drop the originals.');
     expect(instruction).toContain('casting: toNumber, toString, toBoolean');
+    expect(instruction).toContain('Use match for exclusive classification and bucketing.');
+    expect(instruction).toContain('Map status values to readable labels.');
+    expect(instruction).toContain('If balance is negative set priority score to 3');
     expect(instruction).not.toContain('alice@example.com');
   });
 
@@ -2293,12 +2480,20 @@ describe('AI workflow copilot helpers', () => {
     expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(4096);
     expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as {
+      $defs?: Record<string, unknown>;
       oneOf?: Array<Record<string, unknown>>;
     };
     const draftResponseSchema = responseJsonSchema.oneOf?.[1];
     const draftStepSchemas = (draftResponseSchema?.properties as {
       steps?: { items?: { oneOf?: Array<Record<string, unknown>> } };
     } | undefined)?.steps?.items?.oneOf;
+    const expressionSchema = responseJsonSchema.$defs?.expression as { oneOf?: Array<Record<string, unknown>> } | undefined;
+    const matchSchema = expressionSchema?.oneOf?.find((variant) => (variant.properties as { kind?: { const?: string } } | undefined)?.kind?.const === 'match');
+    const callSchemas = expressionSchema?.oneOf?.filter((variant) => (variant.properties as { kind?: { const?: string } } | undefined)?.kind?.const === 'call') ?? [];
+    const switchCallSchema = callSchemas.find((variant) => {
+      const name = (variant.properties as { name?: { const?: string; enum?: string[] } } | undefined)?.name;
+      return name?.const === 'switch' || name?.enum?.includes('switch');
+    });
 
     expect(responseJsonSchema.oneOf).toHaveLength(2);
     expect(draftResponseSchema?.additionalProperties).toBe(false);
@@ -2317,6 +2512,9 @@ describe('AI workflow copilot helpers', () => {
           && typeof typeProperty?.const === 'string';
       }),
     ).toBe(true);
+    expect(matchSchema).toBeTruthy();
+    expect((matchSchema?.properties as { cases?: { items?: { $ref?: string } } } | undefined)?.cases?.items?.$ref).toBe('#/$defs/matchCase');
+    expect(switchCallSchema).toBeUndefined();
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
   });
 
@@ -3392,26 +3590,14 @@ function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
   const scalarSchema = {
     type: ['string', 'number', 'boolean', 'null'],
   };
+  const nonNullScalarSchema = {
+    type: ['string', 'number', 'boolean'],
+  };
   const expressionSchema = {
-    type: 'object',
-    additionalProperties: true,
-    properties: {
-      kind: {
-        type: 'string',
-        enum: ['value', 'literal', 'column', 'call'],
-      },
-      value: scalarSchema,
-      columnId: stringSchema,
-      name: stringSchema,
-      args: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: true,
-        },
-      },
-    },
-    required: ['kind'],
+    $ref: '#/$defs/expression',
+  };
+  const matchPatternSchema = {
+    $ref: '#/$defs/matchPattern',
   };
   const cellFormatPatchSchema = {
     type: 'object',
@@ -3631,6 +3817,319 @@ function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
   ];
 
   return {
+    $defs: {
+      matchPattern: {
+        oneOf: [
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'literal',
+              },
+              value: scalarSchema,
+            },
+            required: ['kind', 'value'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'oneOf',
+              },
+              values: {
+                type: 'array',
+                minItems: 1,
+                items: scalarSchema,
+              },
+            },
+            required: ['kind', 'values'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'range',
+              },
+              gt: nonNullScalarSchema,
+              gte: nonNullScalarSchema,
+              lt: nonNullScalarSchema,
+              lte: nonNullScalarSchema,
+            },
+            required: ['kind'],
+            allOf: [
+              {
+                anyOf: [
+                  { required: ['gt'] },
+                  { required: ['gte'] },
+                  { required: ['lt'] },
+                  { required: ['lte'] },
+                ],
+              },
+              {
+                not: {
+                  required: ['gt', 'gte'],
+                },
+              },
+              {
+                not: {
+                  required: ['lt', 'lte'],
+                },
+              },
+            ],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'wildcard',
+              },
+            },
+            required: ['kind'],
+          },
+        ],
+      },
+      matchCase: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          pattern: matchPatternSchema,
+          when: expressionSchema,
+          then: expressionSchema,
+        },
+        required: ['pattern', 'then'],
+      },
+      expression: {
+        oneOf: [
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'value',
+              },
+            },
+            required: ['kind'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'literal',
+              },
+              value: scalarSchema,
+            },
+            required: ['kind', 'value'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'column',
+              },
+              columnId: stringSchema,
+            },
+            required: ['kind', 'columnId'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'match',
+              },
+              subject: expressionSchema,
+              cases: {
+                type: 'array',
+                minItems: 1,
+                items: {
+                  $ref: '#/$defs/matchCase',
+                },
+              },
+            },
+            required: ['kind', 'subject', 'cases'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                enum: ['trim', 'lower', 'upper', 'toNumber', 'toString', 'toBoolean', 'collapseWhitespace', 'first', 'last', 'round', 'floor', 'ceil', 'abs'],
+              },
+              args: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 1,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                const: 'now',
+              },
+              args: {
+                type: 'array',
+                maxItems: 0,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                enum: ['isEmpty', 'not'],
+              },
+              args: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 1,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                enum: ['split', 'atIndex', 'extractRegex', 'coalesce', 'equals', 'contains', 'startsWith', 'endsWith', 'matchesRegex', 'greaterThan', 'lessThan', 'add', 'subtract', 'multiply', 'divide', 'modulo', 'datePart'],
+              },
+              args: {
+                type: 'array',
+                minItems: 2,
+                maxItems: 2,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                enum: ['and', 'or', 'concat'],
+              },
+              args: {
+                type: 'array',
+                minItems: 2,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                const: 'substring',
+              },
+              args: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 3,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                enum: ['replace', 'replaceRegex'],
+              },
+              args: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 3,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              kind: {
+                type: 'string',
+                const: 'call',
+              },
+              name: {
+                type: 'string',
+                enum: ['dateDiff', 'dateAdd'],
+              },
+              args: {
+                type: 'array',
+                minItems: 3,
+                maxItems: 3,
+                items: expressionSchema,
+              },
+            },
+            required: ['kind', 'name', 'args'],
+          },
+        ],
+      },
+    },
     oneOf: [
       {
         type: 'object',
@@ -3918,6 +4417,90 @@ const CURATED_EXAMPLES = [
     },
   },
   {
+    user: 'Map status values to readable labels.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will derive a status label column using match-based classification with a fallback.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_label',
+            displayName: 'Status Label',
+          },
+          expression: {
+            kind: 'match',
+            subject: {
+              kind: 'call',
+              name: 'lower',
+              args: [
+                {
+                  kind: 'call',
+                  name: 'trim',
+                  args: [{ kind: 'column', columnId: 'col_status' }],
+                },
+              ],
+            },
+            cases: [
+              {
+                pattern: { kind: 'literal', value: 'active' },
+                then: { kind: 'literal', value: 'Active customer' },
+              },
+              {
+                pattern: { kind: 'literal', value: 'inactive' },
+                then: { kind: 'literal', value: 'Inactive customer' },
+              },
+              {
+                pattern: { kind: 'wildcard' },
+                then: { kind: 'literal', value: 'Other' },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
+    user: 'If balance is negative set priority score to 3, if balance is 0 to 200 set it to 2, otherwise set it to 1.',
+    assistant: {
+      mode: 'draft',
+      assistantMessage: 'I will derive a priority score column using ordered match ranges on the normalized balance.',
+      assumptions: [],
+      steps: [
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'Priority Score',
+          },
+          expression: {
+            kind: 'match',
+            subject: {
+              kind: 'call',
+              name: 'toNumber',
+              args: [{ kind: 'column', columnId: 'col_balance' }],
+            },
+            cases: [
+              {
+                pattern: { kind: 'range', lt: 0 },
+                then: { kind: 'literal', value: 3 },
+              },
+              {
+                pattern: { kind: 'range', gte: 0, lte: 200 },
+                then: { kind: 'literal', value: 2 },
+              },
+              {
+                pattern: { kind: 'wildcard' },
+                then: { kind: 'literal', value: 1 },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
     user: 'Clean the name column.',
     assistant: {
       mode: 'clarify',
@@ -4010,13 +4593,18 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- sortRows',
     '',
     'Expression AST rules:',
-    '- expression kinds: value, literal, column, call',
+    '- expression kinds: value, literal, column, call, match',
     '- "value" is only valid inside scopedRule.cases[*].when, scopedRule.cases[*].then.value, and scopedRule.defaultPatch.value',
     '- DO NOT use { "kind": "value" } in deriveColumn.expression, filterRows.condition, or scopedRule.rowCondition; use { "kind": "column", "columnId": "..." } to read row data there',
     '- sortRows, splitColumn, combineColumns, and deduplicateRows must reference columns through their columnId fields, never through { "kind": "value" }',
     '- "value" is represented exactly as { "kind": "value" } with no extra properties',
     '- null is represented as { "kind": "literal", "value": null }',
     '- filterRows.condition and scopedRule.rowCondition must resolve to boolean expressions',
+    '- Use match for exclusive classification and bucketing. Match cases are ordered and exclusive: the first matching case wins and later cases do not run.',
+    '- A match case has pattern, optional when, and then. Supported pattern kinds are literal, oneOf, range, and wildcard.',
+    '- Wildcard match cases are optional, but if present they must be unique and last.',
+    '- Do not emulate match with nested equals/or chains or any equality-only switch-style construct.',
+    '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
     '- scopedRule is the only canonical cell-level step',
     '- scopedRule cases are checked top to bottom and every matching case applies in order',
     '- later matching scopedRule cases see the current cell value after earlier matching cases have already applied',
@@ -4025,7 +4613,7 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '',
     'Built-in call names:',
     '- logic: equals, contains, startsWith, endsWith, matchesRegex, greaterThan, lessThan, and, or, not, isEmpty',
-    '- string/list: trim, lower, upper, collapseWhitespace, substring, replace, extractRegex, replaceRegex, split, atIndex, first, last, coalesce, concat, switch',
+    '- string/list: trim, lower, upper, collapseWhitespace, substring, replace, extractRegex, replaceRegex, split, atIndex, first, last, coalesce, concat',
     '- casting: toNumber, toString, toBoolean',
     '- math: add, subtract, multiply, divide, modulo, round, floor, ceil, abs',
     '- date/time: now, datePart, dateDiff, dateAdd',
@@ -9184,6 +9772,11 @@ const RULE_CASE_INPUT_NAMES = {
   when: 'WHEN',
   actions: 'ACTIONS',
 } as const;
+const MATCH_CASE_INPUT_NAMES = {
+  pattern: 'PATTERN',
+  when: 'WHEN',
+  then: 'THEN',
+} as const;
 const CELL_ACTION_INPUT_NAMES = {
   value: 'VALUE',
   color: 'COLOR',
@@ -9200,8 +9793,11 @@ type LogicalGroupBlock = Blockly.Block & {
   itemCount_?: number;
   updateShape_?: () => void;
 };
-type SwitchGroupBlock = Blockly.Block & {
+type MatchOneOfPatternBlock = Blockly.Block & {
   itemCount_?: number;
+  updateShape_?: () => void;
+};
+type MatchRangePatternBlock = Blockly.Block & {
   updateShape_?: () => void;
 };
 type ComparatorOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
@@ -9274,7 +9870,12 @@ export const BLOCK_TYPES = {
   dateDiffFunction: 'date_diff_function',
   dateAddFunction: 'date_add_function',
   coalesceFunction: 'coalesce_function',
-  switchFunction: 'switch_function',
+  matchExpression: 'match_expression',
+  matchCaseItem: 'match_case_item',
+  matchLiteralPattern: 'match_literal_pattern',
+  matchOneOfPattern: 'match_one_of_pattern',
+  matchRangePattern: 'match_range_pattern',
+  matchWildcardPattern: 'match_wildcard_pattern',
   concatFunction: 'concat_function',
   arithmeticFunction: 'arithmetic_function',
   mathRoundingFunction: 'math_rounding_function',
@@ -9698,24 +10299,91 @@ export function registerWorkflowBlocks() {
       this.updateShape_?.();
     },
   };
-  Blockly.Blocks[BLOCK_TYPES.switchFunction] = {
-    init(this: SwitchGroupBlock) {
-      this.itemCount_ = 1;
-      this.appendValueInput('TARGET').setCheck('EXPRESSION').appendField('switch');
+  Blockly.Blocks[BLOCK_TYPES.matchExpression] = {
+    init() {
+      this.appendValueInput('SUBJECT').setCheck('EXPRESSION').appendField('match');
+      this.appendStatementInput('CASES').setCheck('MATCH_CASE_ITEM').appendField('cases');
       this.setOutput(true, 'EXPRESSION');
       this.setInputsInline(false);
       this.setColour(LOGIC_COLOR);
-      this.updateShape_ = () => updateSwitchGroupShape(this);
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.matchCaseItem] = {
+    init() {
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.pattern).setCheck('MATCH_PATTERN').appendField('pattern');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('guard when');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
+      this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
+      this.setNextStatement(true, 'MATCH_CASE_ITEM');
+      this.setInputsInline(false);
+      this.setColour(SUPPORT_COLOR);
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.matchLiteralPattern] = {
+    init() {
+      this.appendValueInput('VALUE').setCheck('LITERAL').appendField('literal pattern');
+      this.setOutput(true, 'MATCH_PATTERN');
+      this.setColour(LOGIC_COLOR);
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.matchOneOfPattern] = {
+    init(this: MatchOneOfPatternBlock) {
+      this.itemCount_ = 2;
+      this.setOutput(true, 'MATCH_PATTERN');
+      this.setInputsInline(false);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = () => updateMatchOneOfPatternShape(this);
       this.updateShape_();
     },
-    saveExtraState(this: SwitchGroupBlock) {
+    saveExtraState(this: MatchOneOfPatternBlock) {
       return {
-        itemCount: Math.max(1, this.itemCount_ ?? 1),
+        itemCount: Math.max(1, this.itemCount_ ?? 2),
       };
     },
-    loadExtraState(this: SwitchGroupBlock, state: { itemCount?: number }) {
-      this.itemCount_ = Math.max(1, Number(state.itemCount) || 1);
+    loadExtraState(this: MatchOneOfPatternBlock, state: { itemCount?: number }) {
+      this.itemCount_ = Math.max(1, Number(state.itemCount) || 2);
       this.updateShape_?.();
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.matchRangePattern] = {
+    init(this: MatchRangePatternBlock) {
+      this.appendDummyInput('HEADER').appendField('range');
+      this.appendValueInput('LOWER_VALUE')
+        .setCheck('NON_NULL_LITERAL')
+        .appendField(new Blockly.FieldDropdown([
+          ['no lower bound', 'none'],
+          ['>', 'gt'],
+          ['>=', 'gte'],
+        ], (newValue) => {
+          const normalized = normalizeMatchRangeLowerOperator(newValue);
+          this.updateShape_?.();
+          return normalized;
+        }), 'LOWER_OPERATOR');
+      this.appendValueInput('UPPER_VALUE')
+        .setCheck('NON_NULL_LITERAL')
+        .appendField(new Blockly.FieldDropdown([
+          ['no upper bound', 'none'],
+          ['<', 'lt'],
+          ['<=', 'lte'],
+        ], (newValue) => {
+          const normalized = normalizeMatchRangeUpperOperator(newValue);
+          this.updateShape_?.();
+          return normalized;
+        }), 'UPPER_OPERATOR');
+      this.setOutput(true, 'MATCH_PATTERN');
+      this.setInputsInline(false);
+      this.setColour(LOGIC_COLOR);
+      this.updateShape_ = () => updateMatchRangePatternShape(this);
+      this.setFieldValue('none', 'LOWER_OPERATOR');
+      this.setFieldValue('none', 'UPPER_OPERATOR');
+      this.updateShape_();
+    },
+  };
+  Blockly.Blocks[BLOCK_TYPES.matchWildcardPattern] = {
+    init() {
+      this.appendDummyInput().appendField('wildcard').appendField('_');
+      this.setOutput(true, 'MATCH_PATTERN');
+      this.setColour(LOGIC_COLOR);
     },
   };
   createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
@@ -9900,6 +10568,14 @@ function normalizeUnaryPredicateFunctionOperator(value: unknown): UnaryPredicate
   return value === 'isEmpty' ? 'isEmpty' : 'isEmpty';
 }
 
+function normalizeMatchRangeLowerOperator(value: unknown) {
+  return value === 'gt' || value === 'gte' ? value : 'none';
+}
+
+function normalizeMatchRangeUpperOperator(value: unknown) {
+  return value === 'lt' || value === 'lte' ? value : 'none';
+}
+
 function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
   const nextCount = Math.max(2, itemCount);
   const currentCount = Math.max(2, block.itemCount_ ?? 2);
@@ -9930,94 +10606,84 @@ function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
   }
 }
 
-function updateSwitchGroupShape(block: SwitchGroupBlock) {
+function updateMatchOneOfPatternShape(block: MatchOneOfPatternBlock) {
   if (block.getInput('HEADER')) {
     block.removeInput('HEADER');
   }
 
   let index = 0;
 
-  while (block.getInput(`MATCH${index}`)) {
-    block.removeInput(`MATCH${index}`);
-    block.removeInput(`RETURN${index}`);
+  while (block.getInput(`VALUE${index}`)) {
+    block.removeInput(`VALUE${index}`);
     index += 1;
   }
 
-  if (block.getInput('DEFAULT')) {
-    block.removeInput('DEFAULT');
-  }
-
   block.appendDummyInput('HEADER')
-    .appendField('cases')
+    .appendField('one of')
     .appendField(createLogicalGroupActionField('add', 'Add case', (field) => {
-      const sourceBlock = field.getSourceBlock() as SwitchGroupBlock | null;
+      const sourceBlock = field.getSourceBlock() as MatchOneOfPatternBlock | null;
 
       if (!sourceBlock) {
         return;
       }
 
-      resizeSwitchGroup(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 1) + 1);
+      resizeMatchOneOfPattern(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 2) + 1);
     }), 'ADD_ITEM')
     .appendField(createLogicalGroupActionField('remove', 'Remove case', (field) => {
-      const sourceBlock = field.getSourceBlock() as SwitchGroupBlock | null;
+      const sourceBlock = field.getSourceBlock() as MatchOneOfPatternBlock | null;
 
       if (!sourceBlock) {
         return;
       }
 
-      resizeSwitchGroup(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 1) - 1);
+      resizeMatchOneOfPattern(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 2) - 1);
     }), 'REMOVE_ITEM');
 
-  const itemCount = Math.max(1, block.itemCount_ ?? 1);
+  const itemCount = Math.max(1, block.itemCount_ ?? 2);
 
   for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
-    block.appendValueInput(`MATCH${itemIndex}`)
-      .setCheck('EXPRESSION')
-      .appendField(`case ${itemIndex + 1}`);
-    block.appendValueInput(`RETURN${itemIndex}`)
-      .setCheck('EXPRESSION')
-      .appendField('then');
+    block.appendValueInput(`VALUE${itemIndex}`)
+      .setCheck('LITERAL')
+      .appendField(`value ${itemIndex + 1}`);
   }
-
-  block.appendValueInput('DEFAULT')
-    .setCheck('EXPRESSION')
-    .appendField('default');
 }
 
-function resizeSwitchGroup(block: SwitchGroupBlock, itemCount: number) {
+function resizeMatchOneOfPattern(block: MatchOneOfPatternBlock, itemCount: number) {
   const nextCount = Math.max(1, itemCount);
-  const currentCount = Math.max(1, block.itemCount_ ?? 1);
+  const currentCount = Math.max(1, block.itemCount_ ?? 2);
 
   if (nextCount === currentCount) {
     return;
   }
 
-  const matchConnections = Array.from({ length: currentCount }, (_, index) => (
-    block.getInput(`MATCH${index}`)?.connection?.targetConnection ?? null
+  const valueConnections = Array.from({ length: currentCount }, (_, index) => (
+    block.getInput(`VALUE${index}`)?.connection?.targetConnection ?? null
   ));
-  const returnConnections = Array.from({ length: currentCount }, (_, index) => (
-    block.getInput(`RETURN${index}`)?.connection?.targetConnection ?? null
-  ));
-  const defaultConnection = block.getInput('DEFAULT')?.connection?.targetConnection ?? null;
 
   for (let index = nextCount; index < currentCount; index += 1) {
-    matchConnections[index]?.disconnect();
-    returnConnections[index]?.disconnect();
+    valueConnections[index]?.disconnect();
   }
-
-  defaultConnection?.disconnect();
 
   block.itemCount_ = nextCount;
   block.updateShape_?.();
 
-  const reconnectCount = Math.min(nextCount, matchConnections.length);
+  const reconnectCount = Math.min(nextCount, valueConnections.length);
 
   for (let index = 0; index < reconnectCount; index += 1) {
-    matchConnections[index]?.reconnect(block, `MATCH${index}`);
-    returnConnections[index]?.reconnect(block, `RETURN${index}`);
+    valueConnections[index]?.reconnect(block, `VALUE${index}`);
   }
 
-  defaultConnection?.reconnect(block, 'DEFAULT');
+  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
+    (block as Blockly.BlockSvg).render();
+  }
+}
+
+function updateMatchRangePatternShape(block: MatchRangePatternBlock) {
+  const lowerOperator = normalizeMatchRangeLowerOperator(block.getFieldValue('LOWER_OPERATOR'));
+  const upperOperator = normalizeMatchRangeUpperOperator(block.getFieldValue('UPPER_OPERATOR'));
+
+  block.getInput('LOWER_VALUE')?.setVisible(lowerOperator !== 'none');
+  block.getInput('UPPER_VALUE')?.setVisible(upperOperator !== 'none');
 
   if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
     (block as Blockly.BlockSvg).render();
@@ -11675,45 +12341,85 @@ describe('block-based workflow authoring', () => {
     expect(blockTypes).toContain(BLOCK_TYPES.toBooleanFunction);
   });
 
-  it('reconstructs switch function trees with dynamic case inputs', () => {
+  it('reconstructs match expression trees with literal, one-of, range, guarded, and wildcard patterns', () => {
     const workflow: Workflow = {
       version: 2,
-      workflowId: 'wf_switch_roundtrip',
-      name: 'Switch roundtrip',
+      workflowId: 'wf_match_roundtrip',
+      name: 'Match roundtrip',
       steps: [
         {
-          id: 'step_switch_status',
+          id: 'step_match_status',
           type: 'deriveColumn',
           newColumn: {
             columnId: 'col_status_label',
             displayName: 'status_label',
           },
-          expression: call(
-            'switch',
-            column('col_status'),
-            literal('active'),
-            literal('A'),
-            literal('inactive'),
-            literal('I'),
-            literal('other'),
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              {
+                pattern: matchLiteral('active'),
+                then: literal('A'),
+              },
+              {
+                pattern: matchOneOf('inactive', 'disabled'),
+                when: call('equals', column('col_region'), literal('west')),
+                then: literal('I'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_match_priority',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'priority_score',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchRange({ gte: 0, lte: 200 }),
+                then: literal(2),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal(1),
+              },
+            ],
           ),
         },
       ],
     };
 
-    const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_status_label'], workflow);
+    const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_region', 'col_balance', 'col_status_label', 'col_priority_score'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
-    const switchBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.switchFunction);
+    const matchBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.matchExpression);
+    const matchCaseBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchCaseItem);
+    const oneOfPatternBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.matchOneOfPattern);
+    const rangePatternBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchRangePattern);
+    const wildcardPatternBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchWildcardPattern);
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
-    expect(switchBlock).toBeTruthy();
-    expect(switchBlock?.getInput('TARGET')).toBeTruthy();
-    expect(switchBlock?.getInput('MATCH0')).toBeTruthy();
-    expect(switchBlock?.getInput('RETURN0')).toBeTruthy();
-    expect(switchBlock?.getInput('MATCH1')).toBeTruthy();
-    expect(switchBlock?.getInput('RETURN1')).toBeTruthy();
-    expect(switchBlock?.getInput('DEFAULT')).toBeTruthy();
+    expect(matchBlock).toBeTruthy();
+    expect(matchBlock?.getInput('SUBJECT')).toBeTruthy();
+    expect(matchBlock?.getInput('CASES')).toBeTruthy();
+    expect(matchCaseBlocks.length).toBeGreaterThanOrEqual(3);
+    expect(oneOfPatternBlock).toBeTruthy();
+    expect(oneOfPatternBlock?.getInput('VALUE0')).toBeTruthy();
+    expect(oneOfPatternBlock?.getInput('VALUE1')).toBeTruthy();
+    expect(rangePatternBlocks).toHaveLength(2);
+    expect(wildcardPatternBlocks.length).toBeGreaterThanOrEqual(2);
   });
 
   it('reconstructs arithmetic and rounding function trees', () => {
@@ -12705,6 +13411,9 @@ function column(columnId: string): WorkflowExpression {
   };
 }
 
+type MatchCase = Extract<WorkflowExpression, { kind: 'match' }>['cases'][number];
+type MatchPattern = MatchCase['pattern'];
+
 function call(
   name:
     | 'now'
@@ -12736,7 +13445,6 @@ function call(
     | 'first'
     | 'last'
     | 'coalesce'
-    | 'switch'
     | 'concat'
     | 'equals'
     | 'contains'
@@ -12755,6 +13463,46 @@ function call(
     kind: 'call',
     name,
     args,
+  };
+}
+
+function match(subject: WorkflowExpression, cases: MatchCase[]): WorkflowExpression {
+  return {
+    kind: 'match',
+    subject,
+    cases,
+  };
+}
+
+function matchLiteral(value: string | number | boolean | null): MatchPattern {
+  return {
+    kind: 'literal',
+    value,
+  };
+}
+
+function matchOneOf(...values: Array<string | number | boolean | null>): MatchPattern {
+  return {
+    kind: 'oneOf',
+    values,
+  };
+}
+
+function matchRange(bounds: {
+  gt?: string | number | boolean;
+  gte?: string | number | boolean;
+  lt?: string | number | boolean;
+  lte?: string | number | boolean;
+}): MatchPattern {
+  return {
+    kind: 'range',
+    ...bounds,
+  };
+}
+
+function matchWildcard(): MatchPattern {
+  return {
+    kind: 'wildcard',
   };
 }
 
@@ -13492,6 +14240,58 @@ function readOptionalExpression(block: Blockly.Block, inputName: string): { expr
   return readExpression(expressionBlock);
 }
 
+function readRequiredLiteralExpression(
+  block: Blockly.Block,
+  inputName: string,
+): { value: string | number | boolean | null } | { issue: EditorIssue } {
+  const expression = readRequiredExpression(block, inputName);
+
+  if ('issue' in expression) {
+    return expression;
+  }
+
+  if (expression.expression.kind !== 'literal') {
+    return {
+      issue: {
+        code: 'invalidLiteralPatternValue',
+        message: `Block '${block.type}' requires a literal value for '${inputName}'.`,
+        blockId: block.getInputTargetBlock(inputName)?.id ?? block.id,
+        blockType: block.getInputTargetBlock(inputName)?.type ?? block.type,
+      },
+    };
+  }
+
+  return {
+    value: expression.expression.value,
+  };
+}
+
+function readRequiredNonNullLiteralExpression(
+  block: Blockly.Block,
+  inputName: string,
+): { value: string | number | boolean } | { issue: EditorIssue } {
+  const literal = readRequiredLiteralExpression(block, inputName);
+
+  if ('issue' in literal) {
+    return literal;
+  }
+
+  if (literal.value === null) {
+    return {
+      issue: {
+        code: 'invalidNonNullLiteralPatternValue',
+        message: `Block '${block.type}' requires a non-null literal for '${inputName}'.`,
+        blockId: block.getInputTargetBlock(inputName)?.id ?? block.id,
+        blockType: block.getInputTargetBlock(inputName)?.type ?? block.type,
+      },
+    };
+  }
+
+  return {
+    value: literal.value,
+  };
+}
+
 function readAuthoringCellPatchActions(
   block: Blockly.Block,
   inputName: string,
@@ -13693,6 +14493,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return { expression: { kind: 'literal', value: null } };
     case BLOCK_TYPES.columnExpression:
       return { expression: { kind: 'column', columnId: getFieldString(block, 'COLUMN_ID') } };
+    case BLOCK_TYPES.matchExpression:
+      return readMatchExpression(block);
     case BLOCK_TYPES.trimFunction:
       return readUnaryCall(block, 'trim');
     case BLOCK_TYPES.lowerFunction:
@@ -13803,8 +14605,6 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readFixedArityCall(block, getFieldString(block, 'OPERATOR') as 'round' | 'floor' | 'ceil' | 'abs', ['INPUT']);
     case BLOCK_TYPES.coalesceFunction:
       return readFixedArityCall(block, 'coalesce', ['FIRST', 'SECOND']);
-    case BLOCK_TYPES.switchFunction:
-      return readSwitchExpression(block);
     case BLOCK_TYPES.concatFunction:
       return readConcatCall(block);
     case BLOCK_TYPES.arithmeticFunction:
@@ -13866,7 +14666,6 @@ function readFixedArityCall(
     | 'modulo'
     | 'coalesce'
     | 'concat'
-    | 'switch'
     | 'trim'
     | 'lower'
     | 'upper'
@@ -13910,48 +14709,215 @@ function readFixedArityCall(
   };
 }
 
-function readSwitchExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
-  const target = readRequiredExpression(block, 'TARGET');
+function readMatchExpression(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
+  const subject = readRequiredExpression(block, 'SUBJECT');
 
-  if ('issue' in target) {
-    return target;
+  if ('issue' in subject) {
+    return subject;
   }
 
-  const args: WorkflowExpression[] = [target.expression];
-  let index = 0;
+  const matchCases = readRequiredMatchCases(block, 'CASES');
 
-  while (block.getInput(`MATCH${index}`)) {
-    const match = readRequiredExpression(block, `MATCH${index}`);
-
-    if ('issue' in match) {
-      return match;
-    }
-
-    const returnValue = readRequiredExpression(block, `RETURN${index}`);
-
-    if ('issue' in returnValue) {
-      return returnValue;
-    }
-
-    args.push(match.expression, returnValue.expression);
-    index += 1;
+  if ('issue' in matchCases) {
+    return matchCases;
   }
-
-  const defaultResult = readRequiredExpression(block, 'DEFAULT');
-
-  if ('issue' in defaultResult) {
-    return defaultResult;
-  }
-
-  args.push(defaultResult.expression);
 
   return {
     expression: {
-      kind: 'call',
-      name: 'switch',
-      args,
+      kind: 'match',
+      subject: subject.expression,
+      cases: matchCases.cases,
     },
   };
+}
+
+function readRequiredMatchCases(
+  block: Blockly.Block,
+  inputName: string,
+): {
+  cases: Array<{
+    pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+    when?: WorkflowExpression;
+    then: WorkflowExpression;
+  }>;
+} | { issue: EditorIssue } {
+  const firstBlock = block.getInputTargetBlock(inputName);
+
+  if (!firstBlock) {
+    return {
+      issue: missingInputIssue(block, inputName),
+    };
+  }
+
+  const cases: Array<{
+    pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+    when?: WorkflowExpression;
+    then: WorkflowExpression;
+  }> = [];
+  let current: Blockly.Block | null = firstBlock;
+
+  while (current) {
+    if (current.type !== BLOCK_TYPES.matchCaseItem) {
+      return {
+        issue: {
+          code: 'invalidMatchCaseBlock',
+          message: `Block '${block.type}' contains unsupported case block '${current.type}'.`,
+          blockId: current.id,
+          blockType: current.type,
+        },
+      };
+    }
+
+    const pattern = readRequiredMatchPattern(current, 'PATTERN');
+
+    if ('issue' in pattern) {
+      return pattern;
+    }
+
+    const when = readOptionalExpression(current, 'WHEN');
+
+    if ('issue' in when) {
+      return when;
+    }
+
+    const then = readRequiredExpression(current, 'THEN');
+
+    if ('issue' in then) {
+      return then;
+    }
+
+    cases.push({
+      pattern: pattern.pattern,
+      ...(when.expression ? { when: when.expression } : {}),
+      then: then.expression,
+    });
+    current = current.getNextBlock();
+  }
+
+  return { cases };
+}
+
+function readRequiredMatchPattern(
+  block: Blockly.Block,
+  inputName: string,
+): {
+  pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+} | { issue: EditorIssue } {
+  const patternBlock = block.getInputTargetBlock(inputName);
+
+  if (!patternBlock) {
+    return {
+      issue: missingInputIssue(block, inputName),
+    };
+  }
+
+  return readMatchPattern(patternBlock);
+}
+
+function readMatchPattern(
+  block: Blockly.Block,
+): {
+  pattern: Extract<Extract<WorkflowExpression, { kind: 'match' }>['cases'][number], { pattern: unknown }>['pattern'];
+} | { issue: EditorIssue } {
+  switch (block.type) {
+    case BLOCK_TYPES.matchLiteralPattern: {
+      const literal = readRequiredLiteralExpression(block, 'VALUE');
+
+      if ('issue' in literal) {
+        return literal;
+      }
+
+      return {
+        pattern: {
+          kind: 'literal',
+          value: literal.value,
+        },
+      };
+    }
+    case BLOCK_TYPES.matchOneOfPattern: {
+      const values: Array<string | number | boolean | null> = [];
+      let index = 0;
+
+      while (block.getInput(`VALUE${index}`)) {
+        const literal = readRequiredLiteralExpression(block, `VALUE${index}`);
+
+        if ('issue' in literal) {
+          return literal;
+        }
+
+        values.push(literal.value);
+        index += 1;
+      }
+
+      return {
+        pattern: {
+          kind: 'oneOf',
+          values,
+        },
+      };
+    }
+    case BLOCK_TYPES.matchRangePattern: {
+      const lowerOperator = getFieldString(block, 'LOWER_OPERATOR');
+      const upperOperator = getFieldString(block, 'UPPER_OPERATOR');
+      const pattern: {
+        kind: 'range';
+        gt?: string | number | boolean;
+        gte?: string | number | boolean;
+        lt?: string | number | boolean;
+        lte?: string | number | boolean;
+      } = {
+        kind: 'range',
+      };
+
+      if (lowerOperator !== 'none') {
+        const literal = readRequiredNonNullLiteralExpression(block, 'LOWER_VALUE');
+
+        if ('issue' in literal) {
+          return literal;
+        }
+
+        pattern[lowerOperator as 'gt' | 'gte'] = literal.value;
+      }
+
+      if (upperOperator !== 'none') {
+        const literal = readRequiredNonNullLiteralExpression(block, 'UPPER_VALUE');
+
+        if ('issue' in literal) {
+          return literal;
+        }
+
+        pattern[upperOperator as 'lt' | 'lte'] = literal.value;
+      }
+
+      if (lowerOperator === 'none' && upperOperator === 'none') {
+        return {
+          issue: {
+            code: 'missingMatchRangeBound',
+            message: `Block '${block.type}' must define at least one range bound.`,
+            blockId: block.id,
+            blockType: block.type,
+          },
+        };
+      }
+
+      return { pattern };
+    }
+    case BLOCK_TYPES.matchWildcardPattern:
+      return {
+        pattern: {
+          kind: 'wildcard',
+        },
+      };
+    default:
+      return {
+        issue: {
+          code: 'invalidMatchPatternBlock',
+          message: `Block '${block.type}' is not a supported match pattern block.`,
+          blockId: block.id,
+          blockType: block.type,
+        },
+      };
+  }
 }
 
 function readConcatCall(block: Blockly.Block): { expression: WorkflowExpression } | { issue: EditorIssue } {
@@ -14535,12 +15501,104 @@ function createExpressionBlock(workspace: Blockly.Workspace, expression: Workflo
       block.setFieldValue(expression.columnId, 'COLUMN_ID');
       return block;
     }
+    case 'match':
+      return createMatchExpressionBlock(workspace, expression);
     case 'call': {
       const block = createCallBlock(workspace, expression);
       return block;
     }
     default:
       throw new Error(`Unsupported expression kind '${(expression as WorkflowExpression).kind}'.`);
+  }
+}
+
+function createMatchExpressionBlock(
+  workspace: Blockly.Workspace,
+  expression: Extract<WorkflowExpression, { kind: 'match' }>,
+) {
+  const block = createBlock(workspace, BLOCK_TYPES.matchExpression);
+
+  connectValueBlock(block, 'SUBJECT', createExpressionBlock(workspace, expression.subject));
+  connectStatementChain(block, 'CASES', expression.cases.map((matchCase) => createMatchCaseBlock(workspace, matchCase)));
+  return block;
+}
+
+function createMatchCaseBlock(
+  workspace: Blockly.Workspace,
+  matchCase: Extract<WorkflowExpression, { kind: 'match' }>['cases'][number],
+) {
+  const block = createBlock(workspace, BLOCK_TYPES.matchCaseItem);
+
+  connectValueBlock(block, 'PATTERN', createMatchPatternBlock(workspace, matchCase.pattern));
+
+  if (matchCase.when) {
+    connectValueBlock(block, 'WHEN', createExpressionBlock(workspace, matchCase.when));
+  }
+
+  connectValueBlock(block, 'THEN', createExpressionBlock(workspace, matchCase.then));
+  return block;
+}
+
+function createMatchPatternBlock(
+  workspace: Blockly.Workspace,
+  pattern: Extract<WorkflowExpression, { kind: 'match' }>['cases'][number]['pattern'],
+) {
+  switch (pattern.kind) {
+    case 'literal': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchLiteralPattern);
+
+      connectValueBlock(block, 'VALUE', createLiteralBlock(workspace, pattern.value));
+      return block;
+    }
+    case 'oneOf': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchOneOfPattern);
+      const oneOfBlock = block as Blockly.Block & {
+        loadExtraState?: (state: { itemCount?: number }) => void;
+        itemCount_?: number;
+        updateShape_?: () => void;
+      };
+
+      oneOfBlock.loadExtraState?.({ itemCount: Math.max(1, pattern.values.length) });
+
+      if (!oneOfBlock.loadExtraState) {
+        oneOfBlock.itemCount_ = Math.max(1, pattern.values.length);
+        oneOfBlock.updateShape_?.();
+      }
+
+      pattern.values.forEach((value, index) => {
+        connectValueBlock(block, `VALUE${index}`, createLiteralBlock(workspace, value));
+      });
+      return block;
+    }
+    case 'range': {
+      const block = createBlock(workspace, BLOCK_TYPES.matchRangePattern);
+
+      if (pattern.gt !== undefined) {
+        block.setFieldValue('gt', 'LOWER_OPERATOR');
+        connectValueBlock(block, 'LOWER_VALUE', createLiteralBlock(workspace, pattern.gt));
+      } else if (pattern.gte !== undefined) {
+        block.setFieldValue('gte', 'LOWER_OPERATOR');
+        connectValueBlock(block, 'LOWER_VALUE', createLiteralBlock(workspace, pattern.gte));
+      } else {
+        block.setFieldValue('none', 'LOWER_OPERATOR');
+      }
+
+      if (pattern.lt !== undefined) {
+        block.setFieldValue('lt', 'UPPER_OPERATOR');
+        connectValueBlock(block, 'UPPER_VALUE', createLiteralBlock(workspace, pattern.lt));
+      } else if (pattern.lte !== undefined) {
+        block.setFieldValue('lte', 'UPPER_OPERATOR');
+        connectValueBlock(block, 'UPPER_VALUE', createLiteralBlock(workspace, pattern.lte));
+      } else {
+        block.setFieldValue('none', 'UPPER_OPERATOR');
+      }
+
+      return block;
+    }
+    case 'wildcard':
+      return createBlock(workspace, BLOCK_TYPES.matchWildcardPattern);
+    default:
+      throw new Error(`Unsupported match pattern kind '${(pattern as { kind: string }).kind}'.`);
   }
 }
 
@@ -14681,32 +15739,6 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
       block.setFieldValue(expression.name, 'OPERATOR');
       connectValueBlock(block, 'FIRST', createExpressionBlock(workspace, expression.args[0]));
       connectValueBlock(block, 'SECOND', createExpressionBlock(workspace, expression.args[1]));
-      return block;
-    }
-    case 'switch': {
-      const block = createBlock(workspace, BLOCK_TYPES.switchFunction);
-      const switchBlock = block as Blockly.Block & {
-        loadExtraState?: (state: { itemCount?: number }) => void;
-        itemCount_?: number;
-        updateShape_?: () => void;
-      };
-      const caseCount = Math.max(1, Math.floor((expression.args.length - 2) / 2));
-
-      if (switchBlock.loadExtraState) {
-        switchBlock.loadExtraState({ itemCount: caseCount });
-      } else {
-        switchBlock.itemCount_ = caseCount;
-        switchBlock.updateShape_?.();
-      }
-
-      connectValueBlock(block, 'TARGET', createExpressionBlock(workspace, expression.args[0]));
-
-      for (let index = 0; index < caseCount; index += 1) {
-        connectValueBlock(block, `MATCH${index}`, createExpressionBlock(workspace, expression.args[1 + (index * 2)]));
-        connectValueBlock(block, `RETURN${index}`, createExpressionBlock(workspace, expression.args[2 + (index * 2)]));
-      }
-
-      connectValueBlock(block, 'DEFAULT', createExpressionBlock(workspace, expression.args[expression.args.length - 1]));
       return block;
     }
     case 'contains':
@@ -15123,6 +16155,16 @@ function collectExpressionColumnIds(expression: WorkflowExpression, columnIds: S
     case 'column':
       columnIds.add(expression.columnId);
       return;
+    case 'match':
+      collectExpressionColumnIds(expression.subject, columnIds);
+      expression.cases.forEach((matchCase) => {
+        if (matchCase.when) {
+          collectExpressionColumnIds(matchCase.when, columnIds);
+        }
+
+        collectExpressionColumnIds(matchCase.then, columnIds);
+      });
+      return;
     case 'call':
       expression.args.forEach((argument) => collectExpressionColumnIds(argument, columnIds));
       return;
@@ -15407,7 +16449,12 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
       { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex predicate text logic binary' },
       { type: BLOCK_TYPES.unaryPredicateFunction, searchText: 'is empty blank null missing predicate unary logic' },
       { type: BLOCK_TYPES.logicalBinaryFunction, searchText: 'and or logical group combine conditions boolean' },
-      { type: BLOCK_TYPES.switchFunction, searchText: 'switch case match default choose branch conditional' },
+      { type: BLOCK_TYPES.matchExpression, searchText: 'match classify bucket branch first matching case exclusive subject' },
+      { type: BLOCK_TYPES.matchCaseItem, searchText: 'match case branch guard then pattern result' },
+      { type: BLOCK_TYPES.matchLiteralPattern, searchText: 'match literal pattern exact value enum' },
+      { type: BLOCK_TYPES.matchOneOfPattern, searchText: 'match one of pattern values enum set list' },
+      { type: BLOCK_TYPES.matchRangePattern, searchText: 'match range pattern between less greater bounds bucket' },
+      { type: BLOCK_TYPES.matchWildcardPattern, searchText: 'match wildcard default fallback underscore _' },
       { type: BLOCK_TYPES.notFunction, searchText: 'not negate boolean invert logical' },
     ],
   },
@@ -18623,6 +19670,9 @@ import type {
   WorkflowExecutionWarning,
   WorkflowExpression,
   WorkflowExpressionValidationResult,
+  WorkflowMatchCase,
+  WorkflowMatchExpression,
+  WorkflowMatchPattern,
   WorkflowRuleCase,
   WorkflowSemanticStepResult,
   WorkflowSemanticValidationResult,
@@ -19169,6 +20219,8 @@ function validateExpression(
     }
     case 'call':
       return validateCallExpression(expression, table, path, stepId, context);
+    case 'match':
+      return validateMatchExpression(expression, table, path, stepId, context);
     default:
       return {
         logicalType: 'unknown',
@@ -19280,6 +20332,227 @@ function scopedRuleRetainsOriginalValueType(step: Extract<WorkflowStep, { type: 
     || !step.defaultPatch?.value
     || (step.cases ?? []).some((ruleCase) => !ruleCase.then.value),
   );
+}
+
+function validateMatchExpression(
+  expression: WorkflowMatchExpression,
+  table: Table,
+  path: string,
+  stepId: string,
+  context: ExpressionContext,
+): WorkflowExpressionValidationResult {
+  const subjectResult = validateExpression(expression.subject, table, `${path}.subject`, stepId, {
+    ...context,
+    allowValueReference: false,
+  });
+  const issues = [...subjectResult.issues];
+
+  if (subjectResult.valueKind !== 'scalar') {
+    issues.push(makeIssue('invalidExpression', `Match subject must resolve to a scalar value.`, `${path}.subject`, stepId));
+  }
+
+  if (expression.cases.length === 0) {
+    issues.push(makeIssue('invalidExpression', `Match expressions require at least one case.`, `${path}.cases`, stepId));
+  }
+
+  let wildcardSeen = false;
+  const thenResults: WorkflowExpressionValidationResult[] = [];
+
+  expression.cases.forEach((matchCase, caseIndex) => {
+    const casePath = `${path}.cases[${caseIndex}]`;
+
+    if (wildcardSeen) {
+      issues.push(makeIssue('invalidExpression', `Match cases after a wildcard case are unreachable.`, casePath, stepId));
+    }
+
+    issues.push(...validateMatchPattern(matchCase.pattern, subjectResult.logicalType, `${casePath}.pattern`, stepId));
+
+    if (matchCase.pattern.kind === 'wildcard') {
+      if (wildcardSeen) {
+        issues.push(makeIssue('invalidExpression', `Match expressions may include at most one wildcard case.`, `${casePath}.pattern`, stepId));
+      }
+
+      wildcardSeen = true;
+
+      if (caseIndex !== expression.cases.length - 1) {
+        issues.push(makeIssue('invalidExpression', `Wildcard match cases must be last.`, `${casePath}.pattern`, stepId));
+      }
+    }
+
+    if (matchCase.when) {
+      issues.push(...validateBooleanExpressionWithContext(matchCase.when, table, `${casePath}.when`, stepId, context));
+    }
+
+    const thenResult = validateExpression(matchCase.then, table, `${casePath}.then`, stepId, context);
+    issues.push(...thenResult.issues);
+
+    if (thenResult.valueKind !== 'scalar') {
+      issues.push(makeIssue('invalidExpression', `Match case results must resolve to a scalar value.`, `${casePath}.then`, stepId));
+    }
+
+    thenResults.push(thenResult);
+  });
+
+  const mergedResultType = mergeLogicalTypes(thenResults.map((result) => result.logicalType));
+
+  if (!mergedResultType.valid) {
+    issues.push(
+      makeIssue(
+        'incompatibleType',
+        `Match case results must resolve to one compatible type.`,
+        path,
+        stepId,
+        { logicalTypes: mergedResultType.logicalTypes },
+      ),
+    );
+  }
+
+  return {
+    logicalType: mergedResultType.logicalType,
+    valueKind: 'scalar',
+    issues,
+  };
+}
+
+function validateMatchPattern(
+  pattern: WorkflowMatchPattern,
+  subjectLogicalType: LogicalType,
+  path: string,
+  stepId: string,
+): WorkflowValidationIssue[] {
+  switch (pattern.kind) {
+    case 'literal':
+      return validateMatchLiteralComparability(pattern.value, subjectLogicalType, path, stepId);
+    case 'oneOf': {
+      const issues: WorkflowValidationIssue[] = [];
+
+      if (pattern.values.length === 0) {
+        issues.push(makeIssue('invalidExpression', `One-of match patterns require at least one literal value.`, `${path}.values`, stepId));
+      }
+
+      pattern.values.forEach((value, index) => {
+        issues.push(...validateMatchLiteralComparability(value, subjectLogicalType, `${path}.values[${index}]`, stepId));
+      });
+
+      return issues;
+    }
+    case 'range':
+      return validateMatchRangePattern(pattern, subjectLogicalType, path, stepId);
+    case 'wildcard':
+      return [];
+    default:
+      return [makeIssue('invalidExpression', `Unsupported match pattern.`, path, stepId)];
+  }
+}
+
+function validateMatchLiteralComparability(
+  value: CellValue,
+  subjectLogicalType: LogicalType,
+  path: string,
+  stepId: string,
+): WorkflowValidationIssue[] {
+  const valueLogicalType = inferLiteralLogicalType(value);
+
+  if (!areComparableEqualityTypes(subjectLogicalType, valueLogicalType)) {
+    return [
+      makeIssue(
+        'incompatibleType',
+        `Match literal patterns must be comparable to the match subject.`,
+        path,
+        stepId,
+        { subjectLogicalType, valueLogicalType },
+      ),
+    ];
+  }
+
+  return [];
+}
+
+function validateMatchRangePattern(
+  pattern: Extract<WorkflowMatchPattern, { kind: 'range' }>,
+  subjectLogicalType: LogicalType,
+  path: string,
+  stepId: string,
+): WorkflowValidationIssue[] {
+  const issues: WorkflowValidationIssue[] = [];
+  const bounds = getMatchRangeBounds(pattern);
+
+  if (bounds.length === 0) {
+    issues.push(makeIssue('invalidExpression', `Range match patterns require at least one bound.`, path, stepId));
+    return issues;
+  }
+
+  if (pattern.gt !== undefined && pattern.gte !== undefined) {
+    issues.push(makeIssue('invalidExpression', `Range match patterns cannot define both 'gt' and 'gte'.`, path, stepId));
+  }
+
+  if (pattern.lt !== undefined && pattern.lte !== undefined) {
+    issues.push(makeIssue('invalidExpression', `Range match patterns cannot define both 'lt' and 'lte'.`, path, stepId));
+  }
+
+  const boundTypes = [...new Set(bounds.map((bound) => inferLiteralLogicalType(bound.value)).filter((logicalType) => logicalType !== 'unknown'))];
+
+  if (boundTypes.some((logicalType) => !isOrderingType(logicalType))) {
+    issues.push(makeIssue('incompatibleType', `Range match bounds must use ordered scalar values.`, path, stepId));
+  }
+
+  if (boundTypes.length > 1) {
+    issues.push(
+      makeIssue(
+        'incompatibleType',
+        `Range match bounds must all use one compatible ordered type.`,
+        path,
+        stepId,
+        { logicalTypes: boundTypes },
+      ),
+    );
+  }
+
+  bounds.forEach((bound) => {
+    const boundLogicalType = inferLiteralLogicalType(bound.value);
+
+    if (!areComparableOrderingTypes(subjectLogicalType, boundLogicalType)) {
+      issues.push(
+        makeIssue(
+          'incompatibleType',
+          `Range match bounds must be comparable to the match subject.`,
+          `${path}.${bound.operator}`,
+          stepId,
+          { subjectLogicalType, boundLogicalType },
+        ),
+      );
+    }
+  });
+
+  const lowerBound = pattern.gt !== undefined
+    ? { value: pattern.gt, exclusive: true }
+    : pattern.gte !== undefined
+      ? { value: pattern.gte, exclusive: false }
+      : null;
+  const upperBound = pattern.lt !== undefined
+    ? { value: pattern.lt, exclusive: true }
+    : pattern.lte !== undefined
+      ? { value: pattern.lte, exclusive: false }
+      : null;
+
+  if (lowerBound && upperBound && isMatchRangeComparableValue(lowerBound.value) && isMatchRangeComparableValue(upperBound.value)) {
+    const comparison = compareExpressionValues(lowerBound.value, upperBound.value);
+
+    if (comparison > 0 || (comparison === 0 && (lowerBound.exclusive || upperBound.exclusive))) {
+      issues.push(makeIssue('invalidExpression', `Range match bounds must define a reachable interval.`, path, stepId));
+    }
+  }
+
+  return issues;
+}
+
+function getMatchRangeBounds(pattern: Extract<WorkflowMatchPattern, { kind: 'range' }>) {
+  return ([
+    pattern.gt !== undefined ? { operator: 'gt' as const, value: pattern.gt } : null,
+    pattern.gte !== undefined ? { operator: 'gte' as const, value: pattern.gte } : null,
+    pattern.lt !== undefined ? { operator: 'lt' as const, value: pattern.lt } : null,
+    pattern.lte !== undefined ? { operator: 'lte' as const, value: pattern.lte } : null,
+  ]).filter((bound): bound is { operator: 'gt' | 'gte' | 'lt' | 'lte'; value: string | number | boolean } => Boolean(bound));
 }
 
 function validateCallExpression(
@@ -19711,80 +20984,6 @@ function validateCallExpression(
           makeIssue(
             'incompatibleType',
             `Function 'coalesce' inputs must resolve to one compatible type.`,
-            path,
-            stepId,
-            { logicalTypes: concreteTypes },
-          ),
-        );
-      }
-
-      return {
-        logicalType: (concreteTypes[0] ?? 'unknown') as LogicalType,
-        valueKind: 'scalar',
-        issues,
-      };
-    }
-    case 'switch': {
-      if (results.length < 4 || results.length % 2 !== 0) {
-        issues.push(
-          makeIssue(
-            'invalidExpression',
-            `Function 'switch' requires an even number of arguments and at least four total arguments.`,
-            path,
-            stepId,
-          ),
-        );
-        return {
-          logicalType: 'unknown',
-          valueKind: 'scalar',
-          issues,
-        };
-      }
-
-      const target = results[0];
-
-      if (target.valueKind !== 'scalar') {
-        issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts a scalar target.`, `${path}.args[0]`, stepId));
-      }
-
-      for (let index = 1; index < results.length - 1; index += 2) {
-        const match = results[index];
-
-        if (match.valueKind !== 'scalar') {
-          issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts scalar match inputs.`, `${path}.args[${index}]`, stepId));
-          continue;
-        }
-
-        if (!areComparableEqualityTypes(target.logicalType, match.logicalType)) {
-          issues.push(
-            makeIssue(
-              'incompatibleType',
-              `Function 'switch' requires the target and every match input to be comparable.`,
-              `${path}.args[${index}]`,
-              stepId,
-            ),
-          );
-        }
-      }
-
-      const branchResults = results.filter((result, index) => index === results.length - 1 || (index >= 2 && index % 2 === 0));
-
-      branchResults.forEach((result, index) => {
-        if (result.valueKind !== 'scalar') {
-          const argIndex = index === branchResults.length - 1 ? results.length - 1 : 2 + (index * 2);
-          issues.push(makeIssue('invalidExpression', `Function 'switch' only accepts scalar result inputs.`, `${path}.args[${argIndex}]`, stepId));
-        }
-      });
-
-      const concreteTypes = [...new Set(branchResults.map((result) => result.logicalType).filter((logicalType) => logicalType !== 'unknown'))];
-
-      if (concreteTypes.includes('mixed')) {
-        issues.push(makeIssue('incompatibleType', `Function 'switch' must not include mixed result branches.`, path, stepId));
-      } else if (concreteTypes.length > 1) {
-        issues.push(
-          makeIssue(
-            'incompatibleType',
-            `Function 'switch' result branches must resolve to one compatible type.`,
             path,
             stepId,
             { logicalTypes: concreteTypes },
@@ -20549,8 +21748,76 @@ function evaluateExpression(expression: WorkflowExpression, context: ExpressionE
       return context.row.cellsByColumnId[expression.columnId] ?? null;
     case 'call':
       return evaluateCallExpression(expression, context);
+    case 'match':
+      return evaluateMatchExpression(expression, context);
     default:
       return null;
+  }
+}
+
+function evaluateMatchExpression(expression: WorkflowMatchExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
+  const subjectValue = evaluateExpression(expression.subject, context);
+
+  for (const matchCase of expression.cases) {
+    if (!evaluateMatchPattern(matchCase.pattern, subjectValue)) {
+      continue;
+    }
+
+    if (matchCase.when && !Boolean(evaluateExpression(matchCase.when, context))) {
+      continue;
+    }
+
+    return evaluateExpression(matchCase.then, context);
+  }
+
+  return null;
+}
+
+function evaluateMatchPattern(pattern: WorkflowMatchPattern, subjectValue: ExpressionRuntimeValue) {
+  if (Array.isArray(subjectValue)) {
+    return false;
+  }
+
+  switch (pattern.kind) {
+    case 'literal':
+      return Object.is(subjectValue, pattern.value);
+    case 'oneOf':
+      return pattern.values.some((value) => Object.is(subjectValue, value));
+    case 'range': {
+      if (!isMatchRangeComparableValue(subjectValue)) {
+        return false;
+      }
+
+      if (pattern.gt !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.gt) || compareExpressionValues(subjectValue, pattern.gt) <= 0) {
+          return false;
+        }
+      }
+
+      if (pattern.gte !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.gte) || compareExpressionValues(subjectValue, pattern.gte) < 0) {
+          return false;
+        }
+      }
+
+      if (pattern.lt !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.lt) || compareExpressionValues(subjectValue, pattern.lt) >= 0) {
+          return false;
+        }
+      }
+
+      if (pattern.lte !== undefined) {
+        if (!isMatchRangeComparableValue(pattern.lte) || compareExpressionValues(subjectValue, pattern.lte) > 0) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+    case 'wildcard':
+      return true;
+    default:
+      return false;
   }
 }
 
@@ -20836,17 +22103,6 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       }
 
       return evaluateExpression(expression.args[1], context);
-    }
-    case 'switch': {
-      const target = evaluateExpression(expression.args[0], context);
-
-      for (let index = 1; index < expression.args.length - 1; index += 2) {
-        if (Object.is(target, evaluateExpression(expression.args[index], context))) {
-          return evaluateExpression(expression.args[index + 1], context);
-        }
-      }
-
-      return evaluateExpression(expression.args[expression.args.length - 1], context);
     }
     case 'concat':
       return expression.args
@@ -21482,6 +22738,10 @@ function compareExpressionValues(left: CellValue, right: CellValue) {
   return 0;
 }
 
+function isMatchRangeComparableValue(value: CellValue) {
+  return typeof value === 'number' || typeof value === 'string';
+}
+
 function compareSortValues(left: CellValue, right: CellValue, logicalType: LogicalType) {
   if (left === null && right === null) {
     return 0;
@@ -21785,7 +23045,6 @@ export type WorkflowExpressionFunctionName =
   | 'first'
   | 'last'
   | 'coalesce'
-  | 'switch'
   | 'concat'
   | 'equals'
   | 'contains'
@@ -21803,7 +23062,8 @@ export type WorkflowExpression =
   | WorkflowValueExpression
   | WorkflowLiteralExpression
   | WorkflowColumnExpression
-  | WorkflowCallExpression;
+  | WorkflowCallExpression
+  | WorkflowMatchExpression;
 
 export interface WorkflowValueExpression {
   kind: 'value';
@@ -21823,6 +23083,46 @@ export interface WorkflowCallExpression {
   kind: 'call';
   name: WorkflowExpressionFunctionName;
   args: WorkflowExpression[];
+}
+
+export type WorkflowMatchPattern =
+  | WorkflowMatchLiteralPattern
+  | WorkflowMatchOneOfPattern
+  | WorkflowMatchRangePattern
+  | WorkflowMatchWildcardPattern;
+
+export interface WorkflowMatchLiteralPattern {
+  kind: 'literal';
+  value: WorkflowScalar;
+}
+
+export interface WorkflowMatchOneOfPattern {
+  kind: 'oneOf';
+  values: WorkflowScalar[];
+}
+
+export interface WorkflowMatchRangePattern {
+  kind: 'range';
+  gt?: WorkflowNonNullScalar;
+  gte?: WorkflowNonNullScalar;
+  lt?: WorkflowNonNullScalar;
+  lte?: WorkflowNonNullScalar;
+}
+
+export interface WorkflowMatchWildcardPattern {
+  kind: 'wildcard';
+}
+
+export interface WorkflowMatchCase {
+  pattern: WorkflowMatchPattern;
+  when?: WorkflowExpression;
+  then: WorkflowExpression;
+}
+
+export interface WorkflowMatchExpression {
+  kind: 'match';
+  subject: WorkflowExpression;
+  cases: WorkflowMatchCase[];
 }
 
 export interface WorkflowCellFormatPatch {
@@ -22444,27 +23744,61 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_email).toBeUndefined();
   });
 
-  it('structurally validates switch expressions', () => {
+  it('structurally validates match expressions with literal, one-of, range, guarded, and wildcard cases', () => {
     const workflow = {
       version: 2,
-      workflowId: 'wf_switch_structure',
-      name: 'Switch structure',
+      workflowId: 'wf_match_structure',
+      name: 'Match structure',
       steps: [
         {
-          id: 'step_switch_status',
+          id: 'step_match_status',
           type: 'deriveColumn',
           newColumn: {
             columnId: 'col_status_label',
             displayName: 'status_label',
           },
-          expression: call(
-            'switch',
-            column('col_status'),
-            literal('active'),
-            literal('A'),
-            literal('inactive'),
-            literal('I'),
-            literal('other'),
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              {
+                pattern: matchLiteral('active'),
+                then: literal('A'),
+              },
+              {
+                pattern: matchOneOf('inactive', 'disabled'),
+                when: call('equals', column('col_region'), literal('west')),
+                then: literal('West inactive'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('Other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_match_priority',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'priority_score',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchRange({ gte: 0, lte: 200 }),
+                then: literal(2),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal(1),
+              },
+            ],
           ),
         },
       ],
@@ -23113,28 +24447,62 @@ describe('workflow validation and execution', () => {
     expect(malformedExecution.transformedTable.rowsById.row_1.cellsByColumnId.col_bad_replace).toBe('Order: ORD-1234 (urgent)');
   });
 
-  it('evaluates switch deterministically with ordered cases and a default result', () => {
-    const table = loadCsvTable('status\r\nactive\r\ninactive\r\npending\r\n');
+  it('evaluates match deterministically with literal, one-of, range, guarded, and wildcard cases', () => {
+    const table = loadCsvTable('status,region,balance\r\nactive,west,-5\r\ninactive,west,120\r\npending,east,900\r\n');
     const workflow: Workflow = {
       version: 2,
-      workflowId: 'wf_switch_status_label',
-      name: 'Switch status label',
+      workflowId: 'wf_match_runtime',
+      name: 'Match runtime',
       steps: [
         {
-          id: 'step_switch_status_label',
+          id: 'step_status_label',
           type: 'deriveColumn',
           newColumn: {
             columnId: 'col_status_label',
             displayName: 'status_label',
           },
-          expression: call(
-            'switch',
-            column('col_status'),
-            literal('active'),
-            literal('A'),
-            literal('inactive'),
-            literal('I'),
-            literal('other'),
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              {
+                pattern: matchLiteral('active'),
+                then: literal('Active customer'),
+              },
+              {
+                pattern: matchOneOf('inactive', 'disabled'),
+                when: call('equals', column('col_region'), literal('west')),
+                then: literal('Inactive west customer'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('Other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_priority_score',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'priority_score',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchRange({ gte: 0, lte: 200 }),
+                then: literal(2),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal(1),
+              },
+            ],
           ),
         },
       ],
@@ -23145,9 +24513,119 @@ describe('workflow validation and execution', () => {
 
     expect(validation.valid).toBe(true);
     expect(execution.validationErrors).toEqual([]);
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('A');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status_label).toBe('I');
-    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status_label).toBe('other');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('Active customer');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status_label).toBe('Inactive west customer');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status_label).toBe('Other');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_priority_score).toBe(3);
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_priority_score).toBe(2);
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_priority_score).toBe(1);
+  });
+
+  it('rejects malformed or incompatible match expressions', () => {
+    const table = loadCsvTable('status,balance\r\nactive,100\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_match_invalid',
+      name: 'Match invalid',
+      steps: [
+        {
+          id: 'step_bad_wildcard',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_wildcard',
+            displayName: 'bad_wildcard',
+          },
+          expression: match(
+            column('col_status'),
+            [
+              {
+                pattern: matchWildcard(),
+                then: literal('first'),
+              },
+              {
+                pattern: matchLiteral('active'),
+                then: literal('second'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('third'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_guard',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_guard',
+            displayName: 'bad_guard',
+          },
+          expression: match(
+            column('col_status'),
+            [
+              {
+                pattern: matchLiteral('active'),
+                when: literal('not_boolean'),
+                then: literal('A'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('Other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_result_types',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_result_types',
+            displayName: 'bad_result_types',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('other'),
+              },
+            ],
+          ),
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[0].expression.cases[0].pattern',
+          stepId: 'step_bad_wildcard',
+        }),
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[0].expression.cases[1]',
+          stepId: 'step_bad_wildcard',
+        }),
+        expect.objectContaining({
+          code: 'incompatibleType',
+          path: 'steps[1].expression.cases[0].when',
+          stepId: 'step_bad_guard',
+        }),
+        expect.objectContaining({
+          code: 'incompatibleType',
+          path: 'steps[2].expression',
+          stepId: 'step_bad_result_types',
+        }),
+      ]),
+    );
   });
 
   it('evaluates math functions deterministically and returns null for invalid numeric cases', () => {
@@ -23804,6 +25282,9 @@ function column(columnId: string): WorkflowExpression {
   };
 }
 
+type MatchCase = Extract<WorkflowExpression, { kind: 'match' }>['cases'][number];
+type MatchPattern = MatchCase['pattern'];
+
 function call(
   name:
     | 'now'
@@ -23835,7 +25316,6 @@ function call(
     | 'first'
     | 'last'
     | 'coalesce'
-    | 'switch'
     | 'concat'
     | 'equals'
     | 'contains'
@@ -23854,6 +25334,46 @@ function call(
     kind: 'call',
     name,
     args,
+  };
+}
+
+function match(subject: WorkflowExpression, cases: MatchCase[]): WorkflowExpression {
+  return {
+    kind: 'match',
+    subject,
+    cases,
+  };
+}
+
+function matchLiteral(value: string | number | boolean | null): MatchPattern {
+  return {
+    kind: 'literal',
+    value,
+  };
+}
+
+function matchOneOf(...values: Array<string | number | boolean | null>): MatchPattern {
+  return {
+    kind: 'oneOf',
+    values,
+  };
+}
+
+function matchRange(bounds: {
+  gt?: string | number | boolean;
+  gte?: string | number | boolean;
+  lt?: string | number | boolean;
+  lte?: string | number | boolean;
+}): MatchPattern {
+  return {
+    kind: 'range',
+    ...bounds,
+  };
+}
+
+function matchWildcard(): MatchPattern {
+  return {
+    kind: 'wildcard',
   };
 }
 

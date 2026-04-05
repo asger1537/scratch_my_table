@@ -84,6 +84,7 @@ Workflow IR v2 uses one shared expression AST:
 - `literal`
 - `column`
 - `call`
+- `match`
 
 Rules:
 
@@ -93,6 +94,7 @@ Rules:
 - `column` is valid anywhere row-scoped expressions are evaluated
 - `literal` is always structurally valid
 - `call` must use one supported built-in function name and the correct arity
+- `match` must define one `subject` and a non-empty `cases` array
 - logical checks in `filterRows.condition`, `scopedRule.rowCondition`, and `scopedRule.cases[*].when` are ordinary expressions and must resolve to boolean
 
 Function rules:
@@ -103,9 +105,13 @@ Function rules:
 - `replace`, `replaceRegex`, `dateDiff`, and `dateAdd` require 3 arguments
 - `split`, `atIndex`, `extractRegex`, `coalesce`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `add`, `subtract`, `multiply`, `divide`, `modulo`, and `datePart` require exactly 2 arguments
 - `and`, `or`, and `concat` require at least 2 arguments
-- `switch` requires at least 4 arguments and must have an even number of arguments
 - `split` returns an intermediate list value
 - final `scopedRule` patch values and `deriveColumn` expressions must resolve to scalar cell values
+- `match.subject` must resolve to a scalar value and must not use `value`
+- every `match.cases[*].then` must resolve to a scalar value
+- `match.cases[*].when`, if present, must resolve to boolean
+- `match.cases[*].pattern.kind = wildcard` is optional, but if present it must be unique and last
+- `match.cases[*].pattern.kind = range` requires at least one bound and cannot mix `gt` with `gte` or `lt` with `lte`
 
 Type rules:
 
@@ -125,7 +131,9 @@ Type rules:
 - `round`, `floor`, `ceil`, and `abs` require numeric inputs and return `number`
 - `add`, `subtract`, `multiply`, `divide`, and `modulo` require numeric inputs and return `number`
 - `coalesce` requires scalar inputs with compatible logical types
-- `switch` requires the `target` to be comparable to all `match` inputs. All `result` inputs and the `defaultResult` must resolve to compatible logical types
+- `match` literal and one-of patterns must be comparable to the `subject`
+- `match` range bounds must be comparable to the `subject` and must all use one compatible ordered type
+- `match` case results must resolve to one compatible logical type
 - `concat` accepts scalar inputs and returns `string`
 - `isEmpty` requires a scalar input and returns `boolean`
 - `not` requires a boolean-like input and returns `boolean`

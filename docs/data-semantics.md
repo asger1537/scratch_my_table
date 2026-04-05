@@ -33,6 +33,7 @@ Expression node kinds:
 - `literal`
 - `column`
 - `call`
+- `match`
 
 Rules:
 
@@ -43,6 +44,7 @@ Rules:
 - `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
 - `literal` may be `string`, `number`, `boolean`, or `null`
 - `call` applies one built-in pure function
+- `match` applies ordered exclusive classification over one subject expression
 
 Built-in function semantics:
 
@@ -75,7 +77,7 @@ Built-in function semantics:
 - `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
 - `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
-- `switch(target, match1, result1, ..., defaultResult)`: evaluates `target` and returns the `result` of the first matching `match` value. If no match is found, returns `defaultResult`. Requires an even number of arguments (at least 4).
+- `match(subject, cases)`: evaluates `subject` once and returns the `then` expression from the first case whose pattern matches and whose optional `when` guard is true. Wildcard fallback is optional; if no case matches, the result is `null`.
 - `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
 - `isEmpty(x)`: returns `true` when `x` is `null`, `""`, or a whitespace-only string
 - `equals(a, b)`: exact scalar equality
@@ -109,6 +111,8 @@ Determinism rules:
 - No function mutates other cells, rows, or schema.
 - Workflow IR v2 does not support user-defined functions, loops, or recursion.
 - Explicit casts are the intended way to normalize messy imported values before math, sorting, or boolean logic.
+- `match` is the intended classification and bucketing construct for deriving labels or scores.
+- `scopedRule` remains the cumulative cell-rewrite construct; multiple `scopedRule` cases may apply in sequence to the evolving current cell value.
 
 ## Cell Formatting Semantics
 

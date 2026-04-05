@@ -83,6 +83,7 @@ Expression kinds:
 - `literal`
 - `column`
 - `call`
+- `match`
 
 Rules:
 
@@ -93,6 +94,7 @@ Rules:
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
 - `call` applies one built-in pure function.
+- `match` classifies one subject expression using ordered exclusive cases; the first matching case wins.
 
 Built-in call names:
 
@@ -100,8 +102,17 @@ Built-in call names:
 - casting: `toNumber`, `toString`, `toBoolean`
 - date / time: `now`, `datePart`, `dateDiff`, `dateAdd`
 - math: `round`, `floor`, `ceil`, `abs`, `add`, `subtract`, `multiply`, `divide`, `modulo`
-- list / utility: `split`, `atIndex`, `first`, `last`, `coalesce`, `switch`, `concat`
+- list / utility: `split`, `atIndex`, `first`, `last`, `coalesce`, `concat`
 - logic: `isEmpty`, `equals`, `contains`, `startsWith`, `endsWith`, `matchesRegex`, `greaterThan`, `lessThan`, `and`, `or`, `not`
+
+`match` rules:
+
+- `subject` is evaluated once per row
+- cases are ordered and exclusive; the first matching case wins
+- each case has `pattern`, optional `when`, and `then`
+- pattern kinds are `literal`, `oneOf`, `range`, and `wildcard`
+- `wildcard`, if present, must be unique and last
+- if no case matches and there is no wildcard case, the expression returns `null`
 
 Examples:
 
@@ -175,6 +186,54 @@ Examples:
           "value": "A"
         }
       ]
+    }
+  ]
+}
+```
+
+```json
+{
+  "kind": "match",
+  "subject": {
+    "kind": "call",
+    "name": "toNumber",
+    "args": [
+      {
+        "kind": "column",
+        "columnId": "col_balance"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "pattern": {
+        "kind": "range",
+        "lt": 0
+      },
+      "then": {
+        "kind": "literal",
+        "value": 3
+      }
+    },
+    {
+      "pattern": {
+        "kind": "range",
+        "gte": 0,
+        "lte": 200
+      },
+      "then": {
+        "kind": "literal",
+        "value": 2
+      }
+    },
+    {
+      "pattern": {
+        "kind": "wildcard"
+      },
+      "then": {
+        "kind": "literal",
+        "value": 1
+      }
     }
   ]
 }

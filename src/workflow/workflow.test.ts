@@ -315,27 +315,61 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_email).toBeUndefined();
   });
 
-  it('structurally validates switch expressions', () => {
+  it('structurally validates match expressions with literal, one-of, range, guarded, and wildcard cases', () => {
     const workflow = {
       version: 2,
-      workflowId: 'wf_switch_structure',
-      name: 'Switch structure',
+      workflowId: 'wf_match_structure',
+      name: 'Match structure',
       steps: [
         {
-          id: 'step_switch_status',
+          id: 'step_match_status',
           type: 'deriveColumn',
           newColumn: {
             columnId: 'col_status_label',
             displayName: 'status_label',
           },
-          expression: call(
-            'switch',
-            column('col_status'),
-            literal('active'),
-            literal('A'),
-            literal('inactive'),
-            literal('I'),
-            literal('other'),
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              {
+                pattern: matchLiteral('active'),
+                then: literal('A'),
+              },
+              {
+                pattern: matchOneOf('inactive', 'disabled'),
+                when: call('equals', column('col_region'), literal('west')),
+                then: literal('West inactive'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('Other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_match_priority',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'priority_score',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchRange({ gte: 0, lte: 200 }),
+                then: literal(2),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal(1),
+              },
+            ],
           ),
         },
       ],
@@ -984,28 +1018,62 @@ describe('workflow validation and execution', () => {
     expect(malformedExecution.transformedTable.rowsById.row_1.cellsByColumnId.col_bad_replace).toBe('Order: ORD-1234 (urgent)');
   });
 
-  it('evaluates switch deterministically with ordered cases and a default result', () => {
-    const table = loadCsvTable('status\r\nactive\r\ninactive\r\npending\r\n');
+  it('evaluates match deterministically with literal, one-of, range, guarded, and wildcard cases', () => {
+    const table = loadCsvTable('status,region,balance\r\nactive,west,-5\r\ninactive,west,120\r\npending,east,900\r\n');
     const workflow: Workflow = {
       version: 2,
-      workflowId: 'wf_switch_status_label',
-      name: 'Switch status label',
+      workflowId: 'wf_match_runtime',
+      name: 'Match runtime',
       steps: [
         {
-          id: 'step_switch_status_label',
+          id: 'step_status_label',
           type: 'deriveColumn',
           newColumn: {
             columnId: 'col_status_label',
             displayName: 'status_label',
           },
-          expression: call(
-            'switch',
-            column('col_status'),
-            literal('active'),
-            literal('A'),
-            literal('inactive'),
-            literal('I'),
-            literal('other'),
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              {
+                pattern: matchLiteral('active'),
+                then: literal('Active customer'),
+              },
+              {
+                pattern: matchOneOf('inactive', 'disabled'),
+                when: call('equals', column('col_region'), literal('west')),
+                then: literal('Inactive west customer'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('Other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_priority_score',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'priority_score',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchRange({ gte: 0, lte: 200 }),
+                then: literal(2),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal(1),
+              },
+            ],
           ),
         },
       ],
@@ -1016,9 +1084,119 @@ describe('workflow validation and execution', () => {
 
     expect(validation.valid).toBe(true);
     expect(execution.validationErrors).toEqual([]);
-    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('A');
-    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status_label).toBe('I');
-    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status_label).toBe('other');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_status_label).toBe('Active customer');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_status_label).toBe('Inactive west customer');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_status_label).toBe('Other');
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_priority_score).toBe(3);
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_priority_score).toBe(2);
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_priority_score).toBe(1);
+  });
+
+  it('rejects malformed or incompatible match expressions', () => {
+    const table = loadCsvTable('status,balance\r\nactive,100\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_match_invalid',
+      name: 'Match invalid',
+      steps: [
+        {
+          id: 'step_bad_wildcard',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_wildcard',
+            displayName: 'bad_wildcard',
+          },
+          expression: match(
+            column('col_status'),
+            [
+              {
+                pattern: matchWildcard(),
+                then: literal('first'),
+              },
+              {
+                pattern: matchLiteral('active'),
+                then: literal('second'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('third'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_guard',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_guard',
+            displayName: 'bad_guard',
+          },
+          expression: match(
+            column('col_status'),
+            [
+              {
+                pattern: matchLiteral('active'),
+                when: literal('not_boolean'),
+                then: literal('A'),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('Other'),
+              },
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_result_types',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_result_types',
+            displayName: 'bad_result_types',
+          },
+          expression: match(
+            call('toNumber', column('col_balance')),
+            [
+              {
+                pattern: matchRange({ lt: 0 }),
+                then: literal(3),
+              },
+              {
+                pattern: matchWildcard(),
+                then: literal('other'),
+              },
+            ],
+          ),
+        },
+      ],
+    };
+
+    const validation = validateWorkflowSemantics(workflow, table);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[0].expression.cases[0].pattern',
+          stepId: 'step_bad_wildcard',
+        }),
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[0].expression.cases[1]',
+          stepId: 'step_bad_wildcard',
+        }),
+        expect.objectContaining({
+          code: 'incompatibleType',
+          path: 'steps[1].expression.cases[0].when',
+          stepId: 'step_bad_guard',
+        }),
+        expect.objectContaining({
+          code: 'incompatibleType',
+          path: 'steps[2].expression',
+          stepId: 'step_bad_result_types',
+        }),
+      ]),
+    );
   });
 
   it('evaluates math functions deterministically and returns null for invalid numeric cases', () => {
@@ -1675,6 +1853,9 @@ function column(columnId: string): WorkflowExpression {
   };
 }
 
+type MatchCase = Extract<WorkflowExpression, { kind: 'match' }>['cases'][number];
+type MatchPattern = MatchCase['pattern'];
+
 function call(
   name:
     | 'now'
@@ -1706,7 +1887,6 @@ function call(
     | 'first'
     | 'last'
     | 'coalesce'
-    | 'switch'
     | 'concat'
     | 'equals'
     | 'contains'
@@ -1725,6 +1905,46 @@ function call(
     kind: 'call',
     name,
     args,
+  };
+}
+
+function match(subject: WorkflowExpression, cases: MatchCase[]): WorkflowExpression {
+  return {
+    kind: 'match',
+    subject,
+    cases,
+  };
+}
+
+function matchLiteral(value: string | number | boolean | null): MatchPattern {
+  return {
+    kind: 'literal',
+    value,
+  };
+}
+
+function matchOneOf(...values: Array<string | number | boolean | null>): MatchPattern {
+  return {
+    kind: 'oneOf',
+    values,
+  };
+}
+
+function matchRange(bounds: {
+  gt?: string | number | boolean;
+  gte?: string | number | boolean;
+  lt?: string | number | boolean;
+  lte?: string | number | boolean;
+}): MatchPattern {
+  return {
+    kind: 'range',
+    ...bounds,
+  };
+}
+
+function matchWildcard(): MatchPattern {
+  return {
+    kind: 'wildcard',
   };
 }
 

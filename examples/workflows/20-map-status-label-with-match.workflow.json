@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "workflowId": "wf_map_status_label_with_match",
+  "name": "Map status label with match",
+  "steps": [
+    {
+      "id": "step_map_status_label",
+      "type": "deriveColumn",
+      "newColumn": {
+        "columnId": "col_status_label",
+        "displayName": "status_label"
+      },
+      "expression": {
+        "kind": "match",
+        "subject": {
+          "kind": "call",
+          "name": "lower",
+          "args": [
+            {
+              "kind": "call",
+              "name": "trim",
+              "args": [
+                {
+                  "kind": "column",
+                  "columnId": "col_status"
+                }
+              ]
+            }
+          ]
+        },
+        "cases": [
+          {
+            "pattern": {
+              "kind": "literal",
+              "value": "active"
+            },
+            "then": {
+              "kind": "literal",
+              "value": "current"
+            }
+          },
+          {
+            "pattern": {
+              "kind": "oneOf",
+              "values": ["pending", "queued"]
+            },
+            "then": {
+              "kind": "literal",
+              "value": "review"
+            }
+          },
+          {
+            "pattern": {
+              "kind": "literal",
+              "value": "inactive"
+            },
+            "then": {
+              "kind": "literal",
+              "value": "inactive"
+            }
+          },
+          {
+            "pattern": {
+              "kind": "literal",
+              "value": "suspended"
+            },
+            "then": {
+              "kind": "literal",
+              "value": "blocked"
+            }
+          },
+          {
+            "pattern": {
+              "kind": "wildcard"
+            },
+            "then": {
+              "kind": "literal",
+              "value": "unknown"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
