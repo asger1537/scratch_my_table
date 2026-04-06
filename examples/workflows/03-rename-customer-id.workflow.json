@@ -1,13 +1,23 @@
 {
-  "version": 2,
-  "workflowId": "wf_rename_customer_id",
-  "name": "Rename customer ID",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_rename_customer_id",
+  "workflows": [
     {
-      "id": "step_rename_customer_id",
-      "type": "renameColumn",
-      "columnId": "col_customer_id",
-      "newDisplayName": "external_customer_id"
+      "version": 2,
+      "workflowId": "wf_rename_customer_id",
+      "name": "Rename customer ID",
+      "steps": [
+        {
+          "id": "step_rename_customer_id",
+          "type": "renameColumn",
+          "columnId": "col_customer_id",
+          "newDisplayName": "external_customer_id"
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_rename_customer_id"
   ]
 }

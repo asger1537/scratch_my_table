@@ -1,23 +1,33 @@
 {
-  "version": 2,
-  "workflowId": "wf_split_last_name",
-  "name": "Split last name",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_split_last_name",
+  "workflows": [
     {
-      "id": "step_split_last_name",
-      "type": "splitColumn",
-      "columnId": "col_last_name",
-      "delimiter": " ",
-      "outputColumns": [
+      "version": 2,
+      "workflowId": "wf_split_last_name",
+      "name": "Split last name",
+      "steps": [
         {
-          "columnId": "col_last_name_part_1",
-          "displayName": "last_name_part_1"
-        },
-        {
-          "columnId": "col_last_name_part_2",
-          "displayName": "last_name_part_2"
+          "id": "step_split_last_name",
+          "type": "splitColumn",
+          "columnId": "col_last_name",
+          "delimiter": " ",
+          "outputColumns": [
+            {
+              "columnId": "col_last_name_part_1",
+              "displayName": "last_name_part_1"
+            },
+            {
+              "columnId": "col_last_name_part_2",
+              "displayName": "last_name_part_2"
+            }
+          ]
         }
       ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_split_last_name"
   ]
 }

@@ -1,71 +1,78 @@
 {
-  "version": 2,
-  "workflowId": "wf_derive_initials",
-  "name": "Derive initials",
-  "description": "Create initials from the first letter of first_name and the first letter of the final last_name segment.",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_derive_initials",
+  "workflows": [
     {
-      "id": "step_derive_initials",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_initials",
-        "displayName": "initials"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
+      "version": 2,
+      "workflowId": "wf_derive_initials",
+      "name": "Derive initials",
+      "description": "Create initials from the first letter of first_name and the first letter of the final last_name segment.",
+      "steps": [
+        {
+          "id": "step_derive_initials",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_initials",
+            "displayName": "initials"
+          },
+          "expression": {
             "kind": "call",
-            "name": "upper",
+            "name": "concat",
             "args": [
               {
                 "kind": "call",
-                "name": "first",
+                "name": "upper",
                 "args": [
                   {
                     "kind": "call",
-                    "name": "trim",
+                    "name": "first",
                     "args": [
                       {
-                        "kind": "column",
-                        "columnId": "col_first_name"
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_first_name"
+                          }
+                        ]
                       }
                     ]
                   }
                 ]
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "upper",
-            "args": [
+              },
               {
                 "kind": "call",
-                "name": "first",
+                "name": "upper",
                 "args": [
                   {
                     "kind": "call",
-                    "name": "last",
+                    "name": "first",
                     "args": [
                       {
                         "kind": "call",
-                        "name": "split",
+                        "name": "last",
                         "args": [
                           {
                             "kind": "call",
-                            "name": "trim",
+                            "name": "split",
                             "args": [
                               {
-                                "kind": "column",
-                                "columnId": "col_last_name"
+                                "kind": "call",
+                                "name": "trim",
+                                "args": [
+                                  {
+                                    "kind": "column",
+                                    "columnId": "col_last_name"
+                                  }
+                                ]
+                              },
+                              {
+                                "kind": "literal",
+                                "value": " "
                               }
                             ]
-                          },
-                          {
-                            "kind": "literal",
-                            "value": " "
                           }
                         ]
                       }
@@ -75,8 +82,11 @@
               }
             ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_derive_initials"
   ]
 }

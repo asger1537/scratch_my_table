@@ -7,15 +7,18 @@ import {
   buildDraftPreviewWorkflow,
   buildGeminiRequestExport,
   formatDraftStepsForDebug,
+  mapWorkflowValidationIssueToAIDraftIssue,
   normalizeGeminiModelSelection,
   replaceWorkflowSteps,
   runGeminiDraftTurn,
+  type AIDraftIssue,
   type AIDebugTrace,
   type AIDraft,
   type AIMessage,
   type AIProgressEvent,
   type AISettings,
   type GeminiClientLogEvent,
+  type GeminiRequestExport,
 } from './ai';
 import {
   WorkflowBlockPreview,
@@ -66,8 +69,9 @@ type WorkflowImportMode = 'choice' | 'paste' | 'decision';
 interface WorkflowAIState {
   messages: AIMessage[];
   promptValue: string;
+  lastPromptRequestExport: GeminiRequestExport | null;
   draft: AIDraft | null;
-  draftIssues: WorkflowValidationIssue[];
+  draftIssues: AIDraftIssue[];
   debugTrace: AIDebugTrace | null;
   progressEvents: AIProgressEvent[];
   error: string | null;
@@ -92,6 +96,7 @@ function createEmptyAIState(): WorkflowAIState {
   return {
     messages: [],
     promptValue: '',
+    lastPromptRequestExport: null,
     draft: null,
     draftIssues: [],
     debugTrace: null,
@@ -220,6 +225,7 @@ export default function App() {
       }),
   );
   const canUseAI = Boolean(activeTable && activeWorkflow);
+  const canDownloadAIPrompt = Boolean(canUseAI && (activeAIState.promptValue.trim() !== '' || activeAIState.lastPromptRequestExport));
   const aiUsesLastValidWorkflow = Boolean(activeWorkflow && activeEditorIssues.length > 0);
   const aiWorkflowIssueNotice = activeWorkflowIssues.length === 0
     ? null
@@ -799,12 +805,38 @@ export default function App() {
       currentTabState.editorIssues,
       currentTabState.editorIssues.length > 0 ? [] : currentTabState.validationIssues,
     );
+    const requestExport = buildGeminiRequestExport({
+      settings: {
+        apiKey: aiSettings.apiKey.trim(),
+        model: selectedAIModel,
+        thinkingEnabled: aiSettings.thinkingEnabled,
+      },
+      context: {
+        table: activeTable,
+        workflow: activeWorkflow,
+        draft: currentAIState.draft,
+        messages: currentAIState.messages,
+        currentIssues: currentIssues.map((issue) => ({
+          code: issue.code,
+          message: issue.message,
+        })),
+        workflowContextSource: currentTabState.editorIssues.length === 0 ? 'current' : 'lastValidSnapshot',
+        workspacePromptSnapshot: currentTabState.workspacePromptSnapshot,
+      },
+      userMessage: {
+        role: 'user',
+        text: userText,
+        timestamp: new Date().toISOString(),
+      },
+      phase: 'initial',
+    });
 
     updateWorkflowAIState(activeWorkflowId, (state) => ({
       ...state,
       isLoading: true,
       error: null,
       progressEvents: [],
+      lastPromptRequestExport: requestExport,
     }));
     const turnId = createAITurnId();
     const turnStartedAt = Date.now();
@@ -952,7 +984,7 @@ export default function App() {
       if (issues.length > 0) {
         updateWorkflowAIState(activeWorkflowId, (state) => ({
           ...state,
-          draftIssues: issues,
+          draftIssues: issues.map(mapWorkflowValidationIssueToAIDraftIssue),
           error: 'The current draft no longer validates against the latest workflow context.',
           isLoading: false,
         }));
@@ -1017,39 +1049,40 @@ export default function App() {
     const currentAIState = currentTabState.aiState;
     const userText = currentAIState.promptValue.trim();
 
-    if (userText === '') {
+    const requestExport = userText === ''
+      ? currentAIState.lastPromptRequestExport
+      : buildGeminiRequestExport({
+          settings: {
+            apiKey: aiSettings.apiKey.trim(),
+            model: selectedAIModel,
+            thinkingEnabled: aiSettings.thinkingEnabled,
+          },
+          context: {
+            table: activeTable,
+            workflow: activeWorkflow,
+            draft: currentAIState.draft,
+            messages: currentAIState.messages,
+            currentIssues: mergeWorkflowIssues(
+              currentTabState.editorIssues,
+              currentTabState.editorIssues.length > 0 ? [] : currentTabState.validationIssues,
+            ).map((issue) => ({
+              code: issue.code,
+              message: issue.message,
+            })),
+            workflowContextSource: currentTabState.editorIssues.length === 0 ? 'current' : 'lastValidSnapshot',
+            workspacePromptSnapshot: currentTabState.workspacePromptSnapshot,
+          },
+          userMessage: {
+            role: 'user',
+            text: userText,
+            timestamp: new Date().toISOString(),
+          },
+          phase: 'initial',
+        });
+
+    if (!requestExport) {
       return;
     }
-
-    const currentIssues = mergeWorkflowIssues(
-      currentTabState.editorIssues,
-      currentTabState.editorIssues.length > 0 ? [] : currentTabState.validationIssues,
-    );
-    const requestExport = buildGeminiRequestExport({
-      settings: {
-        apiKey: aiSettings.apiKey.trim(),
-        model: selectedAIModel,
-        thinkingEnabled: aiSettings.thinkingEnabled,
-      },
-      context: {
-        table: activeTable,
-        workflow: activeWorkflow,
-        draft: currentAIState.draft,
-        messages: currentAIState.messages,
-        currentIssues: currentIssues.map((issue) => ({
-          code: issue.code,
-          message: issue.message,
-        })),
-        workflowContextSource: currentTabState.editorIssues.length === 0 ? 'current' : 'lastValidSnapshot',
-        workspacePromptSnapshot: currentTabState.workspacePromptSnapshot,
-      },
-      userMessage: {
-        role: 'user',
-        text: userText,
-        timestamp: new Date().toISOString(),
-      },
-      phase: 'initial',
-    });
 
     downloadBlob(
       new Blob([JSON.stringify(requestExport, null, 2)], { type: 'application/json;charset=utf-8' }),
@@ -1409,7 +1442,7 @@ export default function App() {
           aiSettings={aiSettings}
           canApplyDraft={Boolean(activeAIState.draft && activeAIState.draftIssues.length === 0 && activeWorkflow && !activeAIState.isLoading)}
           canDiscardDraft={Boolean(activeAIState.draft || activeAIState.draftIssues.length > 0)}
-          canDownloadPrompt={Boolean(canUseAI && activeAIState.promptValue.trim() !== '')}
+          canDownloadPrompt={canDownloadAIPrompt}
           canSendPrompt={Boolean(canUseAI && activeAIState.promptValue.trim() !== '' && !activeAIState.isLoading)}
           isLoading={activeAIState.isLoading}
           onApplyDraft={() => {
@@ -1984,7 +2017,7 @@ function AIAssistantModal({
 }: {
   aiDraft: AIDraft | null;
   aiDraftDebugJson: string;
-  aiDraftIssues: WorkflowValidationIssue[];
+  aiDraftIssues: AIDraftIssue[];
   aiDraftPreviewWorkflow: Workflow | null;
   aiDebugTrace: AIDebugTrace | null;
   aiProgressEvents: AIProgressEvent[];
@@ -2256,9 +2289,37 @@ function AIAssistantModal({
                   </div>
                 </dl>
                 <div className="ai-debug-trace__section">
+                  <strong>Initial parsed compiler-op response</strong>
+                  <textarea
+                    className="json-viewer ai-debug-trace__viewer"
+                    readOnly
+                    value={`${JSON.stringify(aiDebugTrace.initialResponse, null, 2)}\n`}
+                  />
+                </div>
+                <div className="ai-debug-trace__section">
                   <strong>Initial raw response</strong>
                   <textarea className="json-viewer ai-debug-trace__viewer" readOnly value={aiDebugTrace.initialRawText} />
                 </div>
+                {aiDebugTrace.initialCompiledSteps ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Initial compiled canonical steps</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.initialCompiledSteps, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
+                {aiDebugTrace.initialCompilationIssues.length > 0 ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Initial compiler issues</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.initialCompilationIssues, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
                 {aiDebugTrace.initialValidationIssues.length > 0 ? (
                   <div className="ai-debug-trace__section">
                     <strong>Initial validation issues</strong>
@@ -2271,8 +2332,38 @@ function AIAssistantModal({
                 ) : null}
                 {aiDebugTrace.repairRawText ? (
                   <div className="ai-debug-trace__section">
+                    <strong>Repair parsed compiler-op response</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.repairResponse, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
+                {aiDebugTrace.repairRawText ? (
+                  <div className="ai-debug-trace__section">
                     <strong>Repair raw response</strong>
                     <textarea className="json-viewer ai-debug-trace__viewer" readOnly value={aiDebugTrace.repairRawText} />
+                  </div>
+                ) : null}
+                {aiDebugTrace.repairCompiledSteps ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Repair compiled canonical steps</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.repairCompiledSteps, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
+                {aiDebugTrace.repairCompilationIssues.length > 0 ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Repair compiler issues</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.repairCompilationIssues, null, 2)}\n`}
+                    />
                   </div>
                 ) : null}
                 {aiDebugTrace.repairValidationIssues.length > 0 ? (
@@ -2592,8 +2683,13 @@ function logGeminiClientEvent(turnId: string, event: GeminiClientLogEvent) {
 
   if (event.rawText) {
     console.info(`${prefix}: ${event.message}`, event.rawText);
-  } else if (event.error) {
-    console.warn(`${prefix}: ${event.message}`, event.error);
+  } else if (event.error || event.responseBody || event.requestExport) {
+    console.warn(`${prefix}: ${event.message}`, {
+      ...(event.error ? { error: event.error } : {}),
+      ...(typeof event.statusCode === 'number' ? { statusCode: event.statusCode } : {}),
+      ...(event.responseBody ? { responseBody: event.responseBody } : {}),
+      ...(event.requestExport ? { requestExport: event.requestExport } : {}),
+    });
   } else {
     console.info(`${prefix}: ${event.message}`);
   }
@@ -2608,5 +2704,8 @@ function logGeminiClientEvent(turnId: string, event: GeminiClientLogEvent) {
     ...(event.responseMode ? { responseMode: event.responseMode } : {}),
     ...(event.rawText ? { rawText: event.rawText } : {}),
     ...(event.error ? { error: event.error } : {}),
+    ...(event.requestExport ? { requestExport: event.requestExport } : {}),
+    ...(typeof event.statusCode === 'number' ? { statusCode: event.statusCode } : {}),
+    ...(event.responseBody ? { responseBody: event.responseBody } : {}),
   });
 }

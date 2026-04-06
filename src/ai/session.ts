@@ -1,15 +1,17 @@
 import type { WorkflowValidationIssue } from '../workflow';
 
+import { mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
+import type { GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
 import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
+import type { AIDraftIssue } from './authoringIr';
 import type {
   AIProgressEvent,
   AIDebugTrace,
   AIDraft,
   AIMessage,
   GeminiClientLogEvent,
-  GeminiWorkflowResponse,
   WorkflowStepInput,
   AISettings,
   AIPromptContext,
@@ -30,7 +32,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'clarify';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: GeminiWorkflowResponse;
+      response: GeminiCompilerOpsDraftResponse;
       repaired: false;
       debugTrace: AIDebugTrace;
     }
@@ -38,7 +40,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'draft';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: GeminiWorkflowResponse;
+      response: GeminiCompilerOpsDraftResponse;
       repaired: boolean;
       draft: AIDraft;
       debugTrace: AIDebugTrace;
@@ -47,9 +49,9 @@ export type GeminiDraftTurnOutcome =
       kind: 'invalidDraft';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: GeminiWorkflowResponse;
+      response: GeminiCompilerOpsDraftResponse;
       repaired: boolean;
-      validationIssues: WorkflowValidationIssue[];
+      validationIssues: AIDraftIssue[];
       debugTrace: AIDebugTrace;
     };
 
@@ -75,7 +77,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'clarify',
       userMessage,
-      assistantMessage: createMessage('assistant', initialTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', initialTurn.response.msg),
       response: initialTurn.response,
       repaired: false,
       debugTrace: {
@@ -83,16 +85,19 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         repaired: false,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
+        initialCompilationIssues: [],
         initialValidationIssues: [],
+        repairCompilationIssues: [],
         repairValidationIssues: [],
       },
     };
   }
 
-  emitProgress(options, 'validate_initial', 'Validating initial draft against the current workflow and schema.');
+  emitProgress(options, 'validate_initial', 'Compiling and validating the initial AI draft.');
   const initialValidation = await validateDraftResponse(
     options.context,
-    initialTurn.response.steps ?? [],
+    initialTurn.compilationIssues,
+    initialTurn.compiledSteps,
     options.validateCandidateWorkflow,
   );
   const initialRelevantIssues = selectRelevantValidationIssues(initialValidation.issues);
@@ -102,7 +107,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'draft',
       userMessage,
-      assistantMessage: createMessage('assistant', initialTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', initialTurn.response.msg),
       response: initialTurn.response,
       repaired: false,
       debugTrace: {
@@ -110,13 +115,16 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         repaired: false,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
+        ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
+        initialCompilationIssues: initialTurn.compilationIssues,
         initialValidationIssues: [],
+        repairCompilationIssues: [],
         repairValidationIssues: [],
       },
       draft: {
         steps: initialValidation.steps,
-        assumptions: initialTurn.response.assumptions,
-        assistantMessage: initialTurn.response.assistantMessage,
+        assumptions: initialTurn.response.ass,
+        assistantMessage: initialTurn.response.msg,
         validationIssues: [],
       },
     };
@@ -165,7 +173,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'invalidDraft',
       userMessage,
-      assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', repairTurn.response.msg),
       response: repairTurn.response,
       repaired: true,
       validationIssues: initialRelevantIssues,
@@ -174,18 +182,23 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         repaired: true,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
+        ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
+        initialCompilationIssues: initialTurn.compilationIssues,
         initialValidationIssues: initialRelevantIssues,
         repairRawText: repairTurn.rawText,
         repairResponse: repairTurn.response,
+        ...(repairTurn.compiledSteps ? { repairCompiledSteps: repairTurn.compiledSteps } : {}),
+        repairCompilationIssues: repairTurn.compilationIssues,
         repairValidationIssues: [],
       },
     };
   }
 
-  emitProgress(options, 'validate_repair', 'Validating repaired draft.');
+  emitProgress(options, 'validate_repair', 'Compiling and validating the repaired draft.');
   const repairedValidation = await validateDraftResponse(
     options.context,
-    repairTurn.response.steps ?? [],
+    repairTurn.compilationIssues,
+    repairTurn.compiledSteps,
     options.validateCandidateWorkflow,
   );
   const repairRelevantIssues = selectRelevantValidationIssues(repairedValidation.issues);
@@ -199,7 +212,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'invalidDraft',
       userMessage,
-      assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', repairTurn.response.msg),
       response: repairTurn.response,
       repaired: true,
       validationIssues: repairRelevantIssues,
@@ -208,9 +221,13 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         repaired: true,
         initialRawText: initialTurn.rawText,
         initialResponse: initialTurn.response,
+        ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
+        initialCompilationIssues: initialTurn.compilationIssues,
         initialValidationIssues: initialRelevantIssues,
         repairRawText: repairTurn.rawText,
         repairResponse: repairTurn.response,
+        ...(repairTurn.compiledSteps ? { repairCompiledSteps: repairTurn.compiledSteps } : {}),
+        repairCompilationIssues: repairTurn.compilationIssues,
         repairValidationIssues: repairRelevantIssues,
       },
     };
@@ -220,23 +237,27 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
   return {
     kind: 'draft',
     userMessage,
-    assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
-      response: repairTurn.response,
+    assistantMessage: createMessage('assistant', repairTurn.response.msg),
+    response: repairTurn.response,
+    repaired: true,
+    debugTrace: {
+      outcomeKind: 'draft',
       repaired: true,
-      debugTrace: {
-        outcomeKind: 'draft',
-        repaired: true,
-        initialRawText: initialTurn.rawText,
-        initialResponse: initialTurn.response,
-        initialValidationIssues: initialRelevantIssues,
-        repairRawText: repairTurn.rawText,
-        repairResponse: repairTurn.response,
-        repairValidationIssues: [],
-      },
-      draft: {
-        steps: repairedValidation.steps,
-      assumptions: repairTurn.response.assumptions,
-      assistantMessage: repairTurn.response.assistantMessage,
+      initialRawText: initialTurn.rawText,
+      initialResponse: initialTurn.response,
+      ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
+      initialCompilationIssues: initialTurn.compilationIssues,
+      initialValidationIssues: initialRelevantIssues,
+      repairRawText: repairTurn.rawText,
+      repairResponse: repairTurn.response,
+      ...(repairTurn.compiledSteps ? { repairCompiledSteps: repairTurn.compiledSteps } : {}),
+      repairCompilationIssues: repairTurn.compilationIssues,
+      repairValidationIssues: [],
+    },
+    draft: {
+      steps: repairedValidation.steps,
+      assumptions: repairTurn.response.ass,
+      assistantMessage: repairTurn.response.msg,
       validationIssues: [],
     },
   };
@@ -244,27 +265,35 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
 
 async function validateDraftResponse(
   context: AIPromptContext,
-  stepInputs: WorkflowStepInput[],
+  compilationIssues: AIDraftIssue[],
+  compiledStepInputs: WorkflowStepInput[] | undefined,
   validateCandidateWorkflow: (workflow: AIPromptContext['workflow']) => Promise<WorkflowValidationIssue[]>,
-) {
-  if (stepInputs.length === 0) {
+): Promise<{ steps: ReturnType<typeof assignWorkflowStepIds>; issues: AIDraftIssue[] }> {
+  if (compilationIssues.length > 0 || !compiledStepInputs) {
+    return {
+      steps: [],
+      issues: compilationIssues,
+    };
+  }
+
+  if (compiledStepInputs.length === 0) {
     return {
       steps: [],
       issues: [
         {
           code: 'emptyDraft',
-          severity: 'error' as const,
+          severity: 'error',
           message: 'AI draft responses must include at least one workflow step.',
           path: 'steps',
-          phase: 'semantic' as const,
+          phase: 'authoring',
         },
       ],
     };
   }
 
-  const steps = assignWorkflowStepIds(stepInputs);
+  const steps = assignWorkflowStepIds(compiledStepInputs);
   const candidateWorkflow = replaceWorkflowSteps(context.workflow, steps);
-  const issues = await validateCandidateWorkflow(candidateWorkflow);
+  const issues = (await validateCandidateWorkflow(candidateWorkflow)).map(mapWorkflowValidationIssueToAIDraftIssue);
 
   return {
     steps,
@@ -280,23 +309,34 @@ function createMessage(role: AIMessage['role'], text: string): AIMessage {
   };
 }
 
-function selectRelevantValidationIssues(issues: WorkflowValidationIssue[], limit = 12) {
+function selectRelevantValidationIssues(issues: AIDraftIssue[], limit = 12) {
   if (issues.length <= 1) {
     return issues;
   }
 
+  const authoringIssues = issues.filter((issue) => issue.phase === 'authoring');
   const structuralIssues = issues.filter((issue) => issue.phase === 'structural');
-  const sourceIssues = structuralIssues.length > 0 ? structuralIssues : issues;
+  const sourceIssues = authoringIssues.length > 0 ? authoringIssues : structuralIssues.length > 0 ? structuralIssues : issues;
   const dedupedIssues = dedupeIssues(sourceIssues);
-  const rankedIssues = [...dedupedIssues].sort((left, right) => compareIssues(left, right, structuralIssues.length > 0));
-  const selectedIssues: WorkflowValidationIssue[] = [];
+  const rankedIssues = [...dedupedIssues].sort((left, right) =>
+    compareIssues(left, right, authoringIssues.length === 0 && structuralIssues.length > 0));
+  const selectedIssues: AIDraftIssue[] = [];
 
   for (const issue of rankedIssues) {
-    if (issue.phase === 'structural' && issue.code === 'schema.oneOf' && issue.path === '$' && rankedIssues.some((candidate) => candidate.path !== '$')) {
+    if (
+      issue.phase === 'structural'
+      && issue.code === 'schema.oneOf'
+      && issue.path === '$'
+      && rankedIssues.some((candidate) => candidate.path !== '$')
+    ) {
       continue;
     }
 
-    if (issue.phase === 'structural' && issue.code === 'schema.oneOf' && rankedIssues.some((candidate) => candidate !== issue && isSameOrDescendantPath(candidate.path, issue.path))) {
+    if (
+      issue.phase === 'structural'
+      && issue.code === 'schema.oneOf'
+      && rankedIssues.some((candidate) => candidate !== issue && isSameOrDescendantPath(candidate.path, issue.path))
+    ) {
       continue;
     }
 
@@ -314,7 +354,7 @@ function selectRelevantValidationIssues(issues: WorkflowValidationIssue[], limit
   return selectedIssues.length > 0 ? selectedIssues : dedupedIssues.slice(0, Math.min(limit, dedupedIssues.length));
 }
 
-function dedupeIssues(issues: WorkflowValidationIssue[]) {
+function dedupeIssues(issues: AIDraftIssue[]) {
   const seen = new Set<string>();
 
   return issues.filter((issue) => {
@@ -329,7 +369,7 @@ function dedupeIssues(issues: WorkflowValidationIssue[]) {
   });
 }
 
-function compareIssues(left: WorkflowValidationIssue, right: WorkflowValidationIssue, structuralOnly: boolean) {
+function compareIssues(left: AIDraftIssue, right: AIDraftIssue, structuralOnly: boolean) {
   const leftPriority = getIssuePriority(left, structuralOnly);
   const rightPriority = getIssuePriority(right, structuralOnly);
 
@@ -344,7 +384,29 @@ function compareIssues(left: WorkflowValidationIssue, right: WorkflowValidationI
   return left.path.localeCompare(right.path) || left.message.localeCompare(right.message);
 }
 
-function getIssuePriority(issue: WorkflowValidationIssue, structuralOnly: boolean) {
+function getIssuePriority(issue: AIDraftIssue, structuralOnly: boolean) {
+  if (issue.phase === 'authoring') {
+    switch (issue.code) {
+      case 'authoringMissingField':
+        return 0;
+      case 'authoringInvalidContext':
+        return 1;
+      case 'authoringUnsupportedOp':
+        return 2;
+      case 'authoringInvalidOperandSource':
+        return 3;
+      case 'authoringInvalidMatch':
+      case 'authoringInvalidBetween':
+        return 4;
+      case 'authoringEmptyGroup':
+        return 5;
+      case 'authoringType':
+        return 6;
+      default:
+        return 7;
+    }
+  }
+
   if (structuralOnly) {
     switch (issue.code) {
       case 'schema.type':
@@ -370,18 +432,20 @@ function getIssuePriority(issue: WorkflowValidationIssue, structuralOnly: boolea
   }
 
   switch (issue.code) {
-    case 'missingColumn':
+    case 'emptyDraft':
       return 0;
-    case 'invalidExpression':
+    case 'missingColumn':
       return 1;
-    case 'incompatibleType':
+    case 'invalidExpression':
       return 2;
-    case 'invalidRegex':
+    case 'incompatibleType':
       return 3;
-    case 'duplicateColumnReference':
+    case 'invalidRegex':
       return 4;
-    default:
+    case 'duplicateColumnReference':
       return 5;
+    default:
+      return 6;
   }
 }
 

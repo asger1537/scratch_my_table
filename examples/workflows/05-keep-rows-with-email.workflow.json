@@ -1,41 +1,48 @@
 {
-  "version": 2,
-  "workflowId": "wf_keep_rows_with_email",
-  "name": "Keep rows with email",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_keep_rows_with_email",
+  "workflows": [
     {
-      "id": "step_keep_rows_with_email",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "not",
-        "args": [
-          {
+      "version": 2,
+      "workflowId": "wf_keep_rows_with_email",
+      "name": "Keep rows with email",
+      "steps": [
+        {
+          "id": "step_keep_rows_with_email",
+          "type": "filterRows",
+          "mode": "keep",
+          "condition": {
             "kind": "call",
-            "name": "isEmpty",
+            "name": "not",
             "args": [
               {
                 "kind": "call",
-                "name": "coalesce",
+                "name": "isEmpty",
                 "args": [
                   {
                     "kind": "call",
-                    "name": "trim",
+                    "name": "coalesce",
                     "args": [
                       {
-                        "kind": "column",
-                        "columnId": "col_email"
-                      }
-                    ]
-                  },
-                  {
-                    "kind": "call",
-                    "name": "trim",
-                    "args": [
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_email"
+                          }
+                        ]
+                      },
                       {
-                        "kind": "column",
-                        "columnId": "col_email_2"
+                        "kind": "call",
+                        "name": "trim",
+                        "args": [
+                          {
+                            "kind": "column",
+                            "columnId": "col_email_2"
+                          }
+                        ]
                       }
                     ]
                   }
@@ -43,8 +50,11 @@
               }
             ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_keep_rows_with_email"
   ]
 }

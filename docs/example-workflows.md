@@ -1,6 +1,7 @@
 # Example Workflows
 
 All canonical examples under `examples/workflows/` are runnable against the root workbook `Customers_Messy.xlsx`.
+Each file is an importable single-workflow package JSON file.
 
 Imported `columnId` values for that workbook are:
 
@@ -16,7 +17,7 @@ Imported `columnId` values for that workbook are:
 - `col_balance`
 - `col_vip`
 
-Use the JSON files in `examples/workflows/` as the source of truth. This document is the compact catalog.
+Use the package JSON files in `examples/workflows/` as the source of truth. This document is the compact catalog.
 
 ## 1. Fill Missing Status
 
@@ -116,12 +117,12 @@ Use the JSON files in `examples/workflows/` as the source of truth. This documen
 ## 20. Map Status Labels With Match
 
 - File: `20-map-status-label-with-match.workflow.json`
-- Uses `match(lower(trim(status)), ...)` to map status values to readable labels with ordered literal, one-of, and wildcard cases.
+- Uses `match(lower(trim(status)), ...)` to map status values to readable labels with ordered `when` cases over `caseValue` plus an `otherwise` fallback.
 
 ## 21. Calculate Priority Score
 
 - File: `21-calculate-priority-score.workflow.json`
-- Uses `match(toNumber(balance), ...)` with ordered range buckets to derive a numeric `priority_score`.
+- Derives `priority_score` from `balance`: `3` when the normalized balance is below `0`, `2` when it is between `0` and `200` inclusive, and `1` otherwise.
 
 ## 22. Derive Signup Date Metrics
 

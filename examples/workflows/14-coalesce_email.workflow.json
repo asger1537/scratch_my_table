@@ -1,69 +1,79 @@
 {
-  "version": 2,
-  "workflowId": "wf_fill_email_from_email_2",
-  "name": "Fill missing email from Email (2)",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_fill_email_from_email_2",
+  "workflows": [
     {
-      "id": "step_scoped_rule_1",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_email"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "coalesce",
-          "args": [
-            {
+      "version": 2,
+      "workflowId": "wf_fill_email_from_email_2",
+      "name": "Fill missing email from Email (2)",
+      "steps": [
+        {
+          "id": "step_scoped_rule_1",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_email"
+          ],
+          "defaultPatch": {
+            "value": {
               "kind": "call",
-              "name": "trim",
+              "name": "coalesce",
               "args": [
                 {
-                  "kind": "value"
-                }
-              ]
-            },
-            {
-              "kind": "call",
-              "name": "trim",
-              "args": [
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                },
                 {
-                  "kind": "column",
-                  "columnId": "col_email_2"
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "column",
+                      "columnId": "col_email_2"
+                    }
+                  ]
                 }
               ]
             }
-          ]
-        }
-      }
-    },
-    {
-      "id": "step_filterrows_2",
-      "type": "filterRows",
-      "mode": "drop",
-      "condition": {
-        "kind": "call",
-        "name": "isEmpty",
-        "args": [
-          {
+          }
+        },
+        {
+          "id": "step_filterrows_2",
+          "type": "filterRows",
+          "mode": "drop",
+          "condition": {
             "kind": "call",
-            "name": "trim",
+            "name": "isEmpty",
             "args": [
               {
-                "kind": "column",
-                "columnId": "col_email"
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_email"
+                  }
+                ]
               }
             ]
           }
-        ]
-      }
-    },
-    {
-      "id": "step_dropcolumns_3",
-      "type": "dropColumns",
-      "columnIds": [
-        "col_email_2"
+        },
+        {
+          "id": "step_dropcolumns_3",
+          "type": "dropColumns",
+          "columnIds": [
+            "col_email_2"
+          ]
+        }
       ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_fill_email_from_email_2"
   ]
 }

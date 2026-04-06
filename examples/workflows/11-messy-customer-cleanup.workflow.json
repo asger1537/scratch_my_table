@@ -1,222 +1,232 @@
 {
-  "version": 2,
-  "workflowId": "wf_messy_customer_cleanup",
-  "name": "Messy customer cleanup",
-  "description": "Normalize text, recover missing email from Email (2), fill defaults, remove incomplete rows, and sort for export.",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_messy_customer_cleanup",
+  "workflows": [
     {
-      "id": "step_normalize_email",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_email",
-        "col_email_2"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "lower",
-          "args": [
-            {
-              "kind": "call",
-              "name": "trim",
-              "args": [
-                {
-                  "kind": "value"
-                }
-              ]
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "step_normalize_text_columns",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_first_name",
-        "col_last_name",
-        "col_column",
-        "col_status"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "collapseWhitespace",
-          "args": [
-            {
-              "kind": "call",
-              "name": "trim",
-              "args": [
-                {
-                  "kind": "value"
-                }
-              ]
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "step_fill_email_from_email_2",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_email"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "coalesce",
-          "args": [
-            {
-              "kind": "call",
-              "name": "trim",
-              "args": [
-                {
-                  "kind": "value"
-                }
-              ]
-            },
-            {
-              "kind": "call",
-              "name": "trim",
-              "args": [
-                {
-                  "kind": "column",
-                  "columnId": "col_email_2"
-                }
-              ]
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "step_fill_status",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_status"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "coalesce",
-          "args": [
-            {
-              "kind": "call",
-              "name": "trim",
-              "args": [
-                {
-                  "kind": "value"
-                }
-              ]
-            },
-            {
-              "kind": "literal",
-              "value": "unknown"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "step_full_name",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_full_name",
-        "displayName": "full_name"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
-            "kind": "call",
-            "name": "coalesce",
-            "args": [
-              {
-                "kind": "call",
-                "name": "trim",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_first_name"
-                  }
-                ]
-              },
-              {
-                "kind": "literal",
-                "value": ""
-              }
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": " "
-          },
-          {
-            "kind": "call",
-            "name": "coalesce",
-            "args": [
-              {
-                "kind": "call",
-                "name": "trim",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_last_name"
-                  }
-                ]
-              },
-              {
-                "kind": "literal",
-                "value": ""
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "step_drop_missing_email",
-      "type": "filterRows",
-      "mode": "drop",
-      "condition": {
-        "kind": "call",
-        "name": "isEmpty",
-        "args": [
-          {
-            "kind": "call",
-            "name": "trim",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_email"
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": "step_dedupe_email",
-      "type": "deduplicateRows",
-      "columnIds": [
-        "col_email"
-      ]
-    },
-    {
-      "id": "step_sort_signup",
-      "type": "sortRows",
-      "sorts": [
+      "version": 2,
+      "workflowId": "wf_messy_customer_cleanup",
+      "name": "Messy customer cleanup",
+      "description": "Normalize text, recover missing email from Email (2), fill defaults, remove incomplete rows, and sort for export.",
+      "steps": [
         {
-          "columnId": "col_sign_up_date",
-          "direction": "desc"
+          "id": "step_normalize_email",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_email",
+            "col_email_2"
+          ],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "lower",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
         },
         {
-          "columnId": "col_last_name",
-          "direction": "asc"
+          "id": "step_normalize_text_columns",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_first_name",
+            "col_last_name",
+            "col_column",
+            "col_status"
+          ],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "collapseWhitespace",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "step_fill_email_from_email_2",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_email"
+          ],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "coalesce",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                },
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "column",
+                      "columnId": "col_email_2"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "step_fill_status",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_status"
+          ],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "coalesce",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                },
+                {
+                  "kind": "literal",
+                  "value": "unknown"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "step_full_name",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_full_name",
+            "displayName": "full_name"
+          },
+          "expression": {
+            "kind": "call",
+            "name": "concat",
+            "args": [
+              {
+                "kind": "call",
+                "name": "coalesce",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_first_name"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": ""
+                  }
+                ]
+              },
+              {
+                "kind": "literal",
+                "value": " "
+              },
+              {
+                "kind": "call",
+                "name": "coalesce",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_last_name"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "step_drop_missing_email",
+          "type": "filterRows",
+          "mode": "drop",
+          "condition": {
+            "kind": "call",
+            "name": "isEmpty",
+            "args": [
+              {
+                "kind": "call",
+                "name": "trim",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_email"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "step_dedupe_email",
+          "type": "deduplicateRows",
+          "columnIds": [
+            "col_email"
+          ]
+        },
+        {
+          "id": "step_sort_signup",
+          "type": "sortRows",
+          "sorts": [
+            {
+              "columnId": "col_sign_up_date",
+              "direction": "desc"
+            },
+            {
+              "columnId": "col_last_name",
+              "direction": "asc"
+            }
+          ]
         }
       ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_messy_customer_cleanup"
   ]
 }

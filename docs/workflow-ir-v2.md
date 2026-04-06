@@ -82,6 +82,7 @@ Expression kinds:
 - `value`
 - `literal`
 - `column`
+- `caseValue`
 - `call`
 - `match`
 
@@ -90,6 +91,8 @@ Rules:
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`.
   During `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied.
 - `value` is represented exactly as `{ "kind": "value" }`.
+- `caseValue` means the already-evaluated `match.subject` result and is valid only inside `match.cases[*].when`.
+- `caseValue` is represented exactly as `{ "kind": "caseValue" }`.
 - `null` is represented as `{ "kind": "literal", "value": null }`.
 - `literal` returns a scalar value.
 - `column` reads one existing column by `columnId` from the current row.
@@ -109,16 +112,22 @@ Built-in call names:
 
 - `subject` is evaluated once per row
 - cases are ordered and exclusive; the first matching case wins
-- each case has `pattern`, optional `when`, and `then`
-- pattern kinds are `literal`, `oneOf`, `range`, and `wildcard`
-- `wildcard`, if present, must be unique and last
-- if no case matches and there is no wildcard case, the expression returns `null`
+- each case is either a `when` case with `when` and `then`, or an `otherwise` case with `then`
+- `when` conditions use the shared expression AST and may reference `{ "kind": "caseValue" }`
+- `otherwise`, if present, must be unique and last
+- if no case matches and there is no `otherwise` case, the expression returns `null`
 
 Examples:
 
 ```json
 {
   "kind": "value"
+}
+```
+
+```json
+{
+  "kind": "caseValue"
 }
 ```
 
@@ -206,9 +215,19 @@ Examples:
   },
   "cases": [
     {
-      "pattern": {
-        "kind": "range",
-        "lt": 0
+      "kind": "when",
+      "when": {
+        "kind": "call",
+        "name": "lessThan",
+        "args": [
+          {
+            "kind": "caseValue"
+          },
+          {
+            "kind": "literal",
+            "value": 0
+          }
+        ]
       },
       "then": {
         "kind": "literal",
@@ -216,10 +235,76 @@ Examples:
       }
     },
     {
-      "pattern": {
-        "kind": "range",
-        "gte": 0,
-        "lte": 200
+      "kind": "when",
+      "when": {
+        "kind": "call",
+        "name": "and",
+        "args": [
+          {
+            "kind": "call",
+            "name": "or",
+            "args": [
+              {
+                "kind": "call",
+                "name": "greaterThan",
+                "args": [
+                  {
+                    "kind": "caseValue"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": 0
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "caseValue"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": 0
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "call",
+            "name": "or",
+            "args": [
+              {
+                "kind": "call",
+                "name": "lessThan",
+                "args": [
+                  {
+                    "kind": "caseValue"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": 200
+                  }
+                ]
+              },
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "caseValue"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": 200
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "then": {
         "kind": "literal",
@@ -227,9 +312,7 @@ Examples:
       }
     },
     {
-      "pattern": {
-        "kind": "wildcard"
-      },
+      "kind": "otherwise",
       "then": {
         "kind": "literal",
         "value": 1

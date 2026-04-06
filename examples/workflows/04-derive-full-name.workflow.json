@@ -1,65 +1,75 @@
 {
-  "version": 2,
-  "workflowId": "wf_derive_full_name",
-  "name": "Create full name",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_derive_full_name",
+  "workflows": [
     {
-      "id": "step_derive_full_name",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_full_name",
-        "displayName": "full_name"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "concat",
-        "args": [
-          {
+      "version": 2,
+      "workflowId": "wf_derive_full_name",
+      "name": "Create full name",
+      "steps": [
+        {
+          "id": "step_derive_full_name",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_full_name",
+            "displayName": "full_name"
+          },
+          "expression": {
             "kind": "call",
-            "name": "coalesce",
+            "name": "concat",
             "args": [
               {
                 "kind": "call",
-                "name": "trim",
+                "name": "coalesce",
                 "args": [
                   {
-                    "kind": "column",
-                    "columnId": "col_first_name"
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_first_name"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": ""
                   }
                 ]
               },
               {
                 "kind": "literal",
-                "value": ""
-              }
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": " "
-          },
-          {
-            "kind": "call",
-            "name": "coalesce",
-            "args": [
-              {
-                "kind": "call",
-                "name": "trim",
-                "args": [
-                  {
-                    "kind": "column",
-                    "columnId": "col_last_name"
-                  }
-                ]
+                "value": " "
               },
               {
-                "kind": "literal",
-                "value": ""
+                "kind": "call",
+                "name": "coalesce",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_last_name"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": ""
+                  }
+                ]
               }
             ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_derive_full_name"
   ]
 }

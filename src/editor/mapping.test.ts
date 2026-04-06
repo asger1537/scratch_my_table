@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { importCsvWorkbook } from '../domain/csv';
 import { getActiveTable, type Table } from '../domain/model';
 import { executeWorkflow, type Workflow, type WorkflowExpression } from '../workflow';
+import { parseWorkflowPackageJson } from '../workflowPackage';
 
 import { type AuthoringWorkflow, authoringWorkflowToWorkflow, workflowToAuthoringWorkflow } from './authoring';
 import { wrapCommentDisplayLines } from './FieldCommentInput';
@@ -25,6 +26,7 @@ import {
   workspaceToAuthoringWorkflow,
   workspaceToWorkflow,
 } from './index';
+import { WORKFLOW_TOOLBOX_CATEGORIES } from './toolbox';
 
 describe('block-based workflow authoring', () => {
   it('loads a simple scoped rule as one compact step block with nested function blocks', async () => {
@@ -528,7 +530,7 @@ describe('block-based workflow authoring', () => {
     expect(blockTypes).toContain(BLOCK_TYPES.toBooleanFunction);
   });
 
-  it('reconstructs match expression trees with literal, one-of, range, guarded, and wildcard patterns', () => {
+  it('reconstructs match expression trees with caseValue, when cases, and otherwise fallback', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_match_roundtrip',
@@ -544,19 +546,23 @@ describe('block-based workflow authoring', () => {
           expression: match(
             call('lower', call('trim', column('col_status'))),
             [
-              {
-                pattern: matchLiteral('active'),
-                then: literal('A'),
-              },
-              {
-                pattern: matchOneOf('inactive', 'disabled'),
-                when: call('equals', column('col_region'), literal('west')),
-                then: literal('I'),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal('other'),
-              },
+              matchWhen(
+                call('equals', caseValue(), literal('active')),
+                literal('A'),
+              ),
+              matchWhen(
+                call(
+                  'and',
+                  call(
+                    'or',
+                    call('equals', caseValue(), literal('inactive')),
+                    call('equals', caseValue(), literal('disabled')),
+                  ),
+                  call('equals', column('col_region'), literal('west')),
+                ),
+                literal('I'),
+              ),
+              matchOtherwise(literal('other')),
             ],
           ),
         },
@@ -570,18 +576,27 @@ describe('block-based workflow authoring', () => {
           expression: match(
             call('toNumber', column('col_balance')),
             [
-              {
-                pattern: matchRange({ lt: 0 }),
-                then: literal(3),
-              },
-              {
-                pattern: matchRange({ gte: 0, lte: 200 }),
-                then: literal(2),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal(1),
-              },
+              matchWhen(
+                call('lessThan', caseValue(), literal(0)),
+                literal(3),
+              ),
+              matchWhen(
+                call(
+                  'and',
+                  call(
+                    'or',
+                    call('greaterThan', caseValue(), literal(0)),
+                    call('equals', caseValue(), literal(0)),
+                  ),
+                  call(
+                    'or',
+                    call('lessThan', caseValue(), literal(200)),
+                    call('equals', caseValue(), literal(200)),
+                  ),
+                ),
+                literal(2),
+              ),
+              matchOtherwise(literal(1)),
             ],
           ),
         },
@@ -591,22 +606,22 @@ describe('block-based workflow authoring', () => {
     const workspace = buildWorkspaceFromColumnIds(['col_status', 'col_region', 'col_balance', 'col_status_label', 'col_priority_score'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
     const matchBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.matchExpression);
-    const matchCaseBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchCaseItem);
-    const oneOfPatternBlock = workspace.getAllBlocks(false).find((block) => block.type === BLOCK_TYPES.matchOneOfPattern);
-    const rangePatternBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchRangePattern);
-    const wildcardPatternBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchWildcardPattern);
+    const matchWhenBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchWhenCaseItem);
+    const matchOtherwiseBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.matchOtherwiseCaseItem);
+    const caseValueBlocks = workspace.getAllBlocks(false).filter((block) => block.type === BLOCK_TYPES.caseValueExpression);
+    const caseValueToolboxEntry = WORKFLOW_TOOLBOX_CATEGORIES
+      .flatMap((category) => category.entries)
+      .find((entry) => entry.type === BLOCK_TYPES.caseValueExpression);
 
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
     expect(matchBlock).toBeTruthy();
     expect(matchBlock?.getInput('SUBJECT')).toBeTruthy();
     expect(matchBlock?.getInput('CASES')).toBeTruthy();
-    expect(matchCaseBlocks.length).toBeGreaterThanOrEqual(3);
-    expect(oneOfPatternBlock).toBeTruthy();
-    expect(oneOfPatternBlock?.getInput('VALUE0')).toBeTruthy();
-    expect(oneOfPatternBlock?.getInput('VALUE1')).toBeTruthy();
-    expect(rangePatternBlocks).toHaveLength(2);
-    expect(wildcardPatternBlocks.length).toBeGreaterThanOrEqual(2);
+    expect(matchWhenBlocks).toHaveLength(4);
+    expect(matchOtherwiseBlocks).toHaveLength(2);
+    expect(caseValueBlocks.length).toBeGreaterThanOrEqual(6);
+    expect(caseValueToolboxEntry?.searchText).toContain('case value');
   });
 
   it('reconstructs arithmetic and rounding function trees', () => {
@@ -876,12 +891,13 @@ describe('block-based workflow authoring', () => {
       .sort();
 
     for (const fileName of exampleFiles) {
-      const parsed = parseWorkflowJson(await readFile(path.join(exampleDir, fileName), 'utf8'));
+      const parsed = parseWorkflowPackageJson(await readFile(path.join(exampleDir, fileName), 'utf8'));
 
       expect(parsed.issues, fileName).toEqual([]);
-      expect(parsed.workflow, fileName).not.toBeNull();
+      expect(parsed.workflowPackage, fileName).not.toBeNull();
+      expect(parsed.workflowPackage?.workflows, fileName).toHaveLength(1);
 
-      const workflow = parsed.workflow!;
+      const workflow = parsed.workflowPackage!.workflows[0];
       const workspace = buildWorkspaceFromColumnIds(collectWorkflowColumnIds(workflow), workflow);
       const roundtrip = workspaceToWorkflow(workspace);
 
@@ -1599,7 +1615,6 @@ function column(columnId: string): WorkflowExpression {
 }
 
 type MatchCase = Extract<WorkflowExpression, { kind: 'match' }>['cases'][number];
-type MatchPattern = MatchCase['pattern'];
 
 function call(
   name:
@@ -1661,35 +1676,24 @@ function match(subject: WorkflowExpression, cases: MatchCase[]): WorkflowExpress
   };
 }
 
-function matchLiteral(value: string | number | boolean | null): MatchPattern {
+function caseValue(): WorkflowExpression {
   return {
-    kind: 'literal',
-    value,
+    kind: 'caseValue',
   };
 }
 
-function matchOneOf(...values: Array<string | number | boolean | null>): MatchPattern {
+function matchWhen(when: WorkflowExpression, then: WorkflowExpression): MatchCase {
   return {
-    kind: 'oneOf',
-    values,
+    kind: 'when',
+    when,
+    then,
   };
 }
 
-function matchRange(bounds: {
-  gt?: string | number | boolean;
-  gte?: string | number | boolean;
-  lt?: string | number | boolean;
-  lte?: string | number | boolean;
-}): MatchPattern {
+function matchOtherwise(then: WorkflowExpression): MatchCase {
   return {
-    kind: 'range',
-    ...bounds,
-  };
-}
-
-function matchWildcard(): MatchPattern {
-  return {
-    kind: 'wildcard',
+    kind: 'otherwise',
+    then,
   };
 }
 

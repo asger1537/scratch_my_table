@@ -1,5 +1,8 @@
 import type { Table } from '../domain/model';
-import type { Workflow, WorkflowStep, WorkflowValidationIssue } from '../workflow';
+import type { Workflow, WorkflowStep } from '../workflow';
+
+import type { AIDraftIssue } from './authoringIr';
+import type { GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
 
 export type WorkflowStepInput =
   WorkflowStep extends infer Step
@@ -42,33 +45,33 @@ export interface GeminiClientLogEvent {
   message: string;
   rawText?: string;
   error?: string;
+  requestExport?: Record<string, unknown>;
+  statusCode?: number;
+  responseBody?: string;
   responseMode?: 'clarify' | 'draft';
   timestamp: string;
-}
-
-export interface GeminiWorkflowResponse {
-  mode: 'clarify' | 'draft';
-  assistantMessage: string;
-  assumptions: string[];
-  steps?: WorkflowStepInput[];
 }
 
 export interface AIDebugTrace {
   outcomeKind: 'clarify' | 'draft' | 'invalidDraft';
   repaired: boolean;
   initialRawText: string;
-  initialResponse: GeminiWorkflowResponse;
-  initialValidationIssues: WorkflowValidationIssue[];
+  initialResponse: GeminiCompilerOpsDraftResponse;
+  initialCompiledSteps?: WorkflowStepInput[];
+  initialCompilationIssues: AIDraftIssue[];
+  initialValidationIssues: AIDraftIssue[];
   repairRawText?: string;
-  repairResponse?: GeminiWorkflowResponse;
-  repairValidationIssues: WorkflowValidationIssue[];
+  repairResponse?: GeminiCompilerOpsDraftResponse;
+  repairCompiledSteps?: WorkflowStepInput[];
+  repairCompilationIssues: AIDraftIssue[];
+  repairValidationIssues: AIDraftIssue[];
 }
 
 export interface AIDraft {
   steps: WorkflowStep[];
   assumptions: string[];
   assistantMessage: string;
-  validationIssues: WorkflowValidationIssue[];
+  validationIssues: AIDraftIssue[];
 }
 
 export interface AIPromptIssue {
@@ -95,6 +98,8 @@ export interface GeminiDraftTurnInput {
 }
 
 export interface GeminiDraftTurnResult {
-  response: GeminiWorkflowResponse;
+  response: GeminiCompilerOpsDraftResponse;
   rawText: string;
+  compiledSteps?: WorkflowStepInput[];
+  compilationIssues: AIDraftIssue[];
 }

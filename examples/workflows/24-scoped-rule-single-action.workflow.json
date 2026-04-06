@@ -1,59 +1,69 @@
 {
-  "version": 2,
-  "workflowId": "wf_scoped_rule_single_action",
-  "name": "Scoped rule single action",
-  "description": "Applies one combined value-and-format patch to VIP status cells.",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_scoped_rule_single_action",
+  "workflows": [
     {
-      "id": "step_vip_status_single_action",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_status"
-      ],
-      "rowCondition": {
-        "kind": "call",
-        "name": "equals",
-        "args": [
-          {
-            "kind": "column",
-            "columnId": "col_vip"
+      "version": 2,
+      "workflowId": "wf_scoped_rule_single_action",
+      "name": "Scoped rule single action",
+      "description": "Applies one combined value-and-format patch to VIP status cells.",
+      "steps": [
+        {
+          "id": "step_vip_status_single_action",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_status"
+          ],
+          "rowCondition": {
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_vip"
+              },
+              {
+                "kind": "literal",
+                "value": true
+              }
+            ]
           },
-          {
-            "kind": "literal",
-            "value": true
-          }
-        ]
-      },
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "coalesce",
-          "args": [
-            {
+          "defaultPatch": {
+            "value": {
               "kind": "call",
-              "name": "lower",
+              "name": "coalesce",
               "args": [
                 {
                   "kind": "call",
-                  "name": "trim",
+                  "name": "lower",
                   "args": [
                     {
-                      "kind": "value"
+                      "kind": "call",
+                      "name": "trim",
+                      "args": [
+                        {
+                          "kind": "value"
+                        }
+                      ]
                     }
                   ]
+                },
+                {
+                  "kind": "literal",
+                  "value": "vip-review"
                 }
               ]
             },
-            {
-              "kind": "literal",
-              "value": "vip-review"
+            "format": {
+              "fillColor": "#fff2cc"
             }
-          ]
-        },
-        "format": {
-          "fillColor": "#fff2cc"
+          }
         }
-      }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_scoped_rule_single_action"
   ]
 }

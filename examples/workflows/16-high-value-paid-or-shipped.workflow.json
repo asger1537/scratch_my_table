@@ -1,135 +1,145 @@
 {
-  "version": 2,
-  "workflowId": "wf_keep_north_or_west_active_or_pending_customers",
-  "name": "Keep north or west customers who are active or pending",
-  "description": "Keep rows where the segment is north or west and the status is active or pending.",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_keep_north_or_west_active_or_pending_customers",
+  "workflows": [
     {
-      "id": "step_keep_north_or_west_active_or_pending_customers",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "and",
-        "args": [
-          {
+      "version": 2,
+      "workflowId": "wf_keep_north_or_west_active_or_pending_customers",
+      "name": "Keep north or west customers who are active or pending",
+      "description": "Keep rows where the segment is north or west and the status is active or pending.",
+      "steps": [
+        {
+          "id": "step_keep_north_or_west_active_or_pending_customers",
+          "type": "filterRows",
+          "mode": "keep",
+          "condition": {
             "kind": "call",
-            "name": "or",
+            "name": "and",
             "args": [
               {
                 "kind": "call",
-                "name": "equals",
+                "name": "or",
                 "args": [
                   {
                     "kind": "call",
-                    "name": "lower",
+                    "name": "equals",
                     "args": [
                       {
                         "kind": "call",
-                        "name": "trim",
+                        "name": "lower",
                         "args": [
                           {
-                            "kind": "column",
-                            "columnId": "col_column"
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_column"
+                              }
+                            ]
                           }
                         ]
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "north"
                       }
                     ]
                   },
                   {
-                    "kind": "literal",
-                    "value": "north"
+                    "kind": "call",
+                    "name": "equals",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "lower",
+                        "args": [
+                          {
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_column"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "west"
+                      }
+                    ]
                   }
                 ]
               },
               {
                 "kind": "call",
-                "name": "equals",
+                "name": "or",
                 "args": [
                   {
                     "kind": "call",
-                    "name": "lower",
+                    "name": "equals",
                     "args": [
                       {
                         "kind": "call",
-                        "name": "trim",
+                        "name": "lower",
                         "args": [
                           {
-                            "kind": "column",
-                            "columnId": "col_column"
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_status"
+                              }
+                            ]
                           }
                         ]
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "active"
                       }
                     ]
                   },
                   {
-                    "kind": "literal",
-                    "value": "west"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "or",
-            "args": [
-              {
-                "kind": "call",
-                "name": "equals",
-                "args": [
-                  {
                     "kind": "call",
-                    "name": "lower",
+                    "name": "equals",
                     "args": [
                       {
                         "kind": "call",
-                        "name": "trim",
+                        "name": "lower",
                         "args": [
                           {
-                            "kind": "column",
-                            "columnId": "col_status"
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_status"
+                              }
+                            ]
                           }
                         ]
-                      }
-                    ]
-                  },
-                  {
-                    "kind": "literal",
-                    "value": "active"
-                  }
-                ]
-              },
-              {
-                "kind": "call",
-                "name": "equals",
-                "args": [
-                  {
-                    "kind": "call",
-                    "name": "lower",
-                    "args": [
+                      },
                       {
-                        "kind": "call",
-                        "name": "trim",
-                        "args": [
-                          {
-                            "kind": "column",
-                            "columnId": "col_status"
-                          }
-                        ]
+                        "kind": "literal",
+                        "value": "pending"
                       }
                     ]
-                  },
-                  {
-                    "kind": "literal",
-                    "value": "pending"
                   }
                 ]
               }
             ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_keep_north_or_west_active_or_pending_customers"
   ]
 }

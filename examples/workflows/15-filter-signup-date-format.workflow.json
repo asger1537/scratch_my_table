@@ -1,27 +1,37 @@
 {
-  "version": 2,
-  "workflowId": "wf_filter_signup_date_format",
-  "name": "Keep rows with sign up date in YYYY-MM-DD format",
-  "description": "Keep only rows whose sign up date exactly matches a date string like 2026-12-08.",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_filter_signup_date_format",
+  "workflows": [
     {
-      "id": "step_filter_signup_date_format",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "matchesRegex",
-        "args": [
-          {
-            "kind": "column",
-            "columnId": "col_sign_up_date"
-          },
-          {
-            "kind": "literal",
-            "value": "^\\d{4}-\\d{2}-\\d{2}$"
+      "version": 2,
+      "workflowId": "wf_filter_signup_date_format",
+      "name": "Keep rows with sign up date in YYYY-MM-DD format",
+      "description": "Keep only rows whose sign up date exactly matches a date string like 2026-12-08.",
+      "steps": [
+        {
+          "id": "step_filter_signup_date_format",
+          "type": "filterRows",
+          "mode": "keep",
+          "condition": {
+            "kind": "call",
+            "name": "matchesRegex",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_sign_up_date"
+              },
+              {
+                "kind": "literal",
+                "value": "^\\d{4}-\\d{2}-\\d{2}$"
+              }
+            ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_filter_signup_date_format"
   ]
 }

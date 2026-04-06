@@ -1,20 +1,30 @@
 {
-  "version": 2,
-  "workflowId": "wf_combine_contact_emails",
-  "name": "Create contact emails column",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_combine_contact_emails",
+  "workflows": [
     {
-      "id": "step_combine_contact_emails",
-      "type": "combineColumns",
-      "columnIds": [
-        "col_email",
-        "col_email_2"
-      ],
-      "separator": " | ",
-      "newColumn": {
-        "columnId": "col_contact_emails",
-        "displayName": "contact_emails"
-      }
+      "version": 2,
+      "workflowId": "wf_combine_contact_emails",
+      "name": "Create contact emails column",
+      "steps": [
+        {
+          "id": "step_combine_contact_emails",
+          "type": "combineColumns",
+          "columnIds": [
+            "col_email",
+            "col_email_2"
+          ],
+          "separator": " | ",
+          "newColumn": {
+            "columnId": "col_contact_emails",
+            "displayName": "contact_emails"
+          }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_combine_contact_emails"
   ]
 }

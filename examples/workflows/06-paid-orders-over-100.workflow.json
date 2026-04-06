@@ -1,90 +1,100 @@
 {
-  "version": 2,
-  "workflowId": "wf_keep_active_or_pending_vips",
-  "name": "Keep active or pending VIP customers",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_keep_active_or_pending_vips",
+  "workflows": [
     {
-      "id": "step_keep_active_or_pending_vips",
-      "type": "filterRows",
-      "mode": "keep",
-      "condition": {
-        "kind": "call",
-        "name": "and",
-        "args": [
-          {
+      "version": 2,
+      "workflowId": "wf_keep_active_or_pending_vips",
+      "name": "Keep active or pending VIP customers",
+      "steps": [
+        {
+          "id": "step_keep_active_or_pending_vips",
+          "type": "filterRows",
+          "mode": "keep",
+          "condition": {
             "kind": "call",
-            "name": "equals",
-            "args": [
-              {
-                "kind": "column",
-                "columnId": "col_vip"
-              },
-              {
-                "kind": "literal",
-                "value": true
-              }
-            ]
-          },
-          {
-            "kind": "call",
-            "name": "or",
+            "name": "and",
             "args": [
               {
                 "kind": "call",
                 "name": "equals",
                 "args": [
                   {
-                    "kind": "call",
-                    "name": "lower",
-                    "args": [
-                      {
-                        "kind": "call",
-                        "name": "trim",
-                        "args": [
-                          {
-                            "kind": "column",
-                            "columnId": "col_status"
-                          }
-                        ]
-                      }
-                    ]
+                    "kind": "column",
+                    "columnId": "col_vip"
                   },
                   {
                     "kind": "literal",
-                    "value": "active"
+                    "value": true
                   }
                 ]
               },
               {
                 "kind": "call",
-                "name": "equals",
+                "name": "or",
                 "args": [
                   {
                     "kind": "call",
-                    "name": "lower",
+                    "name": "equals",
                     "args": [
                       {
                         "kind": "call",
-                        "name": "trim",
+                        "name": "lower",
                         "args": [
                           {
-                            "kind": "column",
-                            "columnId": "col_status"
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_status"
+                              }
+                            ]
                           }
                         ]
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "active"
                       }
                     ]
                   },
                   {
-                    "kind": "literal",
-                    "value": "pending"
+                    "kind": "call",
+                    "name": "equals",
+                    "args": [
+                      {
+                        "kind": "call",
+                        "name": "lower",
+                        "args": [
+                          {
+                            "kind": "call",
+                            "name": "trim",
+                            "args": [
+                              {
+                                "kind": "column",
+                                "columnId": "col_status"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "kind": "literal",
+                        "value": "pending"
+                      }
+                    ]
                   }
                 ]
               }
             ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_keep_active_or_pending_vips"
   ]
 }

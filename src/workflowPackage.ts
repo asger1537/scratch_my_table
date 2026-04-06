@@ -250,6 +250,22 @@ export function parseWorkflowPackageJson(text: string): WorkflowPackageValidatio
 }
 
 export function validateWorkflowPackageStructure(candidate: unknown): WorkflowPackageValidationResult {
+  if (looksLikeStandaloneWorkflow(candidate)) {
+    return {
+      valid: false,
+      issues: [
+        {
+          code: 'standaloneWorkflowNotSupported',
+          severity: 'error',
+          message:
+            'This JSON is a standalone workflow, not a workflow package. Import workflow(s) accepts package JSON with version, type "workflowPackage", activeWorkflowId, workflows, and runOrderWorkflowIds.',
+          path: '$',
+          phase: 'structural',
+        },
+      ],
+    };
+  }
+
   const schemaValid = validateWorkflowPackageSchema(candidate);
   const issues: WorkflowValidationIssue[] = [];
 
@@ -466,4 +482,16 @@ function normalizeWorkflowId(workflowId: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function looksLikeStandaloneWorkflow(candidate: unknown) {
+  if (!isRecord(candidate)) {
+    return false;
+  }
+
+  if ('workflows' in candidate || 'activeWorkflowId' in candidate || 'runOrderWorkflowIds' in candidate) {
+    return false;
+  }
+
+  return validateWorkflowStructure(candidate).valid;
 }

@@ -1,5 +1,6 @@
+import { compileGeminiCompilerOpsDraft, type GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
 import { buildGeminiContents, buildGeminiSystemInstruction } from './prompt';
-import type { GeminiClientLogEvent, GeminiDraftTurnInput, GeminiDraftTurnResult, GeminiWorkflowResponse } from './types';
+import type { GeminiClientLogEvent, GeminiDraftTurnInput, GeminiDraftTurnResult } from './types';
 
 interface GeminiGenerateContentResponse {
   candidates?: Array<{
@@ -23,6 +24,27 @@ type GeminiThinkingConfig =
       thinkingLevel: 'minimal' | 'high';
     };
 
+class GeminiRequestFailureError extends Error {
+  statusCode?: number;
+  responseBody?: string;
+  requestExport?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    options: {
+      statusCode?: number;
+      responseBody?: string;
+      requestExport?: Record<string, unknown>;
+    } = {},
+  ) {
+    super(message);
+    this.name = 'GeminiRequestFailureError';
+    this.statusCode = options.statusCode;
+    this.responseBody = options.responseBody;
+    this.requestExport = options.requestExport;
+  }
+}
+
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 export const GEMINI_MODEL_OPTIONS = [
   {
@@ -42,7 +64,6 @@ const GEMINI_MODEL_OPTION_VALUES = new Set<string>(GEMINI_MODEL_OPTIONS.map((opt
 const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
 const GEMINI_MAX_OUTPUT_TOKENS = 4096;
 const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
-const GEMINI_FALLBACK_RESPONSE_JSON_SCHEMA = buildGeminiFallbackResponseJsonSchema();
 
 interface BuildGeminiRequestExportOptions {
   responseJsonSchema?: GeminiResponseJsonSchema;
@@ -78,97 +99,77 @@ export async function generateGeminiDraftTurn(
   const timeoutId = setTimeout(() => {
     abortController.abort();
   }, GEMINI_REQUEST_TIMEOUT_MS);
-  const requestAttempts: Array<{
-    schema: GeminiResponseJsonSchema;
-    variant: 'primary' | 'fallback';
-  }> = [
-    {
-      schema: GEMINI_RESPONSE_JSON_SCHEMA,
-      variant: 'primary',
-    },
-    {
-      schema: GEMINI_FALLBACK_RESPONSE_JSON_SCHEMA,
-      variant: 'fallback',
-    },
-  ];
 
   try {
-    for (const attempt of requestAttempts) {
-      const requestExport = buildGeminiRequestExport(input, {
-        responseJsonSchema: attempt.schema,
-      });
+    const requestExport = buildGeminiRequestExport(input, {
+      responseJsonSchema: GEMINI_RESPONSE_JSON_SCHEMA,
+    });
+    const loggedRequestExport = requestExport as unknown as Record<string, unknown>;
 
-      try {
-        emitLogEvent(
-          input,
-          'request_started',
-          attempt.variant === 'primary'
-            ? 'Gemini request started.'
-            : 'Gemini request started with fallback schema after primary schema complexity failure.',
-        );
-        const response = await fetchFn(requestExport.requestUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': input.settings.apiKey,
-          },
-          body: JSON.stringify(requestExport.requestBody),
-          signal: abortController.signal,
-        });
-        const payload = parseGeminiHttpResponseBody(await response.text());
+    emitLogEvent(input, 'request_started', 'Gemini request started.', {
+      requestExport: loggedRequestExport,
+    });
 
-        if (!response.ok) {
-          const errorMessage = payload.error?.message ?? `Gemini request failed with status ${response.status}.`;
+    const response = await fetchFn(requestExport.requestUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': input.settings.apiKey,
+      },
+      body: JSON.stringify(requestExport.requestBody),
+      signal: abortController.signal,
+    });
+    const rawResponseBody = await response.text();
+    let payload: GeminiGenerateContentResponse;
 
-          if (
-            attempt.variant === 'primary'
-            && response.status === 400
-            && isGeminiSchemaComplexityError(errorMessage)
-          ) {
-            emitLogEvent(input, 'request_failed', errorMessage, {
-              error: errorMessage,
-            });
-            continue;
-          }
-
-          throw new Error(errorMessage);
-        }
-
-        const rawText = extractGeminiText(payload);
-        emitLogEvent(input, 'response_received', 'Gemini response body received.', {
-          rawText,
-        });
-        const parsed = parseGeminiWorkflowResponse(rawText);
-        emitLogEvent(input, 'response_parsed', `Gemini response parsed in mode "${parsed.mode}".`, {
-          rawText,
-          responseMode: parsed.mode,
-        });
-
-        return {
-          response: parsed,
-          rawText,
-        };
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          throw error;
-        }
-
-        if (
-          attempt.variant === 'primary'
-          && error instanceof Error
-          && isGeminiSchemaComplexityError(error.message)
-        ) {
-          emitLogEvent(input, 'request_failed', error.message, {
-            error: error.message,
-          });
-          continue;
-        }
-
-        throw error;
-      }
+    try {
+      payload = parseGeminiHttpResponseBody(rawResponseBody);
+    } catch (error) {
+      throw new GeminiRequestFailureError(
+        error instanceof Error ? error.message : 'Gemini returned an invalid HTTP response body.',
+        {
+          statusCode: response.status,
+          responseBody: rawResponseBody,
+          requestExport: loggedRequestExport,
+        },
+      );
     }
 
-    throw new Error('Gemini request failed after retrying with the fallback schema.');
+    if (!response.ok) {
+      const errorMessage = payload.error?.message ?? `Gemini request failed with status ${response.status}.`;
+      throw new GeminiRequestFailureError(errorMessage, {
+        statusCode: response.status,
+        responseBody: rawResponseBody,
+        requestExport: loggedRequestExport,
+      });
+    }
+
+    const rawText = extractGeminiText(payload);
+    emitLogEvent(input, 'response_received', 'Gemini response body received.', {
+      rawText,
+    });
+    const parsed = parseGeminiCompilerOpsResponse(rawText);
+    emitLogEvent(input, 'response_parsed', `Gemini response parsed in mode "${parsed.mode}".`, {
+      rawText,
+      responseMode: parsed.mode,
+    });
+
+    if (parsed.mode !== 'draft') {
+      return {
+        response: parsed,
+        rawText,
+        compilationIssues: [],
+      };
+    }
+
+    const compiled = compileGeminiCompilerOpsDraft(parsed.ops);
+
+    return {
+      response: parsed,
+      rawText,
+      ...(compiled.value ? { compiledSteps: compiled.value } : {}),
+      compilationIssues: compiled.issues,
+    };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       const timeoutMessage = `Gemini request timed out after ${Math.floor(GEMINI_REQUEST_TIMEOUT_MS / 1000)} seconds.`;
@@ -181,6 +182,9 @@ export async function generateGeminiDraftTurn(
 
     emitLogEvent(input, 'request_failed', error instanceof Error ? error.message : 'Gemini request failed.', {
       error: error instanceof Error ? error.message : 'Gemini request failed.',
+      ...(error instanceof GeminiRequestFailureError && error.requestExport ? { requestExport: error.requestExport } : {}),
+      ...(error instanceof GeminiRequestFailureError && typeof error.statusCode === 'number' ? { statusCode: error.statusCode } : {}),
+      ...(error instanceof GeminiRequestFailureError && typeof error.responseBody === 'string' ? { responseBody: error.responseBody } : {}),
     });
     throw error;
   } finally {
@@ -212,7 +216,7 @@ export function buildGeminiRequestExport(
       generationConfig: {
         responseMimeType: 'application/json',
         responseJsonSchema: options.responseJsonSchema ?? GEMINI_RESPONSE_JSON_SCHEMA,
-        temperature: 0.2,
+        temperature: 0,
         maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
         ...(thinkingConfig ? { thinkingConfig } : {}),
       },
@@ -220,47 +224,43 @@ export function buildGeminiRequestExport(
   };
 }
 
-export function parseGeminiWorkflowResponse(rawText: string): GeminiWorkflowResponse {
+export function parseGeminiCompilerOpsResponse(rawText: string): GeminiCompilerOpsDraftResponse {
   const parsed = JSON.parse(stripJsonCodeFence(rawText)) as Record<string, unknown>;
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error('Gemini returned an invalid workflow response.');
+    throw new Error('Gemini returned an invalid authoring response.');
   }
 
   const mode = parsed.mode;
-  const assistantMessage = parsed.assistantMessage;
-  const assumptions = parsed.assumptions;
-  const steps = parsed.steps;
+  const msg = parsed.msg;
+  const ass = parsed.ass;
+  const ops = parsed.ops;
 
   if (mode !== 'clarify' && mode !== 'draft') {
     throw new Error('Gemini response must include mode "clarify" or "draft".');
   }
 
-  if (typeof assistantMessage !== 'string' || assistantMessage.trim() === '') {
-    throw new Error('Gemini response must include a non-empty assistantMessage string.');
+  if (typeof msg !== 'string' || msg.trim() === '') {
+    throw new Error('Gemini response must include a non-empty msg string.');
   }
 
-  if (!Array.isArray(assumptions) || assumptions.some((value) => typeof value !== 'string')) {
-    throw new Error('Gemini response must include an assumptions string array.');
+  if (!Array.isArray(ass) || ass.some((value) => typeof value !== 'string')) {
+    throw new Error('Gemini response must include ass as a string array.');
   }
 
-  if (mode === 'draft') {
-    if (!Array.isArray(steps)) {
-      throw new Error('Gemini draft responses must include a steps array.');
-    }
+  if (!Array.isArray(ops) || ops.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) {
+    throw new Error('Gemini response must include ops as an object array.');
+  }
 
-    return {
-      mode,
-      assistantMessage,
-      assumptions,
-      steps: steps as GeminiWorkflowResponse['steps'],
-    };
+  if (mode === 'draft' && ops.length === 0) {
+    throw new Error('Gemini draft responses must include a non-empty ops array.');
   }
 
   return {
     mode,
-    assistantMessage,
-    assumptions,
+    msg,
+    ass,
+    ops: ops as GeminiCompilerOpsDraftResponse['ops'],
   };
 }
 
@@ -330,343 +330,185 @@ function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThi
 }
 
 function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
-  return buildGeminiEnvelopeSchema({
-    oneOf: buildGeminiDraftStepSchemas(),
-  });
-}
-
-function buildGeminiFallbackResponseJsonSchema(): GeminiResponseJsonSchema {
-  return buildGeminiEnvelopeSchema({
-    type: 'object',
-    additionalProperties: true,
-  });
-}
-
-function buildGeminiEnvelopeSchema(stepItemsSchema: GeminiResponseJsonSchema): GeminiResponseJsonSchema {
   return {
-    oneOf: [
-      {
+    $id: 'smt-benchmark-compiler-ops-v1',
+    type: 'object',
+    additionalProperties: false,
+    propertyOrdering: ['mode', 'msg', 'ass', 'ops'],
+    properties: {
+      mode: {
+        type: 'string',
+        enum: ['clarify', 'draft'],
+        description: 'Use draft when you can propose ops. Use clarify only when a required choice is missing.',
+      },
+      msg: {
+        type: 'string',
+        description: 'Short plain-language summary.',
+      },
+      ass: {
+        type: 'array',
+        description: 'Assumptions. Return [] when none.',
+        items: {
+          type: 'string',
+        },
+      },
+      ops: {
+        type: 'array',
+        description: 'Ordered compiler-friendly operations. Return [] only when mode is clarify.',
+        items: {
+          $ref: '#/$defs/op',
+        },
+      },
+    },
+    required: ['mode', 'msg', 'ass', 'ops'],
+    $defs: {
+      cid: {
+        type: 'string',
+        description: 'Column id exactly as provided, for example col_email.',
+      },
+      hex: {
+        type: 'string',
+        description: 'Hex fill color such as #ffc7ce.',
+      },
+      newCol: {
         type: 'object',
         additionalProperties: false,
+        propertyOrdering: ['id', 'name'],
         properties: {
-          mode: {
+          id: {
             type: 'string',
-            const: 'clarify',
+            description: 'New column id.',
           },
-          assistantMessage: {
+          name: {
             type: 'string',
-            minLength: 1,
+            description: 'New display name.',
           },
-          assumptions: {
+        },
+        required: ['id', 'name'],
+      },
+      band: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['lo', 'hi', 'loInc', 'hiInc', 'score'],
+        properties: {
+          lo: {
+            type: ['number', 'null'],
+            description: 'Lower bound. null means no lower bound.',
+          },
+          hi: {
+            type: ['number', 'null'],
+            description: 'Upper bound. null means no upper bound.',
+          },
+          loInc: {
+            type: 'boolean',
+            description: 'Whether the lower bound is inclusive.',
+          },
+          hiInc: {
+            type: 'boolean',
+            description: 'Whether the upper bound is inclusive.',
+          },
+          score: {
+            type: 'number',
+            description: 'Score to emit for this band.',
+          },
+        },
+        required: ['lo', 'hi', 'loInc', 'hiInc', 'score'],
+      },
+      fillEmptyFromCol: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'dst', 'src'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['fill_empty_from_col'],
+          },
+          dst: {
+            $ref: '#/$defs/cid',
+          },
+          src: {
+            $ref: '#/$defs/cid',
+          },
+        },
+        required: ['op', 'dst', 'src'],
+      },
+      colorIfEmpty: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'col', 'color'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['color_if_empty'],
+          },
+          col: {
+            $ref: '#/$defs/cid',
+          },
+          color: {
+            $ref: '#/$defs/hex',
+          },
+        },
+        required: ['op', 'col', 'color'],
+      },
+      dropCols: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'cols'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['drop_cols'],
+          },
+          cols: {
             type: 'array',
             items: {
-              type: 'string',
+              $ref: '#/$defs/cid',
             },
           },
         },
-        required: ['mode', 'assistantMessage', 'assumptions'],
+        required: ['op', 'cols'],
       },
-      {
+      deriveScoreBands: {
         type: 'object',
         additionalProperties: false,
+        propertyOrdering: ['op', 'src', 'out', 'bands'],
         properties: {
-          mode: {
+          op: {
             type: 'string',
-            const: 'draft',
+            enum: ['derive_score_bands'],
           },
-          assistantMessage: {
-            type: 'string',
-            minLength: 1,
+          src: {
+            $ref: '#/$defs/cid',
           },
-          assumptions: {
+          out: {
+            $ref: '#/$defs/newCol',
+          },
+          bands: {
             type: 'array',
             items: {
-              type: 'string',
+              $ref: '#/$defs/band',
             },
           },
-          steps: {
-            type: 'array',
-            minItems: 1,
-            items: stepItemsSchema,
-          },
         },
-        required: ['mode', 'assistantMessage', 'assumptions', 'steps'],
+        required: ['op', 'src', 'out', 'bands'],
       },
-    ],
-  };
-}
-
-function buildGeminiDraftStepSchemas(): Array<Record<string, unknown>> {
-  const stringSchema = {
-    type: 'string',
-    minLength: 1,
-  };
-  const stringArraySchema = {
-    type: 'array',
-    minItems: 1,
-    items: stringSchema,
-  };
-  const expressionStubSchema = buildGeminiExpressionStubSchema();
-  const cellPatchSchema = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      value: expressionStubSchema,
-      format: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          fillColor: {
-            type: 'string',
-          },
-        },
+      op: {
+        oneOf: [
+          { $ref: '#/$defs/fillEmptyFromCol' },
+          { $ref: '#/$defs/colorIfEmpty' },
+          { $ref: '#/$defs/dropCols' },
+          { $ref: '#/$defs/deriveScoreBands' },
+        ],
       },
     },
   };
-  const columnSpecSchema = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      columnId: stringSchema,
-      displayName: stringSchema,
-    },
-    required: ['columnId', 'displayName'],
-  };
-  const sortKeySchema = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      columnId: stringSchema,
-      direction: {
-        type: 'string',
-        enum: ['asc', 'desc'],
-      },
-    },
-    required: ['columnId', 'direction'],
-  };
-  const ruleCaseSchema = {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      when: expressionStubSchema,
-      then: cellPatchSchema,
-    },
-    required: ['when', 'then'],
-  };
-
-  return [
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'comment',
-        },
-        text: stringSchema,
-      },
-      required: ['type', 'text'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'scopedRule',
-        },
-        columnIds: stringArraySchema,
-        rowCondition: expressionStubSchema,
-        cases: {
-          type: 'array',
-          minItems: 1,
-          items: ruleCaseSchema,
-        },
-        defaultPatch: cellPatchSchema,
-      },
-      required: ['type', 'columnIds'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'dropColumns',
-        },
-        columnIds: stringArraySchema,
-      },
-      required: ['type', 'columnIds'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'renameColumn',
-        },
-        columnId: stringSchema,
-        newDisplayName: stringSchema,
-      },
-      required: ['type', 'columnId', 'newDisplayName'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'deriveColumn',
-        },
-        newColumn: columnSpecSchema,
-        expression: expressionStubSchema,
-      },
-      required: ['type', 'newColumn', 'expression'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'filterRows',
-        },
-        mode: {
-          type: 'string',
-          enum: ['keep', 'drop'],
-        },
-        condition: expressionStubSchema,
-      },
-      required: ['type', 'mode', 'condition'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'splitColumn',
-        },
-        columnId: stringSchema,
-        delimiter: stringSchema,
-        outputColumns: {
-          type: 'array',
-          minItems: 2,
-          items: columnSpecSchema,
-        },
-      },
-      required: ['type', 'columnId', 'delimiter', 'outputColumns'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'combineColumns',
-        },
-        columnIds: {
-          type: 'array',
-          minItems: 2,
-          items: stringSchema,
-        },
-        separator: {
-          type: 'string',
-        },
-        newColumn: columnSpecSchema,
-      },
-      required: ['type', 'columnIds', 'separator', 'newColumn'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'deduplicateRows',
-        },
-        columnIds: stringArraySchema,
-      },
-      required: ['type', 'columnIds'],
-    },
-    {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        type: {
-          type: 'string',
-          const: 'sortRows',
-        },
-        sorts: {
-          type: 'array',
-          minItems: 1,
-          items: sortKeySchema,
-        },
-      },
-      required: ['type', 'sorts'],
-    },
-  ];
-}
-
-function buildGeminiExpressionStubSchema(): GeminiResponseJsonSchema {
-  return {
-    type: 'object',
-    additionalProperties: true,
-    properties: {
-      kind: {
-        type: 'string',
-        enum: ['value', 'literal', 'column', 'call', 'match'],
-      },
-      value: {
-        type: ['string', 'number', 'boolean', 'null'],
-      },
-      columnId: {
-        type: 'string',
-        minLength: 1,
-      },
-      name: {
-        type: 'string',
-        minLength: 1,
-      },
-      subject: {
-        type: 'object',
-        additionalProperties: true,
-      },
-      cases: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: true,
-        },
-      },
-      args: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: true,
-        },
-      },
-    },
-    required: ['kind'],
-  };
-}
-
-function isGeminiSchemaComplexityError(message: string) {
-  const normalizedMessage = message.toLowerCase();
-
-  return normalizedMessage.includes('flatten schema')
-    || normalizedMessage.includes('schema is too complex')
-    || normalizedMessage.includes('maximum nesting depth')
-    || normalizedMessage.includes('nesting depth')
-    || normalizedMessage.includes('ref loops are only supported');
 }
 
 function emitLogEvent(
   input: GeminiDraftTurnInput,
   kind: GeminiClientLogEvent['kind'],
   message: string,
-  extra: Partial<Pick<GeminiClientLogEvent, 'rawText' | 'error' | 'responseMode'>> = {},
+  extra: Partial<Pick<GeminiClientLogEvent, 'rawText' | 'error' | 'responseMode' | 'requestExport' | 'statusCode' | 'responseBody'>> = {},
 ) {
   input.onLogEvent?.({
     phase: input.phase ?? 'initial',

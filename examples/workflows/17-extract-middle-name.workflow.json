@@ -1,45 +1,55 @@
 {
-  "version": 2,
-  "workflowId": "wf_extract_second_last_name_part",
-  "name": "Extract second last-name part",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_extract_second_last_name_part",
+  "workflows": [
     {
-      "id": "step_extract_second_last_name_part",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_last_name_part_2",
-        "displayName": "last_name_part_2"
-      },
-      "expression": {
-        "kind": "call",
-        "name": "atIndex",
-        "args": [
-          {
+      "version": 2,
+      "workflowId": "wf_extract_second_last_name_part",
+      "name": "Extract second last-name part",
+      "steps": [
+        {
+          "id": "step_extract_second_last_name_part",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_last_name_part_2",
+            "displayName": "last_name_part_2"
+          },
+          "expression": {
             "kind": "call",
-            "name": "split",
+            "name": "atIndex",
             "args": [
               {
                 "kind": "call",
-                "name": "trim",
+                "name": "split",
                 "args": [
                   {
-                    "kind": "column",
-                    "columnId": "col_last_name"
+                    "kind": "call",
+                    "name": "trim",
+                    "args": [
+                      {
+                        "kind": "column",
+                        "columnId": "col_last_name"
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "literal",
+                    "value": " "
                   }
                 ]
               },
               {
                 "kind": "literal",
-                "value": " "
+                "value": 1
               }
             ]
-          },
-          {
-            "kind": "literal",
-            "value": 1
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_extract_second_last_name_part"
   ]
 }

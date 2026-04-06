@@ -1,14 +1,24 @@
 {
-  "version": 2,
-  "workflowId": "wf_deduplicate_email",
-  "name": "Deduplicate by email",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_deduplicate_email",
+  "workflows": [
     {
-      "id": "step_deduplicate_email",
-      "type": "deduplicateRows",
-      "columnIds": [
-        "col_email"
+      "version": 2,
+      "workflowId": "wf_deduplicate_email",
+      "name": "Deduplicate by email",
+      "steps": [
+        {
+          "id": "step_deduplicate_email",
+          "type": "deduplicateRows",
+          "columnIds": [
+            "col_email"
+          ]
+        }
       ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_deduplicate_email"
   ]
 }

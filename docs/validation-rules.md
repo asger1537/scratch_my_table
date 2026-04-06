@@ -83,6 +83,7 @@ Workflow IR v2 uses one shared expression AST:
 - `value`
 - `literal`
 - `column`
+- `caseValue`
 - `call`
 - `match`
 
@@ -90,6 +91,8 @@ Rules:
 
 - `value` is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
 - `value` is represented exactly as `{ "kind": "value" }`
+- `caseValue` is valid only inside `match.cases[*].when`
+- `caseValue` is represented exactly as `{ "kind": "caseValue" }`
 - `null` must be represented as `{ "kind": "literal", "value": null }`
 - `column` is valid anywhere row-scoped expressions are evaluated
 - `literal` is always structurally valid
@@ -107,11 +110,12 @@ Function rules:
 - `and`, `or`, and `concat` require at least 2 arguments
 - `split` returns an intermediate list value
 - final `scopedRule` patch values and `deriveColumn` expressions must resolve to scalar cell values
-- `match.subject` must resolve to a scalar value and must not use `value`
+- `match.subject` must resolve to a scalar value and must not use `value` or `caseValue`
 - every `match.cases[*].then` must resolve to a scalar value
-- `match.cases[*].when`, if present, must resolve to boolean
-- `match.cases[*].pattern.kind = wildcard` is optional, but if present it must be unique and last
-- `match.cases[*].pattern.kind = range` requires at least one bound and cannot mix `gt` with `gte` or `lt` with `lte`
+- `match.cases[*].kind = when` requires `when` and `then`
+- `match.cases[*].kind = otherwise` requires `then` and must not include `when`
+- `match.cases[*].when` must resolve to boolean
+- `match.cases[*].kind = otherwise` is optional, but if present it must be unique and last
 
 Type rules:
 
@@ -131,8 +135,6 @@ Type rules:
 - `round`, `floor`, `ceil`, and `abs` require numeric inputs and return `number`
 - `add`, `subtract`, `multiply`, `divide`, and `modulo` require numeric inputs and return `number`
 - `coalesce` requires scalar inputs with compatible logical types
-- `match` literal and one-of patterns must be comparable to the `subject`
-- `match` range bounds must be comparable to the `subject` and must all use one compatible ordered type
 - `match` case results must resolve to one compatible logical type
 - `concat` accepts scalar inputs and returns `string`
 - `isEmpty` requires a scalar input and returns `boolean`

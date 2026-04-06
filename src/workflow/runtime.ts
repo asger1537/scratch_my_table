@@ -23,7 +23,6 @@ import type {
   WorkflowExpressionValidationResult,
   WorkflowMatchCase,
   WorkflowMatchExpression,
-  WorkflowMatchPattern,
   WorkflowRuleCase,
   WorkflowSemanticStepResult,
   WorkflowSemanticValidationResult,
@@ -52,12 +51,15 @@ interface ExpressionContext {
   runTimestamp: string;
   allowValueReference: boolean;
   valueLogicalType?: LogicalType;
+  allowCaseValueReference?: boolean;
+  caseValueLogicalType?: LogicalType;
 }
 
 interface ExpressionExecutionContext {
   runTimestamp: string;
   row: TableRow;
   currentValue: CellValue;
+  caseValue?: CellValue;
 }
 
 type ExpressionRuntimeValue = CellValue | string[];
@@ -545,6 +547,20 @@ function validateExpression(
         valueKind: 'scalar',
         issues: [],
       };
+    case 'caseValue':
+      if (!context.allowCaseValueReference) {
+        return {
+          logicalType: 'unknown',
+          valueKind: 'scalar',
+          issues: [makeIssue('invalidExpression', `caseValue is only valid inside match case conditions.`, path, stepId)],
+        };
+      }
+
+      return {
+        logicalType: context.caseValueLogicalType ?? 'unknown',
+        valueKind: 'scalar',
+        issues: [],
+      };
     case 'literal':
       return {
         logicalType: inferLiteralLogicalType(expression.value),
@@ -585,6 +601,7 @@ function validateBooleanExpression(expression: WorkflowExpression, table: Table,
   return validateBooleanExpressionWithContext(expression, table, path, stepId, {
     runTimestamp,
     allowValueReference: false,
+    allowCaseValueReference: false,
   });
 }
 
@@ -695,6 +712,7 @@ function validateMatchExpression(
   const subjectResult = validateExpression(expression.subject, table, `${path}.subject`, stepId, {
     ...context,
     allowValueReference: false,
+    allowCaseValueReference: false,
   });
   const issues = [...subjectResult.issues];
 
@@ -706,32 +724,32 @@ function validateMatchExpression(
     issues.push(makeIssue('invalidExpression', `Match expressions require at least one case.`, `${path}.cases`, stepId));
   }
 
-  let wildcardSeen = false;
+  let otherwiseSeen = false;
   const thenResults: WorkflowExpressionValidationResult[] = [];
 
   expression.cases.forEach((matchCase, caseIndex) => {
     const casePath = `${path}.cases[${caseIndex}]`;
 
-    if (wildcardSeen) {
-      issues.push(makeIssue('invalidExpression', `Match cases after a wildcard case are unreachable.`, casePath, stepId));
+    if (otherwiseSeen) {
+      issues.push(makeIssue('invalidExpression', `Match cases after an otherwise case are unreachable.`, casePath, stepId));
     }
 
-    issues.push(...validateMatchPattern(matchCase.pattern, subjectResult.logicalType, `${casePath}.pattern`, stepId));
-
-    if (matchCase.pattern.kind === 'wildcard') {
-      if (wildcardSeen) {
-        issues.push(makeIssue('invalidExpression', `Match expressions may include at most one wildcard case.`, `${casePath}.pattern`, stepId));
+    if (matchCase.kind === 'when') {
+      issues.push(...validateBooleanExpressionWithContext(matchCase.when, table, `${casePath}.when`, stepId, {
+        ...context,
+        allowCaseValueReference: true,
+        caseValueLogicalType: subjectResult.logicalType,
+      }));
+    } else {
+      if (otherwiseSeen) {
+        issues.push(makeIssue('invalidExpression', `Match expressions may include at most one otherwise case.`, `${casePath}.kind`, stepId));
       }
 
-      wildcardSeen = true;
+      otherwiseSeen = true;
 
       if (caseIndex !== expression.cases.length - 1) {
-        issues.push(makeIssue('invalidExpression', `Wildcard match cases must be last.`, `${casePath}.pattern`, stepId));
+        issues.push(makeIssue('invalidExpression', `Otherwise match cases must be last.`, `${casePath}.kind`, stepId));
       }
-    }
-
-    if (matchCase.when) {
-      issues.push(...validateBooleanExpressionWithContext(matchCase.when, table, `${casePath}.when`, stepId, context));
     }
 
     const thenResult = validateExpression(matchCase.then, table, `${casePath}.then`, stepId, context);
@@ -763,147 +781,6 @@ function validateMatchExpression(
     valueKind: 'scalar',
     issues,
   };
-}
-
-function validateMatchPattern(
-  pattern: WorkflowMatchPattern,
-  subjectLogicalType: LogicalType,
-  path: string,
-  stepId: string,
-): WorkflowValidationIssue[] {
-  switch (pattern.kind) {
-    case 'literal':
-      return validateMatchLiteralComparability(pattern.value, subjectLogicalType, path, stepId);
-    case 'oneOf': {
-      const issues: WorkflowValidationIssue[] = [];
-
-      if (pattern.values.length === 0) {
-        issues.push(makeIssue('invalidExpression', `One-of match patterns require at least one literal value.`, `${path}.values`, stepId));
-      }
-
-      pattern.values.forEach((value, index) => {
-        issues.push(...validateMatchLiteralComparability(value, subjectLogicalType, `${path}.values[${index}]`, stepId));
-      });
-
-      return issues;
-    }
-    case 'range':
-      return validateMatchRangePattern(pattern, subjectLogicalType, path, stepId);
-    case 'wildcard':
-      return [];
-    default:
-      return [makeIssue('invalidExpression', `Unsupported match pattern.`, path, stepId)];
-  }
-}
-
-function validateMatchLiteralComparability(
-  value: CellValue,
-  subjectLogicalType: LogicalType,
-  path: string,
-  stepId: string,
-): WorkflowValidationIssue[] {
-  const valueLogicalType = inferLiteralLogicalType(value);
-
-  if (!areComparableEqualityTypes(subjectLogicalType, valueLogicalType)) {
-    return [
-      makeIssue(
-        'incompatibleType',
-        `Match literal patterns must be comparable to the match subject.`,
-        path,
-        stepId,
-        { subjectLogicalType, valueLogicalType },
-      ),
-    ];
-  }
-
-  return [];
-}
-
-function validateMatchRangePattern(
-  pattern: Extract<WorkflowMatchPattern, { kind: 'range' }>,
-  subjectLogicalType: LogicalType,
-  path: string,
-  stepId: string,
-): WorkflowValidationIssue[] {
-  const issues: WorkflowValidationIssue[] = [];
-  const bounds = getMatchRangeBounds(pattern);
-
-  if (bounds.length === 0) {
-    issues.push(makeIssue('invalidExpression', `Range match patterns require at least one bound.`, path, stepId));
-    return issues;
-  }
-
-  if (pattern.gt !== undefined && pattern.gte !== undefined) {
-    issues.push(makeIssue('invalidExpression', `Range match patterns cannot define both 'gt' and 'gte'.`, path, stepId));
-  }
-
-  if (pattern.lt !== undefined && pattern.lte !== undefined) {
-    issues.push(makeIssue('invalidExpression', `Range match patterns cannot define both 'lt' and 'lte'.`, path, stepId));
-  }
-
-  const boundTypes = [...new Set(bounds.map((bound) => inferLiteralLogicalType(bound.value)).filter((logicalType) => logicalType !== 'unknown'))];
-
-  if (boundTypes.some((logicalType) => !isOrderingType(logicalType))) {
-    issues.push(makeIssue('incompatibleType', `Range match bounds must use ordered scalar values.`, path, stepId));
-  }
-
-  if (boundTypes.length > 1) {
-    issues.push(
-      makeIssue(
-        'incompatibleType',
-        `Range match bounds must all use one compatible ordered type.`,
-        path,
-        stepId,
-        { logicalTypes: boundTypes },
-      ),
-    );
-  }
-
-  bounds.forEach((bound) => {
-    const boundLogicalType = inferLiteralLogicalType(bound.value);
-
-    if (!areComparableOrderingTypes(subjectLogicalType, boundLogicalType)) {
-      issues.push(
-        makeIssue(
-          'incompatibleType',
-          `Range match bounds must be comparable to the match subject.`,
-          `${path}.${bound.operator}`,
-          stepId,
-          { subjectLogicalType, boundLogicalType },
-        ),
-      );
-    }
-  });
-
-  const lowerBound = pattern.gt !== undefined
-    ? { value: pattern.gt, exclusive: true }
-    : pattern.gte !== undefined
-      ? { value: pattern.gte, exclusive: false }
-      : null;
-  const upperBound = pattern.lt !== undefined
-    ? { value: pattern.lt, exclusive: true }
-    : pattern.lte !== undefined
-      ? { value: pattern.lte, exclusive: false }
-      : null;
-
-  if (lowerBound && upperBound && isMatchRangeComparableValue(lowerBound.value) && isMatchRangeComparableValue(upperBound.value)) {
-    const comparison = compareExpressionValues(lowerBound.value, upperBound.value);
-
-    if (comparison > 0 || (comparison === 0 && (lowerBound.exclusive || upperBound.exclusive))) {
-      issues.push(makeIssue('invalidExpression', `Range match bounds must define a reachable interval.`, path, stepId));
-    }
-  }
-
-  return issues;
-}
-
-function getMatchRangeBounds(pattern: Extract<WorkflowMatchPattern, { kind: 'range' }>) {
-  return ([
-    pattern.gt !== undefined ? { operator: 'gt' as const, value: pattern.gt } : null,
-    pattern.gte !== undefined ? { operator: 'gte' as const, value: pattern.gte } : null,
-    pattern.lt !== undefined ? { operator: 'lt' as const, value: pattern.lt } : null,
-    pattern.lte !== undefined ? { operator: 'lte' as const, value: pattern.lte } : null,
-  ]).filter((bound): bound is { operator: 'gt' | 'gte' | 'lt' | 'lte'; value: string | number | boolean } => Boolean(bound));
 }
 
 function validateCallExpression(
@@ -2093,6 +1970,8 @@ function evaluateExpression(expression: WorkflowExpression, context: ExpressionE
   switch (expression.kind) {
     case 'value':
       return context.currentValue;
+    case 'caseValue':
+      return context.caseValue ?? null;
     case 'literal':
       return expression.value;
     case 'column':
@@ -2110,11 +1989,7 @@ function evaluateMatchExpression(expression: WorkflowMatchExpression, context: E
   const subjectValue = evaluateExpression(expression.subject, context);
 
   for (const matchCase of expression.cases) {
-    if (!evaluateMatchPattern(matchCase.pattern, subjectValue)) {
-      continue;
-    }
-
-    if (matchCase.when && !Boolean(evaluateExpression(matchCase.when, context))) {
+    if (matchCase.kind === 'when' && !Boolean(evaluateExpression(matchCase.when, { ...context, caseValue: Array.isArray(subjectValue) ? null : subjectValue }))) {
       continue;
     }
 
@@ -2122,54 +1997,6 @@ function evaluateMatchExpression(expression: WorkflowMatchExpression, context: E
   }
 
   return null;
-}
-
-function evaluateMatchPattern(pattern: WorkflowMatchPattern, subjectValue: ExpressionRuntimeValue) {
-  if (Array.isArray(subjectValue)) {
-    return false;
-  }
-
-  switch (pattern.kind) {
-    case 'literal':
-      return Object.is(subjectValue, pattern.value);
-    case 'oneOf':
-      return pattern.values.some((value) => Object.is(subjectValue, value));
-    case 'range': {
-      if (!isMatchRangeComparableValue(subjectValue)) {
-        return false;
-      }
-
-      if (pattern.gt !== undefined) {
-        if (!isMatchRangeComparableValue(pattern.gt) || compareExpressionValues(subjectValue, pattern.gt) <= 0) {
-          return false;
-        }
-      }
-
-      if (pattern.gte !== undefined) {
-        if (!isMatchRangeComparableValue(pattern.gte) || compareExpressionValues(subjectValue, pattern.gte) < 0) {
-          return false;
-        }
-      }
-
-      if (pattern.lt !== undefined) {
-        if (!isMatchRangeComparableValue(pattern.lt) || compareExpressionValues(subjectValue, pattern.lt) >= 0) {
-          return false;
-        }
-      }
-
-      if (pattern.lte !== undefined) {
-        if (!isMatchRangeComparableValue(pattern.lte) || compareExpressionValues(subjectValue, pattern.lte) > 0) {
-          return false;
-        }
-      }
-
-      return true;
-    }
-    case 'wildcard':
-      return true;
-    default:
-      return false;
-  }
 }
 
 function evaluateCallExpression(expression: WorkflowCallExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
@@ -3087,10 +2914,6 @@ function compareExpressionValues(left: CellValue, right: CellValue) {
   }
 
   return 0;
-}
-
-function isMatchRangeComparableValue(value: CellValue) {
-  return typeof value === 'number' || typeof value === 'string';
 }
 
 function compareSortValues(left: CellValue, right: CellValue, logicalType: LogicalType) {

@@ -1,7 +1,6 @@
 import type { CellValue, LogicalType, Schema, Table } from '../domain/model';
 
 export type WorkflowScalar = CellValue;
-export type WorkflowNonNullScalar = Exclude<WorkflowScalar, null>;
 export type WorkflowVersion = 2;
 
 export type WorkflowStepType =
@@ -74,6 +73,7 @@ export type WorkflowExpressionFunctionName =
 
 export type WorkflowExpression =
   | WorkflowValueExpression
+  | WorkflowCaseValueExpression
   | WorkflowLiteralExpression
   | WorkflowColumnExpression
   | WorkflowCallExpression
@@ -81,6 +81,10 @@ export type WorkflowExpression =
 
 export interface WorkflowValueExpression {
   kind: 'value';
+}
+
+export interface WorkflowCaseValueExpression {
+  kind: 'caseValue';
 }
 
 export interface WorkflowLiteralExpression {
@@ -99,39 +103,20 @@ export interface WorkflowCallExpression {
   args: WorkflowExpression[];
 }
 
-export type WorkflowMatchPattern =
-  | WorkflowMatchLiteralPattern
-  | WorkflowMatchOneOfPattern
-  | WorkflowMatchRangePattern
-  | WorkflowMatchWildcardPattern;
-
-export interface WorkflowMatchLiteralPattern {
-  kind: 'literal';
-  value: WorkflowScalar;
-}
-
-export interface WorkflowMatchOneOfPattern {
-  kind: 'oneOf';
-  values: WorkflowScalar[];
-}
-
-export interface WorkflowMatchRangePattern {
-  kind: 'range';
-  gt?: WorkflowNonNullScalar;
-  gte?: WorkflowNonNullScalar;
-  lt?: WorkflowNonNullScalar;
-  lte?: WorkflowNonNullScalar;
-}
-
-export interface WorkflowMatchWildcardPattern {
-  kind: 'wildcard';
-}
-
-export interface WorkflowMatchCase {
-  pattern: WorkflowMatchPattern;
-  when?: WorkflowExpression;
+export interface WorkflowMatchWhenCase {
+  kind: 'when';
+  when: WorkflowExpression;
   then: WorkflowExpression;
 }
+
+export interface WorkflowMatchOtherwiseCase {
+  kind: 'otherwise';
+  then: WorkflowExpression;
+}
+
+export type WorkflowMatchCase =
+  | WorkflowMatchWhenCase
+  | WorkflowMatchOtherwiseCase;
 
 export interface WorkflowMatchExpression {
   kind: 'match';

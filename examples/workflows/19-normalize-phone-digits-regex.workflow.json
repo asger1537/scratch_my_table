@@ -1,33 +1,43 @@
 {
-  "version": 2,
-  "workflowId": "wf_normalize_customer_id_digits",
-  "name": "Normalize customer ID digits",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_normalize_customer_id_digits",
+  "workflows": [
     {
-      "id": "step_normalize_customer_id_digits",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_customer_id"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "replaceRegex",
-          "args": [
-            {
-              "kind": "value"
-            },
-            {
-              "kind": "literal",
-              "value": "[^0-9]"
-            },
-            {
-              "kind": "literal",
-              "value": ""
+      "version": 2,
+      "workflowId": "wf_normalize_customer_id_digits",
+      "name": "Normalize customer ID digits",
+      "steps": [
+        {
+          "id": "step_normalize_customer_id_digits",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_customer_id"
+          ],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "replaceRegex",
+              "args": [
+                {
+                  "kind": "value"
+                },
+                {
+                  "kind": "literal",
+                  "value": "[^0-9]"
+                },
+                {
+                  "kind": "literal",
+                  "value": ""
+                }
+              ]
             }
-          ]
+          }
         }
-      }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_normalize_customer_id_digits"
   ]
 }

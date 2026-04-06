@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { importCsvWorkbook } from '../domain/csv';
 import { getActiveTable, type Table } from '../domain/model';
 import { importXlsxWorkbook } from '../domain/xlsx';
+import { parseWorkflowPackageJson } from '../workflowPackage';
 import { executeValidatedWorkflow, executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExpression } from './index';
 
 describe('workflow validation and execution', () => {
@@ -315,7 +316,7 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.stylesByColumnId.col_email).toBeUndefined();
   });
 
-  it('structurally validates match expressions with literal, one-of, range, guarded, and wildcard cases', () => {
+  it('structurally validates match expressions with when, otherwise, and caseValue conditions', () => {
     const workflow = {
       version: 2,
       workflowId: 'wf_match_structure',
@@ -331,19 +332,23 @@ describe('workflow validation and execution', () => {
           expression: match(
             call('lower', call('trim', column('col_status'))),
             [
-              {
-                pattern: matchLiteral('active'),
-                then: literal('A'),
-              },
-              {
-                pattern: matchOneOf('inactive', 'disabled'),
-                when: call('equals', column('col_region'), literal('west')),
-                then: literal('West inactive'),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal('Other'),
-              },
+              matchWhen(
+                call('equals', caseValue(), literal('active')),
+                literal('A'),
+              ),
+              matchWhen(
+                call(
+                  'and',
+                  call(
+                    'or',
+                    call('equals', caseValue(), literal('inactive')),
+                    call('equals', caseValue(), literal('disabled')),
+                  ),
+                  call('equals', column('col_region'), literal('west')),
+                ),
+                literal('West inactive'),
+              ),
+              matchOtherwise(literal('Other')),
             ],
           ),
         },
@@ -357,18 +362,27 @@ describe('workflow validation and execution', () => {
           expression: match(
             call('toNumber', column('col_balance')),
             [
-              {
-                pattern: matchRange({ lt: 0 }),
-                then: literal(3),
-              },
-              {
-                pattern: matchRange({ gte: 0, lte: 200 }),
-                then: literal(2),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal(1),
-              },
+              matchWhen(
+                call('lessThan', caseValue(), literal(0)),
+                literal(3),
+              ),
+              matchWhen(
+                call(
+                  'and',
+                  call(
+                    'or',
+                    call('greaterThan', caseValue(), literal(0)),
+                    call('equals', caseValue(), literal(0)),
+                  ),
+                  call(
+                    'or',
+                    call('lessThan', caseValue(), literal(200)),
+                    call('equals', caseValue(), literal(200)),
+                  ),
+                ),
+                literal(2),
+              ),
+              matchOtherwise(literal(1)),
             ],
           ),
         },
@@ -504,7 +518,13 @@ describe('workflow validation and execution', () => {
       .sort();
 
     for (const fileName of exampleFiles) {
-      const workflow = JSON.parse(await readFile(path.join(exampleDirectory, fileName), 'utf8')) as Workflow;
+      const parsed = parseWorkflowPackageJson(await readFile(path.join(exampleDirectory, fileName), 'utf8'));
+
+      expect(parsed.issues, `${fileName} should parse as a workflow package`).toEqual([]);
+      expect(parsed.workflowPackage, `${fileName} should contain a workflow package`).not.toBeNull();
+      expect(parsed.workflowPackage?.workflows, `${fileName} should contain exactly one workflow`).toHaveLength(1);
+
+      const workflow = parsed.workflowPackage!.workflows[0];
       const structural = validateWorkflowStructure(workflow);
       const semantic = validateWorkflowSemantics(workflow, table);
       const execution = executeWorkflow(workflow, table);
@@ -1018,8 +1038,8 @@ describe('workflow validation and execution', () => {
     expect(malformedExecution.transformedTable.rowsById.row_1.cellsByColumnId.col_bad_replace).toBe('Order: ORD-1234 (urgent)');
   });
 
-  it('evaluates match deterministically with literal, one-of, range, guarded, and wildcard cases', () => {
-    const table = loadCsvTable('status,region,balance\r\nactive,west,-5\r\ninactive,west,120\r\npending,east,900\r\n');
+  it('evaluates match deterministically with caseValue conditions, compound logic, and otherwise fallback', () => {
+    const table = loadCsvTable('status,region,balance,email\r\nactive,west,-5,alice@example.com\r\ninactive,west,120,bob@example.com\r\npending,east,900,\r\n');
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_match_runtime',
@@ -1035,19 +1055,23 @@ describe('workflow validation and execution', () => {
           expression: match(
             call('lower', call('trim', column('col_status'))),
             [
-              {
-                pattern: matchLiteral('active'),
-                then: literal('Active customer'),
-              },
-              {
-                pattern: matchOneOf('inactive', 'disabled'),
-                when: call('equals', column('col_region'), literal('west')),
-                then: literal('Inactive west customer'),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal('Other'),
-              },
+              matchWhen(
+                call('equals', caseValue(), literal('active')),
+                literal('Active customer'),
+              ),
+              matchWhen(
+                call(
+                  'and',
+                  call(
+                    'or',
+                    call('equals', caseValue(), literal('inactive')),
+                    call('equals', caseValue(), literal('disabled')),
+                  ),
+                  call('equals', column('col_region'), literal('west')),
+                ),
+                literal('Inactive west customer'),
+              ),
+              matchOtherwise(literal('Other')),
             ],
           ),
         },
@@ -1061,18 +1085,48 @@ describe('workflow validation and execution', () => {
           expression: match(
             call('toNumber', column('col_balance')),
             [
-              {
-                pattern: matchRange({ lt: 0 }),
-                then: literal(3),
-              },
-              {
-                pattern: matchRange({ gte: 0, lte: 200 }),
-                then: literal(2),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal(1),
-              },
+              matchWhen(
+                call('lessThan', caseValue(), literal(0)),
+                literal(3),
+              ),
+              matchWhen(
+                call(
+                  'and',
+                  call(
+                    'and',
+                    call(
+                      'or',
+                      call('greaterThan', caseValue(), literal(0)),
+                      call('equals', caseValue(), literal(0)),
+                    ),
+                    call(
+                      'or',
+                      call('lessThan', caseValue(), literal(200)),
+                      call('equals', caseValue(), literal(200)),
+                    ),
+                  ),
+                  call('not', call('isEmpty', column('col_email'))),
+                ),
+                literal(2),
+              ),
+              matchOtherwise(literal(1)),
+            ],
+          ),
+        },
+        {
+          id: 'step_unmatched_status',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_unmatched_status',
+            displayName: 'unmatched_status',
+          },
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              matchWhen(
+                call('equals', caseValue(), literal('vip')),
+                literal('VIP'),
+              ),
             ],
           ),
         },
@@ -1090,59 +1144,44 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_priority_score).toBe(3);
     expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_priority_score).toBe(2);
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_priority_score).toBe(1);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_unmatched_status).toBeNull();
   });
 
   it('rejects malformed or incompatible match expressions', () => {
-    const table = loadCsvTable('status,balance\r\nactive,100\r\n');
+    const table = loadCsvTable('status,balance,email\r\nactive,100,alice@example.com\r\n');
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_match_invalid',
       name: 'Match invalid',
       steps: [
         {
-          id: 'step_bad_wildcard',
+          id: 'step_bad_otherwise_order',
           type: 'deriveColumn',
           newColumn: {
-            columnId: 'col_bad_wildcard',
-            displayName: 'bad_wildcard',
+            columnId: 'col_bad_otherwise_order',
+            displayName: 'bad_otherwise_order',
           },
           expression: match(
             column('col_status'),
             [
-              {
-                pattern: matchWildcard(),
-                then: literal('first'),
-              },
-              {
-                pattern: matchLiteral('active'),
-                then: literal('second'),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal('third'),
-              },
+              matchOtherwise(literal('first')),
+              matchWhen(call('equals', caseValue(), literal('active')), literal('second')),
+              matchOtherwise(literal('third')),
             ],
           ),
         },
         {
-          id: 'step_bad_guard',
+          id: 'step_bad_when_type',
           type: 'deriveColumn',
           newColumn: {
-            columnId: 'col_bad_guard',
-            displayName: 'bad_guard',
+            columnId: 'col_bad_when_type',
+            displayName: 'bad_when_type',
           },
           expression: match(
             column('col_status'),
             [
-              {
-                pattern: matchLiteral('active'),
-                when: literal('not_boolean'),
-                then: literal('A'),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal('Other'),
-              },
+              matchWhen(literal('not_boolean'), literal('A')),
+              matchOtherwise(literal('Other')),
             ],
           ),
         },
@@ -1156,14 +1195,69 @@ describe('workflow validation and execution', () => {
           expression: match(
             call('toNumber', column('col_balance')),
             [
-              {
-                pattern: matchRange({ lt: 0 }),
-                then: literal(3),
-              },
-              {
-                pattern: matchWildcard(),
-                then: literal('other'),
-              },
+              matchWhen(call('lessThan', caseValue(), literal(0)), literal(3)),
+              matchOtherwise(literal('other')),
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_subject_value',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_subject_value',
+            displayName: 'bad_subject_value',
+          },
+          expression: match(
+            value(),
+            [
+              matchWhen(call('equals', caseValue(), literal('active')), literal('A')),
+              matchOtherwise(literal('Other')),
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_subject_case_value',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_subject_case_value',
+            displayName: 'bad_subject_case_value',
+          },
+          expression: match(
+            caseValue(),
+            [
+              matchWhen(call('equals', caseValue(), literal('active')), literal('A')),
+              matchOtherwise(literal('Other')),
+            ],
+          ),
+        },
+        {
+          id: 'step_bad_case_value_scope',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_case_value_scope',
+            displayName: 'bad_case_value_scope',
+          },
+          expression: call(
+            'coalesce',
+            caseValue(),
+            literal('missing'),
+          ),
+        },
+        {
+          id: 'step_bad_non_scalar_then',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_bad_non_scalar_then',
+            displayName: 'bad_non_scalar_then',
+          },
+          expression: match(
+            column('col_status'),
+            [
+              matchWhen(
+                call('equals', caseValue(), literal('active')),
+                call('split', column('col_email'), literal('@')),
+              ),
+              matchOtherwise(literal('Other')),
             ],
           ),
         },
@@ -1177,23 +1271,43 @@ describe('workflow validation and execution', () => {
       expect.arrayContaining([
         expect.objectContaining({
           code: 'invalidExpression',
-          path: 'steps[0].expression.cases[0].pattern',
-          stepId: 'step_bad_wildcard',
+          path: 'steps[0].expression.cases[1]',
+          stepId: 'step_bad_otherwise_order',
         }),
         expect.objectContaining({
           code: 'invalidExpression',
-          path: 'steps[0].expression.cases[1]',
-          stepId: 'step_bad_wildcard',
+          path: 'steps[0].expression.cases[2]',
+          stepId: 'step_bad_otherwise_order',
         }),
         expect.objectContaining({
           code: 'incompatibleType',
           path: 'steps[1].expression.cases[0].when',
-          stepId: 'step_bad_guard',
+          stepId: 'step_bad_when_type',
         }),
         expect.objectContaining({
           code: 'incompatibleType',
           path: 'steps[2].expression',
           stepId: 'step_bad_result_types',
+        }),
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[3].expression.subject',
+          stepId: 'step_bad_subject_value',
+        }),
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[4].expression.subject',
+          stepId: 'step_bad_subject_case_value',
+        }),
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[5].expression.args[0]',
+          stepId: 'step_bad_case_value_scope',
+        }),
+        expect.objectContaining({
+          code: 'invalidExpression',
+          path: 'steps[6].expression.cases[0].then',
+          stepId: 'step_bad_non_scalar_then',
         }),
       ]),
     );
@@ -1854,7 +1968,6 @@ function column(columnId: string): WorkflowExpression {
 }
 
 type MatchCase = Extract<WorkflowExpression, { kind: 'match' }>['cases'][number];
-type MatchPattern = MatchCase['pattern'];
 
 function call(
   name:
@@ -1916,35 +2029,24 @@ function match(subject: WorkflowExpression, cases: MatchCase[]): WorkflowExpress
   };
 }
 
-function matchLiteral(value: string | number | boolean | null): MatchPattern {
+function caseValue(): WorkflowExpression {
   return {
-    kind: 'literal',
-    value,
+    kind: 'caseValue',
   };
 }
 
-function matchOneOf(...values: Array<string | number | boolean | null>): MatchPattern {
+function matchWhen(when: WorkflowExpression, then: WorkflowExpression): MatchCase {
   return {
-    kind: 'oneOf',
-    values,
+    kind: 'when',
+    when,
+    then,
   };
 }
 
-function matchRange(bounds: {
-  gt?: string | number | boolean;
-  gte?: string | number | boolean;
-  lt?: string | number | boolean;
-  lte?: string | number | boolean;
-}): MatchPattern {
+function matchOtherwise(then: WorkflowExpression): MatchCase {
   return {
-    kind: 'range',
-    ...bounds,
-  };
-}
-
-function matchWildcard(): MatchPattern {
-  return {
-    kind: 'wildcard',
+    kind: 'otherwise',
+    then,
   };
 }
 

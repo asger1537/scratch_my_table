@@ -1,85 +1,152 @@
 {
-  "version": 2,
-  "workflowId": "wf_map_status_label_with_match",
-  "name": "Map status label with match",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_map_status_label_with_match",
+  "workflows": [
     {
-      "id": "step_map_status_label",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_status_label",
-        "displayName": "status_label"
-      },
-      "expression": {
-        "kind": "match",
-        "subject": {
-          "kind": "call",
-          "name": "lower",
-          "args": [
-            {
+      "version": 2,
+      "workflowId": "wf_map_status_label_with_match",
+      "name": "Map status label with match",
+      "steps": [
+        {
+          "id": "step_map_status_label",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_status_label",
+            "displayName": "status_label"
+          },
+          "expression": {
+            "kind": "match",
+            "subject": {
               "kind": "call",
-              "name": "trim",
+              "name": "lower",
               "args": [
                 {
-                  "kind": "column",
-                  "columnId": "col_status"
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "column",
+                      "columnId": "col_status"
+                    }
+                  ]
                 }
               ]
-            }
-          ]
-        },
-        "cases": [
-          {
-            "pattern": {
-              "kind": "literal",
-              "value": "active"
             },
-            "then": {
-              "kind": "literal",
-              "value": "current"
-            }
-          },
-          {
-            "pattern": {
-              "kind": "oneOf",
-              "values": ["pending", "queued"]
-            },
-            "then": {
-              "kind": "literal",
-              "value": "review"
-            }
-          },
-          {
-            "pattern": {
-              "kind": "literal",
-              "value": "inactive"
-            },
-            "then": {
-              "kind": "literal",
-              "value": "inactive"
-            }
-          },
-          {
-            "pattern": {
-              "kind": "literal",
-              "value": "suspended"
-            },
-            "then": {
-              "kind": "literal",
-              "value": "blocked"
-            }
-          },
-          {
-            "pattern": {
-              "kind": "wildcard"
-            },
-            "then": {
-              "kind": "literal",
-              "value": "unknown"
-            }
+            "cases": [
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "equals",
+                  "args": [
+                    {
+                      "kind": "caseValue"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "active"
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "current"
+                }
+              },
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "or",
+                  "args": [
+                    {
+                      "kind": "call",
+                      "name": "equals",
+                      "args": [
+                        {
+                          "kind": "caseValue"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "pending"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "call",
+                      "name": "equals",
+                      "args": [
+                        {
+                          "kind": "caseValue"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "queued"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "review"
+                }
+              },
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "equals",
+                  "args": [
+                    {
+                      "kind": "caseValue"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "inactive"
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "inactive"
+                }
+              },
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "equals",
+                  "args": [
+                    {
+                      "kind": "caseValue"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "suspended"
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "blocked"
+                }
+              },
+              {
+                "kind": "otherwise",
+                "then": {
+                  "kind": "literal",
+                  "value": "unknown"
+                }
+              }
+            ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_map_status_label_with_match"
   ]
 }

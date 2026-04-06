@@ -4,19 +4,20 @@ This folder contains canonical workflow IR v2 examples.
 
 Rules:
 
-- every file is plain workflow JSON
-- every file uses `version: 2`
+- every file is canonical workflow package JSON
+- every package uses `version: 1` and `type: "workflowPackage"`
+- every package currently contains exactly one canonical workflow IR v2 workflow
 - all column references use explicit `columnId` values
 - scoped cell changes use `scopedRule` plus the shared expression AST and optional format patches
 - filters and row predicates use the same expression AST with boolean-returning `call` nodes
-- these files are used for authoring, import/export, migration, and roundtrip testing
+- these files are directly importable through the app and are used for import/export and roundtrip testing
 
 Notes:
 
 - all examples are now runnable against the root workbook `Customers_Messy.xlsx`
 - the canonical imported column IDs for that workbook are:
   `col_customer_id`, `col_first_name`, `col_last_name`, `col_email`, `col_email_2`, `col_column`, `col_status`, `col_sign_up_date`, `col_notes`, `col_balance`, and `col_vip`
-- some numbered filenames are historical slots; the workflow `name` field inside each JSON is the canonical title
+- some numbered filenames are historical slots; the contained workflow `name` field is the canonical title
 - the examples correspond to the workflows documented in `docs/example-workflows.md`
 
 Files:

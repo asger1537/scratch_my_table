@@ -113,10 +113,12 @@ function collectExpressionColumnIds(expression: WorkflowExpression, columnIds: S
     case 'column':
       columnIds.add(expression.columnId);
       return;
+    case 'caseValue':
+      return;
     case 'match':
       collectExpressionColumnIds(expression.subject, columnIds);
       expression.cases.forEach((matchCase) => {
-        if (matchCase.when) {
+        if (matchCase.kind === 'when') {
           collectExpressionColumnIds(matchCase.when, columnIds);
         }
 

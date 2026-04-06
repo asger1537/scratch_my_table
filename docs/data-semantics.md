@@ -32,6 +32,7 @@ Expression node kinds:
 - `value`
 - `literal`
 - `column`
+- `caseValue`
 - `call`
 - `match`
 
@@ -40,6 +41,8 @@ Rules:
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
 - during `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied
 - `value` is represented exactly as `{ "kind": "value" }`
+- `caseValue` means the already-evaluated `match.subject` result and is valid only inside `match.cases[*].when`
+- `caseValue` is represented exactly as `{ "kind": "caseValue" }`
 - `null` is represented as `{ "kind": "literal", "value": null }`
 - `column` means another column in the current row and is valid anywhere row-scoped expressions are evaluated
 - `literal` may be `string`, `number`, `boolean`, or `null`
@@ -77,7 +80,7 @@ Built-in function semantics:
 - `first(x)`: returns the first character of a string or the first element of a list; empty inputs return `null`
 - `last(x)`: returns the last character of a string or the last element of a list; empty inputs return `null`
 - `coalesce(a, b)`: returns `a` unless `a` is `null` or `""`, otherwise returns `b`
-- `match(subject, cases)`: evaluates `subject` once and returns the `then` expression from the first case whose pattern matches and whose optional `when` guard is true. Wildcard fallback is optional; if no case matches, the result is `null`.
+- `match(subject, cases)`: evaluates `subject` once, binds the result as `caseValue` for each `when` case condition, returns the `then` expression from the first case whose `when` condition is true, falls back to the optional final `otherwise`, and returns `null` if no case matches.
 - `concat(a, b, ...)`: stringifies non-null scalar values and joins them with no separator
 - `isEmpty(x)`: returns `true` when `x` is `null`, `""`, or a whitespace-only string
 - `equals(a, b)`: exact scalar equality
@@ -112,6 +115,7 @@ Determinism rules:
 - Workflow IR v2 does not support user-defined functions, loops, or recursion.
 - Explicit casts are the intended way to normalize messy imported values before math, sorting, or boolean logic.
 - `match` is the intended classification and bucketing construct for deriving labels or scores.
+- `match` conditions should think in ordinary boolean logic over `caseValue` and row data, not in pattern nouns.
 - `scopedRule` remains the cumulative cell-rewrite construct; multiple `scopedRule` cases may apply in sequence to the evolving current cell value.
 
 ## Cell Formatting Semantics

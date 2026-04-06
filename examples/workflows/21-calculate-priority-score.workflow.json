@@ -1,60 +1,145 @@
 {
-  "version": 2,
-  "workflowId": "wf_calculate_priority_score",
-  "name": "Calculate priority score",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_calculate_priority_score",
+  "workflows": [
     {
-      "id": "step_calculate_priority_score",
-      "type": "deriveColumn",
-      "newColumn": {
-        "columnId": "col_priority_score",
-        "displayName": "priority_score"
-      },
-      "expression": {
-        "kind": "match",
-        "subject": {
-          "kind": "call",
-          "name": "toNumber",
-          "args": [
-            {
-              "kind": "column",
-              "columnId": "col_balance"
-            }
-          ]
-        },
-        "cases": [
-          {
-            "pattern": {
-              "kind": "range",
-              "lt": 0
-            },
-            "then": {
-              "kind": "literal",
-              "value": 3
-            }
+      "version": 2,
+      "workflowId": "wf_calculate_priority_score",
+      "name": "Calculate priority score",
+      "description": "Derive priority_score from balance: 3 when balance is negative, 2 when balance is between 0 and 200 inclusive, and 1 when balance is above 200.",
+      "steps": [
+        {
+          "id": "step_calculate_priority_score",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_priority_score",
+            "displayName": "priority_score"
           },
-          {
-            "pattern": {
-              "kind": "range",
-              "gte": 0,
-              "lte": 200
+          "expression": {
+            "kind": "match",
+            "subject": {
+              "kind": "call",
+              "name": "toNumber",
+              "args": [
+                {
+                  "kind": "column",
+                  "columnId": "col_balance"
+                }
+              ]
             },
-            "then": {
-              "kind": "literal",
-              "value": 2
-            }
-          },
-          {
-            "pattern": {
-              "kind": "wildcard"
-            },
-            "then": {
-              "kind": "literal",
-              "value": 1
-            }
+            "cases": [
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "lessThan",
+                  "args": [
+                    {
+                      "kind": "caseValue"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": 0
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": 3
+                }
+              },
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "and",
+                  "args": [
+                    {
+                      "kind": "call",
+                      "name": "or",
+                      "args": [
+                        {
+                          "kind": "call",
+                          "name": "greaterThan",
+                          "args": [
+                            {
+                              "kind": "caseValue"
+                            },
+                            {
+                              "kind": "literal",
+                              "value": 0
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "call",
+                          "name": "equals",
+                          "args": [
+                            {
+                              "kind": "caseValue"
+                            },
+                            {
+                              "kind": "literal",
+                              "value": 0
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "call",
+                      "name": "or",
+                      "args": [
+                        {
+                          "kind": "call",
+                          "name": "lessThan",
+                          "args": [
+                            {
+                              "kind": "caseValue"
+                            },
+                            {
+                              "kind": "literal",
+                              "value": 200
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "call",
+                          "name": "equals",
+                          "args": [
+                            {
+                              "kind": "caseValue"
+                            },
+                            {
+                              "kind": "literal",
+                              "value": 200
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": 2
+                }
+              },
+              {
+                "kind": "otherwise",
+                "then": {
+                  "kind": "literal",
+                  "value": 1
+                }
+              }
+            ]
           }
-        ]
-      }
+        }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_calculate_priority_score"
   ]
 }

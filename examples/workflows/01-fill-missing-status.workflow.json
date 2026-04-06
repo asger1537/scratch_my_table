@@ -1,35 +1,45 @@
 {
-  "version": 2,
-  "workflowId": "wf_fill_status",
-  "name": "Fill missing status",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_fill_status",
+  "workflows": [
     {
-      "id": "step_fill_status",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_status"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "coalesce",
-          "args": [
-            {
+      "version": 2,
+      "workflowId": "wf_fill_status",
+      "name": "Fill missing status",
+      "steps": [
+        {
+          "id": "step_fill_status",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_status"
+          ],
+          "defaultPatch": {
+            "value": {
               "kind": "call",
-              "name": "trim",
+              "name": "coalesce",
               "args": [
                 {
-                  "kind": "value"
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                },
+                {
+                  "kind": "literal",
+                  "value": "unknown"
                 }
               ]
-            },
-            {
-              "kind": "literal",
-              "value": "unknown"
             }
-          ]
+          }
         }
-      }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_fill_status"
   ]
 }

@@ -115,119 +115,40 @@
         }
       }
     },
-    "matchPattern": {
+    "matchCase": {
       "oneOf": [
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "value"],
+          "required": ["kind", "when", "then"],
           "properties": {
             "kind": {
               "type": "string",
-              "const": "literal"
+              "const": "when"
             },
-            "value": {
-              "$ref": "#/$defs/scalar"
+            "when": {
+              "$ref": "#/$defs/expression"
+            },
+            "then": {
+              "$ref": "#/$defs/expression"
             }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "values"],
+          "required": ["kind", "then"],
           "properties": {
             "kind": {
               "type": "string",
-              "const": "oneOf"
+              "const": "otherwise"
             },
-            "values": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "$ref": "#/$defs/scalar"
-              }
-            }
-          }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "range"
-            },
-            "gt": {
-              "$ref": "#/$defs/nonNullScalar"
-            },
-            "gte": {
-              "$ref": "#/$defs/nonNullScalar"
-            },
-            "lt": {
-              "$ref": "#/$defs/nonNullScalar"
-            },
-            "lte": {
-              "$ref": "#/$defs/nonNullScalar"
-            }
-          },
-          "allOf": [
-            {
-              "anyOf": [
-                {
-                  "required": ["gt"]
-                },
-                {
-                  "required": ["gte"]
-                },
-                {
-                  "required": ["lt"]
-                },
-                {
-                  "required": ["lte"]
-                }
-              ]
-            },
-            {
-              "not": {
-                "required": ["gt", "gte"]
-              }
-            },
-            {
-              "not": {
-                "required": ["lt", "lte"]
-              }
-            }
-          ]
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind"],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "wildcard"
+            "then": {
+              "$ref": "#/$defs/expression"
             }
           }
         }
       ]
-    },
-    "matchCase": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["pattern", "then"],
-      "properties": {
-        "pattern": {
-          "$ref": "#/$defs/matchPattern"
-        },
-        "when": {
-          "$ref": "#/$defs/expression"
-        },
-        "then": {
-          "$ref": "#/$defs/expression"
-        }
-      }
     },
     "expression": {
       "oneOf": [
@@ -239,6 +160,17 @@
             "kind": {
               "type": "string",
               "const": "value"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "caseValue"
             }
           }
         },

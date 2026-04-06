@@ -1,32 +1,42 @@
 {
-  "version": 2,
-  "workflowId": "wf_normalize_email",
-  "name": "Normalize email addresses",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_normalize_email",
+  "workflows": [
     {
-      "id": "step_normalize_email",
-      "type": "scopedRule",
-      "columnIds": [
-        "col_email",
-        "col_email_2"
-      ],
-      "defaultPatch": {
-        "value": {
-          "kind": "call",
-          "name": "lower",
-          "args": [
-            {
+      "version": 2,
+      "workflowId": "wf_normalize_email",
+      "name": "Normalize email addresses",
+      "steps": [
+        {
+          "id": "step_normalize_email",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_email",
+            "col_email_2"
+          ],
+          "defaultPatch": {
+            "value": {
               "kind": "call",
-              "name": "trim",
+              "name": "lower",
               "args": [
                 {
-                  "kind": "value"
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
                 }
               ]
             }
-          ]
+          }
         }
-      }
+      ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_normalize_email"
   ]
 }

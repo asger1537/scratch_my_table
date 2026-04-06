@@ -56,6 +56,19 @@ describe('workflow packages', () => {
     expect(duplicateIds.issues.some((issue) => issue.code === 'duplicateWorkflowId')).toBe(true);
   });
 
+  it('reports a clear error when a standalone workflow JSON is imported as a package', () => {
+    const parsed = parseWorkflowPackageJson(`${JSON.stringify(createWorkflowA(), null, 2)}\n`);
+
+    expect(parsed.valid).toBe(false);
+    expect(parsed.issues).toEqual([
+      expect.objectContaining({
+        code: 'standaloneWorkflowNotSupported',
+        path: '$',
+        message: expect.stringContaining('standalone workflow'),
+      }),
+    ]);
+  });
+
   it('creates uniquely named workflows, renames by name only, and deletes active tabs leftward', () => {
     const baseWorkflow = createWorkflowA();
     const secondWorkflow = createWorkflowB();

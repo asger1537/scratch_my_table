@@ -1,16 +1,26 @@
 {
-  "version": 2,
-  "workflowId": "wf_drop_internal_columns",
-  "name": "Drop internal columns",
-  "description": "Remove columns that should not appear in the final export.",
-  "steps": [
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_drop_internal_columns",
+  "workflows": [
     {
-      "id": "step_drop_internal_columns",
-      "type": "dropColumns",
-      "columnIds": [
-        "col_email_2",
-        "col_notes"
+      "version": 2,
+      "workflowId": "wf_drop_internal_columns",
+      "name": "Drop internal columns",
+      "description": "Remove columns that should not appear in the final export.",
+      "steps": [
+        {
+          "id": "step_drop_internal_columns",
+          "type": "dropColumns",
+          "columnIds": [
+            "col_email_2",
+            "col_notes"
+          ]
+        }
       ]
     }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_drop_internal_columns"
   ]
 }

@@ -43,7 +43,6 @@ const RULE_CASE_INPUT_NAMES = {
   actions: 'ACTIONS',
 } as const;
 const MATCH_CASE_INPUT_NAMES = {
-  pattern: 'PATTERN',
   when: 'WHEN',
   then: 'THEN',
 } as const;
@@ -61,13 +60,6 @@ export const CREATE_COLUMN_MODES = {
 export type CreateColumnMode = typeof CREATE_COLUMN_MODES[keyof typeof CREATE_COLUMN_MODES];
 type LogicalGroupBlock = Blockly.Block & {
   itemCount_?: number;
-  updateShape_?: () => void;
-};
-type MatchOneOfPatternBlock = Blockly.Block & {
-  itemCount_?: number;
-  updateShape_?: () => void;
-};
-type MatchRangePatternBlock = Blockly.Block & {
   updateShape_?: () => void;
 };
 type ComparatorOperator = 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
@@ -114,6 +106,7 @@ export const BLOCK_TYPES = {
   outputColumnItem: 'output_column_item',
   sortItem: 'sort_item',
   currentValueExpression: 'current_value_expression',
+  caseValueExpression: 'case_value_expression',
   literalString: 'literal_string',
   literalColor: 'literal_color',
   literalNumber: 'literal_number',
@@ -141,11 +134,8 @@ export const BLOCK_TYPES = {
   dateAddFunction: 'date_add_function',
   coalesceFunction: 'coalesce_function',
   matchExpression: 'match_expression',
-  matchCaseItem: 'match_case_item',
-  matchLiteralPattern: 'match_literal_pattern',
-  matchOneOfPattern: 'match_one_of_pattern',
-  matchRangePattern: 'match_range_pattern',
-  matchWildcardPattern: 'match_wildcard_pattern',
+  matchWhenCaseItem: 'match_when_case_item',
+  matchOtherwiseCaseItem: 'match_otherwise_case_item',
   concatFunction: 'concat_function',
   arithmeticFunction: 'arithmetic_function',
   mathRoundingFunction: 'math_rounding_function',
@@ -328,6 +318,14 @@ export function registerWorkflowBlocks() {
   Blockly.Blocks[BLOCK_TYPES.currentValueExpression] = {
     init() {
       this.appendDummyInput().appendField('current value');
+      this.setOutput(true, 'EXPRESSION');
+      this.setColour(VALUE_COLOR);
+    },
+  };
+
+  Blockly.Blocks[BLOCK_TYPES.caseValueExpression] = {
+    init() {
+      this.appendDummyInput().appendField('case value');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -578,10 +576,9 @@ export function registerWorkflowBlocks() {
       this.setColour(LOGIC_COLOR);
     },
   };
-  Blockly.Blocks[BLOCK_TYPES.matchCaseItem] = {
+  Blockly.Blocks[BLOCK_TYPES.matchWhenCaseItem] = {
     init() {
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.pattern).setCheck('MATCH_PATTERN').appendField('pattern');
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('guard when');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when');
       this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
@@ -589,71 +586,14 @@ export function registerWorkflowBlocks() {
       this.setColour(SUPPORT_COLOR);
     },
   };
-  Blockly.Blocks[BLOCK_TYPES.matchLiteralPattern] = {
+  Blockly.Blocks[BLOCK_TYPES.matchOtherwiseCaseItem] = {
     init() {
-      this.appendValueInput('VALUE').setCheck('LITERAL').appendField('literal pattern');
-      this.setOutput(true, 'MATCH_PATTERN');
-      this.setColour(LOGIC_COLOR);
-    },
-  };
-  Blockly.Blocks[BLOCK_TYPES.matchOneOfPattern] = {
-    init(this: MatchOneOfPatternBlock) {
-      this.itemCount_ = 2;
-      this.setOutput(true, 'MATCH_PATTERN');
+      this.appendDummyInput().appendField('otherwise');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
+      this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
+      this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);
-      this.setColour(LOGIC_COLOR);
-      this.updateShape_ = () => updateMatchOneOfPatternShape(this);
-      this.updateShape_();
-    },
-    saveExtraState(this: MatchOneOfPatternBlock) {
-      return {
-        itemCount: Math.max(1, this.itemCount_ ?? 2),
-      };
-    },
-    loadExtraState(this: MatchOneOfPatternBlock, state: { itemCount?: number }) {
-      this.itemCount_ = Math.max(1, Number(state.itemCount) || 2);
-      this.updateShape_?.();
-    },
-  };
-  Blockly.Blocks[BLOCK_TYPES.matchRangePattern] = {
-    init(this: MatchRangePatternBlock) {
-      this.appendDummyInput('HEADER').appendField('range');
-      this.appendValueInput('LOWER_VALUE')
-        .setCheck('NON_NULL_LITERAL')
-        .appendField(new Blockly.FieldDropdown([
-          ['no lower bound', 'none'],
-          ['>', 'gt'],
-          ['>=', 'gte'],
-        ], (newValue) => {
-          const normalized = normalizeMatchRangeLowerOperator(newValue);
-          this.updateShape_?.();
-          return normalized;
-        }), 'LOWER_OPERATOR');
-      this.appendValueInput('UPPER_VALUE')
-        .setCheck('NON_NULL_LITERAL')
-        .appendField(new Blockly.FieldDropdown([
-          ['no upper bound', 'none'],
-          ['<', 'lt'],
-          ['<=', 'lte'],
-        ], (newValue) => {
-          const normalized = normalizeMatchRangeUpperOperator(newValue);
-          this.updateShape_?.();
-          return normalized;
-        }), 'UPPER_OPERATOR');
-      this.setOutput(true, 'MATCH_PATTERN');
-      this.setInputsInline(false);
-      this.setColour(LOGIC_COLOR);
-      this.updateShape_ = () => updateMatchRangePatternShape(this);
-      this.setFieldValue('none', 'LOWER_OPERATOR');
-      this.setFieldValue('none', 'UPPER_OPERATOR');
-      this.updateShape_();
-    },
-  };
-  Blockly.Blocks[BLOCK_TYPES.matchWildcardPattern] = {
-    init() {
-      this.appendDummyInput().appendField('wildcard').appendField('_');
-      this.setOutput(true, 'MATCH_PATTERN');
-      this.setColour(LOGIC_COLOR);
+      this.setColour(SUPPORT_COLOR);
     },
   };
   createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);
@@ -838,14 +778,6 @@ function normalizeUnaryPredicateFunctionOperator(value: unknown): UnaryPredicate
   return value === 'isEmpty' ? 'isEmpty' : 'isEmpty';
 }
 
-function normalizeMatchRangeLowerOperator(value: unknown) {
-  return value === 'gt' || value === 'gte' ? value : 'none';
-}
-
-function normalizeMatchRangeUpperOperator(value: unknown) {
-  return value === 'lt' || value === 'lte' ? value : 'none';
-}
-
 function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
   const nextCount = Math.max(2, itemCount);
   const currentCount = Math.max(2, block.itemCount_ ?? 2);
@@ -870,90 +802,6 @@ function resizeLogicalGroup(block: LogicalGroupBlock, itemCount: number) {
   for (let index = 0; index < reconnectCount; index += 1) {
     connections[index]?.reconnect(block, `ITEM${index}`);
   }
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function updateMatchOneOfPatternShape(block: MatchOneOfPatternBlock) {
-  if (block.getInput('HEADER')) {
-    block.removeInput('HEADER');
-  }
-
-  let index = 0;
-
-  while (block.getInput(`VALUE${index}`)) {
-    block.removeInput(`VALUE${index}`);
-    index += 1;
-  }
-
-  block.appendDummyInput('HEADER')
-    .appendField('one of')
-    .appendField(createLogicalGroupActionField('add', 'Add case', (field) => {
-      const sourceBlock = field.getSourceBlock() as MatchOneOfPatternBlock | null;
-
-      if (!sourceBlock) {
-        return;
-      }
-
-      resizeMatchOneOfPattern(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 2) + 1);
-    }), 'ADD_ITEM')
-    .appendField(createLogicalGroupActionField('remove', 'Remove case', (field) => {
-      const sourceBlock = field.getSourceBlock() as MatchOneOfPatternBlock | null;
-
-      if (!sourceBlock) {
-        return;
-      }
-
-      resizeMatchOneOfPattern(sourceBlock, Math.max(1, sourceBlock.itemCount_ ?? 2) - 1);
-    }), 'REMOVE_ITEM');
-
-  const itemCount = Math.max(1, block.itemCount_ ?? 2);
-
-  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
-    block.appendValueInput(`VALUE${itemIndex}`)
-      .setCheck('LITERAL')
-      .appendField(`value ${itemIndex + 1}`);
-  }
-}
-
-function resizeMatchOneOfPattern(block: MatchOneOfPatternBlock, itemCount: number) {
-  const nextCount = Math.max(1, itemCount);
-  const currentCount = Math.max(1, block.itemCount_ ?? 2);
-
-  if (nextCount === currentCount) {
-    return;
-  }
-
-  const valueConnections = Array.from({ length: currentCount }, (_, index) => (
-    block.getInput(`VALUE${index}`)?.connection?.targetConnection ?? null
-  ));
-
-  for (let index = nextCount; index < currentCount; index += 1) {
-    valueConnections[index]?.disconnect();
-  }
-
-  block.itemCount_ = nextCount;
-  block.updateShape_?.();
-
-  const reconnectCount = Math.min(nextCount, valueConnections.length);
-
-  for (let index = 0; index < reconnectCount; index += 1) {
-    valueConnections[index]?.reconnect(block, `VALUE${index}`);
-  }
-
-  if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
-    (block as Blockly.BlockSvg).render();
-  }
-}
-
-function updateMatchRangePatternShape(block: MatchRangePatternBlock) {
-  const lowerOperator = normalizeMatchRangeLowerOperator(block.getFieldValue('LOWER_OPERATOR'));
-  const upperOperator = normalizeMatchRangeUpperOperator(block.getFieldValue('UPPER_OPERATOR'));
-
-  block.getInput('LOWER_VALUE')?.setVisible(lowerOperator !== 'none');
-  block.getInput('UPPER_VALUE')?.setVisible(upperOperator !== 'none');
 
   if ('rendered' in block && (block as Blockly.BlockSvg).rendered) {
     (block as Blockly.BlockSvg).render();
