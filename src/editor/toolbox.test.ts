@@ -78,6 +78,18 @@ describe('workflow toolbox search', () => {
     );
   });
 
+  it('finds both scoped edit block variants by intent keywords', () => {
+    const simpleContents = getWorkflowToolboxCategoryContents('category_scoped_rules', 'edit cells normalize');
+    const advancedContents = getWorkflowToolboxCategoryContents('category_scoped_rules', 'conditional otherwise');
+
+    expect(simpleContents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleSingleStep })]),
+    );
+    expect(advancedContents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleCasesStep })]),
+    );
+  });
+
   it('returns a no-match label when a category search is empty', () => {
     expect(getWorkflowToolboxCategoryContents('category_math', 'definitely-not-a-math-block')).toEqual([
       {
@@ -115,6 +127,7 @@ describe('workflow toolbox search', () => {
 
     expect(contents).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleSingleStep }),
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleCasesStep }),
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.ruleCaseItem }),
       ]),

@@ -31,6 +31,7 @@ import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 const workspaceMetadata = new WeakMap<Blockly.Workspace, AuthoringWorkflowMetadata>();
 const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.commentStep,
+  BLOCK_TYPES.scopedRuleSingleStep,
   BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,
@@ -448,6 +449,57 @@ function readStepBlock(block: Blockly.Block): { step?: AuthoringStep; issues: Ed
         },
         issues: [],
       };
+    case BLOCK_TYPES.scopedRuleSingleStep: {
+      const issues: EditorIssue[] = [];
+      const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
+      const rowCondition = readOptionalExpression(block, 'ROW_CONDITION');
+      const singlePatch = readAuthoringCellPatchActions(block, 'DEFAULT_ACTIONS');
+      const resolvedColumnIds = 'issue' in columnIds ? [] : columnIds.columnIds;
+      const resolvedRowCondition = 'issue' in rowCondition ? undefined : rowCondition.expression;
+
+      if ('issue' in columnIds) {
+        issues.push(columnIds.issue);
+      }
+
+      if ('issue' in rowCondition) {
+        issues.push(rowCondition.issue);
+      }
+
+      issues.push(...singlePatch.issues);
+
+      if (issues.length > 0) {
+        return { issues };
+      }
+
+      if (!isAuthoringCellPatchEnabled(singlePatch.patch)) {
+        return {
+          issues: [
+            {
+              code: 'missingRuleCases',
+              message: `Block '${block.type}' must define at least one action in 'do'.`,
+              blockId: block.id,
+              blockType: block.type,
+            },
+          ],
+        };
+      }
+
+      return {
+        step: {
+          kind: 'scopedRule',
+          stepId: stepMetadata.stepId,
+          sourceBlockId: block.id,
+          sourceBlockType: block.type,
+          columnIds: resolvedColumnIds,
+          rowCondition: resolvedRowCondition,
+          mode: 'single',
+          singlePatch: singlePatch.patch,
+          cases: [],
+          defaultPatch: createEmptyAuthoringCellPatch(),
+        },
+        issues: [],
+      };
+    }
     case BLOCK_TYPES.scopedRuleCasesStep: {
       const issues: EditorIssue[] = [];
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
@@ -729,7 +781,7 @@ function readAuthoringCellPatchActions(
 
     if (current.type === BLOCK_TYPES.setValueActionItem) {
       if (valueEnabled) {
-        issues.push(duplicateCellActionIssue(block, current, 'set value'));
+        issues.push(duplicateCellActionIssue(block, current, 'set cell'));
         current = current.getNextBlock();
         continue;
       }
@@ -1596,7 +1648,12 @@ function createCommentBlock(workspace: Blockly.Workspace, step: AuthoringComment
 }
 
 function createScopedRuleBlock(workspace: Blockly.Workspace, step: AuthoringScopedRuleStep, isTopBlock: boolean) {
-  const block = createBlock(workspace, BLOCK_TYPES.scopedRuleCasesStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
+  const block = createBlock(
+    workspace,
+    step.mode === 'single' ? BLOCK_TYPES.scopedRuleSingleStep : BLOCK_TYPES.scopedRuleCasesStep,
+    isTopBlock ? 24 : undefined,
+    isTopBlock ? 24 : undefined,
+  );
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(serializeColumnSelectionValue(step.columnIds), 'COLUMN_IDS');

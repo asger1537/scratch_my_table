@@ -91,6 +91,7 @@ function createSchemaColumnDropdown() {
 
 export const BLOCK_TYPES = {
   commentStep: 'comment_step',
+  scopedRuleSingleStep: 'scoped_rule_single_step',
   scopedRuleCasesStep: 'scoped_rule_cases_step',
   ruleCaseItem: 'rule_case_item',
   setValueActionItem: 'set_value_action_item',
@@ -159,6 +160,19 @@ export function registerWorkflowBlocks() {
       .appendField(new FieldCommentInput('Add a workflow note'), 'TEXT');
   });
 
+  Blockly.Blocks[BLOCK_TYPES.scopedRuleSingleStep] = {
+    init() {
+      this.appendDummyInput()
+        .appendField('on columns')
+        .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
+      this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
+      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('do');
+      this.setPreviousStatement(true, 'AUTHORING_STEP');
+      this.setNextStatement(true, 'AUTHORING_STEP');
+      this.setColour(TRANSFORM_COLOR);
+    },
+  };
+
   Blockly.Blocks[BLOCK_TYPES.scopedRuleCasesStep] = {
     init() {
       this.appendDummyInput()
@@ -166,8 +180,7 @@ export function registerWorkflowBlocks() {
         .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
       this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
       this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.cases).setCheck('RULE_CASE_ITEM').appendField('cases');
-      this.appendDummyInput('DEFAULT_HEADER').appendField('otherwise default to');
-      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('do');
+      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('otherwise do');
       this.setPreviousStatement(true, 'AUTHORING_STEP');
       this.setNextStatement(true, 'AUTHORING_STEP');
       this.setColour(TRANSFORM_COLOR);
@@ -176,7 +189,7 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.ruleCaseItem] = {
     init() {
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('case: when');
+      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('if current cell');
       this.appendStatementInput(RULE_CASE_INPUT_NAMES.actions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'RULE_CASE_ITEM');
       this.setNextStatement(true, 'RULE_CASE_ITEM');
@@ -189,7 +202,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendValueInput(CELL_ACTION_INPUT_NAMES.value)
         .setCheck('EXPRESSION')
-        .appendField('set value')
+        .appendField('set cell')
         .appendField('to');
       this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
       this.setNextStatement(true, 'CELL_ACTION_ITEM');
@@ -317,7 +330,7 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.currentValueExpression] = {
     init() {
-      this.appendDummyInput().appendField('current value');
+      this.appendDummyInput().appendField('current cell');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -325,7 +338,7 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.caseValueExpression] = {
     init() {
-      this.appendDummyInput().appendField('case value');
+      this.appendDummyInput().appendField('matched value');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -578,8 +591,8 @@ export function registerWorkflowBlocks() {
   };
   Blockly.Blocks[BLOCK_TYPES.matchWhenCaseItem] = {
     init() {
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when');
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when matched value');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then return');
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);
@@ -588,8 +601,7 @@ export function registerWorkflowBlocks() {
   };
   Blockly.Blocks[BLOCK_TYPES.matchOtherwiseCaseItem] = {
     init() {
-      this.appendDummyInput().appendField('otherwise');
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('otherwise return');
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);

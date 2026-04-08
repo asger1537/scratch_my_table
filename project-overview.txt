@@ -1,5 +1,5 @@
 Project overview
-Generated: 2026-04-06 09:35:08 +02:00
+Generated: 2026-04-08 10:37:10 +02:00
 
 Included files
 --------------
@@ -18,18 +18,23 @@ schemas\workflow-ir-v2.schema.json
 schemas\workflow-package-v1.schema.json
 src\ai\ai.test.ts
 src\ai\authoringIr.ts
+src\ai\benchmarkOpsExperimentHarness.ts
 src\ai\canonicalReplayHarness.ts
 src\ai\compileAuthoringDraft.test.ts
 src\ai\compileAuthoringDraft.ts
+src\ai\compilerOpsDraft.ts
 src\ai\devLog.ts
 src\ai\draft.ts
 src\ai\experiment_1.test.ts
+src\ai\experiment_10.test.ts
 src\ai\experiment_2.test.ts
 src\ai\experiment_3.test.ts
 src\ai\experiment_4.test.ts
 src\ai\experiment_5.test.ts
 src\ai\experiment_6.test.ts
 src\ai\experiment_7.test.ts
+src\ai\experiment_8.test.ts
+src\ai\experiment_9.test.ts
 src\ai\experimentHarness.ts
 src\ai\gemini.ts
 src\ai\index.ts
@@ -2440,7 +2445,7 @@ import {
   buildRepairUserMessage,
   formatDraftStepsForDebug,
   generateGeminiDraftTurn,
-  parseGeminiAuthoringResponse,
+  parseGeminiCompilerOpsResponse,
   replaceWorkflowSteps,
   runGeminiDraftTurn,
   type AISettings,
@@ -2450,29 +2455,23 @@ import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
 describe('AI workflow copilot helpers', () => {
-  it('builds prompt context from schema and workflow without leaking raw row values', () => {
+  it('builds prompt context for compiler-op IR without leaking raw row values', () => {
     const context = createPromptContext();
-
     const instruction = buildGeminiSystemInstruction(context);
 
-    expect(instruction).toContain('Translate the user request into the AI authoring IR.');
-    expect(instruction).toContain('deriveColumn uses "derive", not "expression".');
-    expect(instruction).toContain('filterRows uses "where", not "condition".');
-    expect(instruction).toContain('scopedRule uses optional "rowWhere", not "rowCondition".');
-    expect(instruction).toContain('Do NOT emit canonical Workflow IR expression nodes like { "kind": "call" }, { "kind": "value" }, or { "kind": "caseValue" }.');
-    expect(instruction).toContain('{ "source": "value" }');
-    expect(instruction).toContain('{ "source": "caseValue" }');
-    expect(instruction).toContain('Use gte and lte exactly. Do not invent names like greaterThanOrEquals or lessThanOrEquals.');
-    expect(instruction).toContain('Use between for bounded ranges instead of manually expanding inclusive comparisons');
-    expect(instruction).toContain('Map status values to readable labels.');
-    expect(instruction).toContain('If balance is negative set priority score to 3');
-    expect(instruction).toContain('Columns marked "mixed" contain incompatible runtime values.');
-    expect(instruction).toContain('must appear in JSON as "\\\\d+"');
+    expect(instruction).toContain('Translate the user request into a tiny compiler-friendly operation list.');
+    expect(instruction).toContain('Response contract:');
+    expect(instruction).toContain('mode: "clarify" or "draft"');
+    expect(instruction).toContain('msg: short natural-language summary');
+    expect(instruction).toContain('ass: array of short strings');
+    expect(instruction).toContain('ops: ordered compiler ops');
+    expect(instruction).toContain('fill_empty_from_col');
+    expect(instruction).toContain('derive_score_bands');
     expect(instruction).toContain('Current workflow summary:');
     expect(instruction).not.toContain('alice@example.com');
   });
 
-  it('includes live workspace issues when the canonical workflow falls back to the last valid snapshot', () => {
+  it('includes live workspace issues when using the last valid workflow snapshot', () => {
     const context = createPromptContext();
 
     context.workflowContextSource = 'lastValidSnapshot';
@@ -2491,7 +2490,7 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('"type": "scoped_rule_cases_step"');
   });
 
-  it('builds a replayable Gemini request export without including the API key in the payload', () => {
+  it('builds a replayable Gemini request export with the compiler-op schema and no API key leakage', () => {
     const context = createPromptContext();
     const settings = createAISettings();
     const userMessage = {
@@ -2506,48 +2505,29 @@ describe('AI workflow copilot helpers', () => {
       userMessage,
       phase: 'initial',
     });
-    const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as {
-      type?: string;
-      additionalProperties?: boolean;
-      properties?: {
-        mode?: { type?: string; enum?: string[] };
-        assistantMessage?: { type?: string };
-        assumptions?: { type?: string; items?: { type?: string } };
-        steps?: { type?: string; items?: { type?: string; additionalProperties?: boolean } };
-      };
-      required?: string[];
-    };
+    const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as Record<string, unknown>;
     const serializedSchema = JSON.stringify(responseJsonSchema);
 
     expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(4096);
     expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
-    expect(responseJsonSchema).toEqual({
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        mode: {
-          type: 'string',
-          enum: ['clarify', 'draft'],
-        },
-        assistantMessage: {
-          type: 'string',
-        },
-        assumptions: {
-          type: 'array',
-          items: {
+    expect(requestExport.requestBody.generationConfig.temperature).toBe(0);
+    expect(responseJsonSchema).toEqual(
+      expect.objectContaining({
+        type: 'object',
+        properties: expect.objectContaining({
+          mode: expect.objectContaining({
             type: 'string',
-          },
-        },
-        steps: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: true,
-          },
-        },
-      },
-      required: ['mode', 'assistantMessage', 'assumptions'],
-    });
+            enum: ['clarify', 'draft'],
+          }),
+          msg: expect.objectContaining({ type: 'string' }),
+          ass: expect.objectContaining({ type: 'array' }),
+          ops: expect.objectContaining({ type: 'array' }),
+        }),
+        required: ['mode', 'msg', 'ass', 'ops'],
+      }),
+    );
+    expect(serializedSchema).toContain('"fill_empty_from_col"');
+    expect(serializedSchema).toContain('"derive_score_bands"');
     expect(serializedSchema).not.toContain('"const"');
     expect(serializedSchema).not.toContain('"minLength"');
     expect(serializedSchema).not.toContain('"pattern"');
@@ -2555,66 +2535,65 @@ describe('AI workflow copilot helpers', () => {
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
   });
 
-  it('includes authoritative schema reminders and authoring-IR repair guidance in repair prompts', () => {
+  it('builds repair prompts for compiler-op IR', () => {
     const context = createPromptContext();
 
     const repairMessage = buildRepairUserMessage(
-      '{"mode":"draft","assistantMessage":"Done.","assumptions":[],"steps":[{"type":"deriveColumn","newColumn":{"columnId":"col_priority_score","displayName":"Priority Score"},"derive":{"kind":"match","subject":{"kind":"unary","op":"toNumber","input":{"source":"column","columnId":"col_balance"}},"cases":[{"kind":"when","when":{"kind":"compare","op":"lt","left":"caseValue","right":"literal"},"then":{"source":"literal","value":3}}]}}]}',
+      '{"mode":"draft","msg":"Draft.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":0,"hi":"bad","loInc":true,"hiInc":true,"score":2}]}]}',
       [
         {
-          code: 'authoringInvalidContext',
-          path: 'steps[0].derive.cases[0].when.left',
-          message: 'Use { "source": "caseValue" } only inside match case conditions.',
+          code: 'authoringType',
+          path: 'ops[0].bands[0].hi',
+          message: 'Band hi must be number or null.',
         },
       ],
       context,
     );
 
-    expect(repairMessage).toContain('Return AI authoring IR only, not canonical Workflow IR expression nodes.');
-    expect(repairMessage).toContain('Use operands with "source" fields');
-    expect(repairMessage).toContain('Do not invent op names like greaterThanOrEquals or lessThanOrEquals.');
+    expect(repairMessage).toContain('Return compiler-op JSON only with keys: mode, msg, ass, ops.');
+    expect(repairMessage).toContain('Use only these op names: fill_empty_from_col, color_if_empty, drop_cols, derive_score_bands.');
     expect(repairMessage).toContain('- col_email | Email | string');
-    expect(repairMessage).not.toContain('col_missing |');
   });
 
-  it('parses clarify and draft Gemini authoring responses and rejects malformed payloads', () => {
+  it('parses clarify and draft compiler-op responses and rejects malformed payloads', () => {
     expect(
-      parseGeminiAuthoringResponse('{"mode":"clarify","assistantMessage":"Which email column should I use?","assumptions":[]}'),
+      parseGeminiCompilerOpsResponse('{"mode":"clarify","msg":"Which email column should I use?","ass":[],"ops":[]}'),
     ).toEqual({
       mode: 'clarify',
-      assistantMessage: 'Which email column should I use?',
-      assumptions: [],
+      msg: 'Which email column should I use?',
+      ass: [],
+      ops: [],
     });
 
     expect(
-      parseGeminiAuthoringResponse('```json\n{"mode":"draft","assistantMessage":"Done.","assumptions":[],"steps":[]}\n```'),
+      parseGeminiCompilerOpsResponse('```json\n{"mode":"draft","msg":"Done.","ass":[],"ops":[{"op":"drop_cols","cols":["col_email_2"]}]}\n```'),
     ).toEqual({
       mode: 'draft',
-      assistantMessage: 'Done.',
-      assumptions: [],
-      steps: [],
+      msg: 'Done.',
+      ass: [],
+      ops: [{ op: 'drop_cols', cols: ['col_email_2'] }],
     });
 
-    expect(() => parseGeminiAuthoringResponse('{"mode":"maybe","assistantMessage":"Done.","assumptions":[]}')).toThrow(
+    expect(() => parseGeminiCompilerOpsResponse('{"mode":"maybe","msg":"Done.","ass":[],"ops":[]}')).toThrow(
       'Gemini response must include mode "clarify" or "draft".',
     );
-    expect(() => parseGeminiAuthoringResponse('{"mode":"clarify","assistantMessage":"   ","assumptions":[]}')).toThrow(
-      'Gemini response must include a non-empty assistantMessage string.',
+    expect(() => parseGeminiCompilerOpsResponse('{"mode":"clarify","msg":"   ","ass":[],"ops":[]}')).toThrow(
+      'Gemini response must include a non-empty msg string.',
     );
-    expect(() => parseGeminiAuthoringResponse('{"mode":"clarify","assistantMessage":"Done."}')).toThrow(
-      'Gemini response must include an assumptions string array.',
+    expect(() => parseGeminiCompilerOpsResponse('{"mode":"clarify","msg":"Done.","ops":[]}')).toThrow(
+      'Gemini response must include ass as a string array.',
     );
-    expect(() => parseGeminiAuthoringResponse('{"mode":"draft","assistantMessage":"Missing steps","assumptions":[]}')).toThrow(
-      'Gemini draft responses must include a steps array.',
+    expect(() => parseGeminiCompilerOpsResponse('{"mode":"draft","msg":"Missing ops","ass":[],"ops":[]}')).toThrow(
+      'Gemini draft responses must include a non-empty ops array.',
     );
   });
 
-  it('generates and compiles valid draft output from Gemini authoring IR', async () => {
+  it('generates and compiles valid compiler-op drafts from Gemini', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","assistantMessage":"I added the score column.","assumptions":[],"steps":[{"type":"deriveColumn","newColumn":{"columnId":"col_priority_score","displayName":"Priority Score"},"derive":{"kind":"match","subject":{"kind":"unary","op":"toNumber","input":{"source":"column","columnId":"col_status"}},"cases":[{"kind":"otherwise","then":{"source":"literal","value":1}}]}}]}',
+          '{"mode":"draft","msg":"Create priority score.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":null,"hi":0,"loInc":false,"hiInc":false,"score":3},{"lo":0,"hi":200,"loInc":true,"hiInc":true,"score":2},{"lo":200,"hi":null,"loInc":false,"hiInc":false,"score":1}]}]}',
         ),
       );
 
@@ -2636,7 +2615,7 @@ describe('AI workflow copilot helpers', () => {
     expect(result.response).toEqual(
       expect.objectContaining({
         mode: 'draft',
-        assistantMessage: 'I added the score column.',
+        msg: 'Create priority score.',
       }),
     );
     expect(result.compilationIssues).toEqual([]);
@@ -2647,7 +2626,7 @@ describe('AI workflow copilot helpers', () => {
     ]);
   });
 
-  it('logs the sanitized request export and raw API error payload when Gemini rejects the request', async () => {
+  it('logs request export and raw API error payload when Gemini rejects the request', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(createGeminiErrorResponse('Request contains an invalid argument.'));
@@ -2687,11 +2666,6 @@ describe('AI workflow copilot helpers', () => {
       expect.objectContaining({
         error: 'Request contains an invalid argument.',
         statusCode: 400,
-        responseBody: JSON.stringify({
-          error: {
-            message: 'Request contains an invalid argument.',
-          },
-        }),
       }),
     );
   });
@@ -2701,12 +2675,12 @@ describe('AI workflow copilot helpers', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","assistantMessage":"First attempt.","assumptions":[],"steps":[{"type":"deriveColumn","newColumn":{"columnId":"col_priority_score","displayName":"Priority Score"},"derive":{"kind":"match","subject":{"kind":"unary","op":"toNumber","input":{"source":"column","columnId":"col_balance"}},"cases":[{"kind":"when","when":{"kind":"compare","op":"greaterThanOrEquals","left":{"source":"caseValue"},"right":{"source":"literal","value":0}},"then":{"source":"literal","value":2}}]}}]}',
+          '{"mode":"draft","msg":"First attempt.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":0,"hi":"bad","loInc":true,"hiInc":true,"score":2}]}]}',
         ),
       )
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","assistantMessage":"I corrected the match comparison ops.","assumptions":[],"steps":[{"type":"deriveColumn","newColumn":{"columnId":"col_priority_score","displayName":"Priority Score"},"derive":{"kind":"match","subject":{"kind":"unary","op":"toNumber","input":{"source":"column","columnId":"col_balance"}},"cases":[{"kind":"when","when":{"kind":"between","input":{"source":"caseValue"},"min":{"source":"literal","value":0},"max":{"source":"literal","value":200},"inclusiveMin":true,"inclusiveMax":true},"then":{"source":"literal","value":2}},{"kind":"otherwise","then":{"source":"literal","value":1}}]}}]}',
+          '{"mode":"draft","msg":"I corrected the score bands.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":null,"hi":0,"loInc":false,"hiInc":false,"score":3},{"lo":0,"hi":200,"loInc":true,"hiInc":true,"score":2},{"lo":200,"hi":null,"loInc":false,"hiInc":false,"score":1}]}]}',
         ),
       );
     const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([]);
@@ -2727,7 +2701,7 @@ describe('AI workflow copilot helpers', () => {
         debugTrace: expect.objectContaining({
           initialCompilationIssues: [
             expect.objectContaining({
-              code: 'authoringUnsupportedOp',
+              code: 'authoringType',
             }),
           ],
           repairCompilationIssues: [],
@@ -2736,17 +2710,17 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
-  it('validates compiled AI drafts as full workflow replacements and repairs canonical validation failures', async () => {
+  it('validates compiled drafts as full workflow replacements and repairs semantic validation failures', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","assistantMessage":"First attempt.","assumptions":[],"steps":[{"type":"filterRows","mode":"drop","where":{"kind":"predicate","op":"isEmpty","input":{"source":"column","columnId":"col_missing"}}}]}',
+          '{"mode":"draft","msg":"First attempt.","ass":[],"ops":[{"op":"fill_empty_from_col","dst":"col_email","src":"col_missing"},{"op":"drop_cols","cols":["col_email_2"]}]}',
         ),
       )
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","assistantMessage":"I corrected the email filter to use the real email column.","assumptions":["Using the primary email column."],"steps":[{"type":"filterRows","mode":"drop","where":{"kind":"boolean","op":"not","item":{"kind":"compare","op":"matchesRegex","left":{"source":"column","columnId":"col_email"},"right":{"source":"literal","value":"^[^@\\\\s]+@[^@\\\\s]+\\\\.[^@\\\\s]+$"}}}}]}',
+          '{"mode":"draft","msg":"I fixed the source column.","ass":["Using Email (2) as fallback."],"ops":[{"op":"fill_empty_from_col","dst":"col_email","src":"col_email_2"},{"op":"drop_cols","cols":["col_email_2"]}]}',
         ),
       );
     const validateCandidateWorkflow = vi
@@ -2756,7 +2730,7 @@ describe('AI workflow copilot helpers', () => {
           code: 'missingColumn',
           severity: 'error',
           message: "Column 'col_missing' does not exist.",
-          path: 'steps[0].condition.input.columnId',
+          path: 'steps[0].cases[0].then.value.columnId',
           phase: 'semantic',
         },
       ])
@@ -2765,50 +2739,26 @@ describe('AI workflow copilot helpers', () => {
     const outcome = await runGeminiDraftTurn({
       settings: createAISettings(),
       context: createPromptContext(),
-      userText: 'Remove invalid emails.',
+      userText: 'Use Email (2) as fallback then drop it.',
       validateCandidateWorkflow,
       fetchFn,
     });
 
     expect(validateCandidateWorkflow).toHaveBeenCalledTimes(2);
-    expect(validateCandidateWorkflow).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        steps: [
-          expect.objectContaining({
-            id: 'step_filter_rows_1',
-            type: 'filterRows',
-            condition: {
-              kind: 'call',
-              name: 'isEmpty',
-              args: [{ kind: 'column', columnId: 'col_missing' }],
-            },
-          }),
-        ],
-      }),
-    );
     expect(outcome).toEqual(
       expect.objectContaining({
         kind: 'draft',
         repaired: true,
         draft: expect.objectContaining({
-          assumptions: ['Using the primary email column.'],
+          assumptions: ['Using Email (2) as fallback.'],
           steps: [
             expect.objectContaining({
-              id: 'step_filter_rows_1',
-              type: 'filterRows',
+              id: 'step_scoped_rule_1',
+              type: 'scopedRule',
             }),
-          ],
-        }),
-        debugTrace: expect.objectContaining({
-          initialValidationIssues: [
             expect.objectContaining({
-              code: 'missingColumn',
-            }),
-          ],
-          repairCompiledSteps: [
-            expect.objectContaining({
-              type: 'filterRows',
+              id: 'step_drop_columns_1',
+              type: 'dropColumns',
             }),
           ],
         }),
@@ -2816,7 +2766,7 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
-  it('builds draft preview workflows from compiled canonical AI drafts and formats debug JSON', () => {
+  it('builds draft preview workflows from compiled canonical drafts and formats debug JSON', () => {
     const currentWorkflow: Workflow = {
       version: 2,
       workflowId: 'wf_preview_current',
@@ -2874,7 +2824,7 @@ describe('AI workflow copilot helpers', () => {
     expect(formatDraftStepsForDebug(null)).toBe('No AI draft steps.');
   });
 
-  it('assigns deterministic draft step ids and replaces the workflow step list', () => {
+  it('assigns deterministic draft step ids and replaces workflow steps', () => {
     const workflow: Workflow = {
       version: 2,
       workflowId: 'wf_ai',
@@ -2991,11 +2941,19 @@ function createTable(): Table {
           missingCount: 1,
         },
         {
+          columnId: 'col_email_2',
+          displayName: 'Email (2)',
+          logicalType: 'string',
+          nullable: true,
+          sourceIndex: 1,
+          missingCount: 2,
+        },
+        {
           columnId: 'col_status',
           displayName: 'Status',
           logicalType: 'string',
           nullable: false,
-          sourceIndex: 1,
+          sourceIndex: 2,
           missingCount: 0,
         },
         {
@@ -3003,7 +2961,7 @@ function createTable(): Table {
           displayName: 'Balance',
           logicalType: 'mixed',
           nullable: true,
-          sourceIndex: 2,
+          sourceIndex: 3,
           missingCount: 2,
         },
         {
@@ -3011,7 +2969,7 @@ function createTable(): Table {
           displayName: 'VIP',
           logicalType: 'boolean',
           nullable: true,
-          sourceIndex: 3,
+          sourceIndex: 4,
           missingCount: 0,
         },
       ],
@@ -3021,6 +2979,7 @@ function createTable(): Table {
         rowId: 'row_1',
         cellsByColumnId: {
           col_email: 'alice@example.com',
+          col_email_2: null,
           col_status: 'active',
           col_balance: '15',
           col_vip: true,
@@ -3355,11 +3314,966 @@ export type AuthoringStepInput =
   | AuthoringDeduplicateRowsStepInput
   | AuthoringSortRowsStepInput;
 
-export interface AuthoringDraftResponse {
+===== src\ai\benchmarkOpsExperimentHarness.ts =====
+import { readFile, writeFile } from 'node:fs/promises';
+
+import type { Table } from '../domain/model';
+import {
+  validateWorkflowSemantics,
+  validateWorkflowStructure,
+  type Workflow,
+  type WorkflowExpression,
+} from '../workflow';
+import type { WorkflowExpressionFunctionName, WorkflowMatchCase } from '../workflow/types';
+
+import { assignWorkflowStepIds } from './index';
+import type { WorkflowStepInput } from './types';
+import {
+  BENCHMARKS,
+  compact,
+  extractCandidateText,
+  extractResponseErrorMessage,
+  loadCustomersMessyTable,
+  readGeminiApiKey,
+} from './experimentHarness';
+
+const ITERATIONS = 5;
+const MODEL = 'gemini-3.1-flash-lite-preview';
+
+export type BenchmarkOpsStatus =
+  | 'valid_draft'
+  | 'clarify'
+  | 'request_error'
+  | 'parse_error'
+  | 'compile_failed'
+  | 'structural_failed'
+  | 'semantic_failed';
+
+export interface BenchmarkOpsExperimentResult {
+  benchmarkId: string;
+  iteration: number;
+  status: BenchmarkOpsStatus;
+  mode?: 'clarify' | 'draft';
+  issueSummary?: string;
+  rawTextPreview?: string;
+}
+
+export interface BenchmarkOpsExperimentConfig {
+  experimentTitle: string;
+  schemaPath: string;
+  reportPath: string;
+  includeAssistantPrefill?: boolean;
+  includeCuratedExamples?: boolean;
+}
+
+interface CompilerOpsDraftResponse {
   mode: 'clarify' | 'draft';
-  assistantMessage: string;
-  assumptions: string[];
-  steps?: AuthoringStepInput[];
+  msg: string;
+  ass: string[];
+  ops: CompilerOp[];
+}
+
+type CompilerOp =
+  | FillEmptyFromColOp
+  | ColorIfEmptyOp
+  | DropColsOp
+  | DeriveScoreBandsOp;
+
+interface FillEmptyFromColOp {
+  op: 'fill_empty_from_col';
+  dst: string;
+  src: string;
+}
+
+interface ColorIfEmptyOp {
+  op: 'color_if_empty';
+  col: string;
+  color: string;
+}
+
+interface DropColsOp {
+  op: 'drop_cols';
+  cols: string[];
+}
+
+interface DeriveScoreBandsOp {
+  op: 'derive_score_bands';
+  src: string;
+  out: {
+    id: string;
+    name: string;
+  };
+  bands: ScoreBand[];
+}
+
+interface ScoreBand {
+  lo: number | null;
+  hi: number | null;
+  loInc: boolean;
+  hiInc: boolean;
+  score: number;
+}
+
+interface CompilerIssue {
+  path: string;
+  message: string;
+}
+
+interface FrozenRequestExport {
+  requestUrl: string;
+  systemInstructionText: string;
+  contents: Array<{
+    role: 'user' | 'model';
+    parts: Array<{ text: string }>;
+  }>;
+  requestBody: Record<string, unknown>;
+}
+
+export async function executeBenchmarkOpsExperiment(config: BenchmarkOpsExperimentConfig) {
+  const apiKey = await readGeminiApiKey();
+  const table = await loadCustomersMessyTable();
+  const schema = JSON.parse(await readFile(config.schemaPath, 'utf8')) as Record<string, unknown>;
+  const requestExports = Object.fromEntries(
+    BENCHMARKS.map((benchmark) => [
+      benchmark.id,
+      buildBenchmarkOpsRequest({
+        benchmarkId: benchmark.id,
+        prompt: benchmark.prompt,
+        table,
+        schema,
+        includeAssistantPrefill: config.includeAssistantPrefill ?? true,
+        includeCuratedExamples: config.includeCuratedExamples ?? true,
+      }),
+    ]),
+  ) as Record<(typeof BENCHMARKS)[number]['id'], FrozenRequestExport>;
+  const results: BenchmarkOpsExperimentResult[] = [];
+
+  for (const benchmark of BENCHMARKS) {
+    for (let iteration = 1; iteration <= ITERATIONS; iteration += 1) {
+      results.push(
+        await runBenchmarkIteration({
+          apiKey,
+          table,
+          requestExport: requestExports[benchmark.id],
+          benchmarkId: benchmark.id,
+          iteration,
+        }),
+      );
+    }
+  }
+
+  await writeFile(
+    config.reportPath,
+    buildReport({
+      experimentTitle: config.experimentTitle,
+      schemaPath: config.schemaPath,
+      schema,
+      requestExports,
+      results,
+      includeAssistantPrefill: config.includeAssistantPrefill ?? true,
+      includeCuratedExamples: config.includeCuratedExamples ?? true,
+    }),
+    'utf8',
+  );
+
+  return {
+    results,
+    requestExports,
+    schema,
+  };
+}
+
+async function runBenchmarkIteration(input: {
+  apiKey: string;
+  table: Table;
+  requestExport: FrozenRequestExport;
+  benchmarkId: string;
+  iteration: number;
+}): Promise<BenchmarkOpsExperimentResult> {
+  try {
+    const response = await fetch(input.requestExport.requestUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': input.apiKey,
+      },
+      body: JSON.stringify(input.requestExport.requestBody),
+    });
+    const rawResponseBody = await response.text();
+
+    if (!response.ok) {
+      return {
+        benchmarkId: input.benchmarkId,
+        iteration: input.iteration,
+        status: 'request_error',
+        issueSummary: `HTTP ${response.status}: ${extractResponseErrorMessage(rawResponseBody)}`,
+      };
+    }
+
+    const rawText = extractCandidateText(rawResponseBody);
+
+    try {
+      const parsed = parseCompilerOpsResponse(rawText);
+
+      if (parsed.mode !== 'draft') {
+        return {
+          benchmarkId: input.benchmarkId,
+          iteration: input.iteration,
+          status: 'clarify',
+          mode: parsed.mode,
+          rawTextPreview: compact(rawText),
+          issueSummary: parsed.msg,
+        };
+      }
+
+      const compiled = compileCompilerOpsDraft(parsed.ops);
+
+      if (!compiled.value || compiled.issues.length > 0) {
+        return {
+          benchmarkId: input.benchmarkId,
+          iteration: input.iteration,
+          status: 'compile_failed',
+          mode: parsed.mode,
+          rawTextPreview: compact(rawText),
+          issueSummary: compiled.issues.map((issue) => `${issue.path}: ${issue.message}`).join(' | '),
+        };
+      }
+
+      const workflow: Workflow = {
+        version: 2,
+        workflowId: `wf_${input.benchmarkId}_compiler_ops_experiment`,
+        name: `Compiler ops ${input.benchmarkId}`,
+        steps: assignWorkflowStepIds(compiled.value),
+      };
+      const structural = validateWorkflowStructure(workflow);
+
+      if (!structural.valid) {
+        return {
+          benchmarkId: input.benchmarkId,
+          iteration: input.iteration,
+          status: 'structural_failed',
+          mode: parsed.mode,
+          rawTextPreview: compact(rawText),
+          issueSummary: structural.issues.map((issue) => `${issue.path}: ${issue.message}`).join(' | '),
+        };
+      }
+
+      const semantic = validateWorkflowSemantics(workflow, input.table);
+
+      if (!semantic.valid) {
+        return {
+          benchmarkId: input.benchmarkId,
+          iteration: input.iteration,
+          status: 'semantic_failed',
+          mode: parsed.mode,
+          rawTextPreview: compact(rawText),
+          issueSummary: semantic.issues.map((issue) => `${issue.path}: ${issue.message}`).join(' | '),
+        };
+      }
+
+      return {
+        benchmarkId: input.benchmarkId,
+        iteration: input.iteration,
+        status: 'valid_draft',
+        mode: parsed.mode,
+        rawTextPreview: compact(rawText),
+      };
+    } catch (error) {
+      return {
+        benchmarkId: input.benchmarkId,
+        iteration: input.iteration,
+        status: 'parse_error',
+        rawTextPreview: compact(rawText),
+        issueSummary: error instanceof Error ? error.message : 'Failed to parse compiler-ops response.',
+      };
+    }
+  } catch (error) {
+    return {
+      benchmarkId: input.benchmarkId,
+      iteration: input.iteration,
+      status: 'request_error',
+      issueSummary: error instanceof Error ? error.message : 'Request failed.',
+    };
+  }
+}
+
+function parseCompilerOpsResponse(rawText: string): CompilerOpsDraftResponse {
+  const parsed = JSON.parse(stripJsonCodeFence(rawText)) as Record<string, unknown>;
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Response must be a JSON object.');
+  }
+
+  if (parsed.mode !== 'clarify' && parsed.mode !== 'draft') {
+    throw new Error('Response must include mode "clarify" or "draft".');
+  }
+
+  if (typeof parsed.msg !== 'string' || parsed.msg.trim() === '') {
+    throw new Error('Response must include a non-empty msg string.');
+  }
+
+  if (!Array.isArray(parsed.ass) || parsed.ass.some((value) => typeof value !== 'string')) {
+    throw new Error('Response must include ass as a string array.');
+  }
+
+  if (!Array.isArray(parsed.ops) || parsed.ops.some((op) => !op || typeof op !== 'object' || Array.isArray(op))) {
+    throw new Error('Response must include ops as an object array.');
+  }
+
+  if (parsed.mode === 'draft' && parsed.ops.length === 0) {
+    throw new Error('Draft responses must include at least one op.');
+  }
+
+  return {
+    mode: parsed.mode,
+    msg: parsed.msg,
+    ass: parsed.ass as string[],
+    ops: parsed.ops as CompilerOp[],
+  };
+}
+
+function compileCompilerOpsDraft(ops: CompilerOp[]): {
+  value?: WorkflowStepInput[];
+  issues: CompilerIssue[];
+} {
+  const issues: CompilerIssue[] = [];
+  const steps: WorkflowStepInput[] = [];
+
+  ops.forEach((op, index) => {
+    if (!op || typeof op !== 'object' || Array.isArray(op)) {
+      issues.push({
+        path: `ops[${index}]`,
+        message: 'Each op must be an object.',
+      });
+      return;
+    }
+
+    switch (op.op) {
+      case 'fill_empty_from_col': {
+        if (!isNonEmptyString(op.dst)) {
+          issues.push({
+            path: `ops[${index}].dst`,
+            message: 'fill_empty_from_col requires a non-empty dst column id.',
+          });
+          return;
+        }
+
+        if (!isNonEmptyString(op.src)) {
+          issues.push({
+            path: `ops[${index}].src`,
+            message: 'fill_empty_from_col requires a non-empty src column id.',
+          });
+          return;
+        }
+
+        steps.push({
+          type: 'scopedRule',
+          columnIds: [op.dst],
+          cases: [
+            {
+              when: call('isEmpty', [valueExpr()]),
+              then: {
+                value: columnExpr(op.src),
+              },
+            },
+          ],
+        });
+        return;
+      }
+      case 'color_if_empty': {
+        if (!isNonEmptyString(op.col)) {
+          issues.push({
+            path: `ops[${index}].col`,
+            message: 'color_if_empty requires a non-empty col column id.',
+          });
+          return;
+        }
+
+        if (!isNonEmptyString(op.color)) {
+          issues.push({
+            path: `ops[${index}].color`,
+            message: 'color_if_empty requires a non-empty color string.',
+          });
+          return;
+        }
+
+        steps.push({
+          type: 'scopedRule',
+          columnIds: [op.col],
+          cases: [
+            {
+              when: call('isEmpty', [valueExpr()]),
+              then: {
+                format: {
+                  fillColor: op.color,
+                },
+              },
+            },
+          ],
+        });
+        return;
+      }
+      case 'drop_cols': {
+        if (!Array.isArray(op.cols) || op.cols.length === 0 || op.cols.some((columnId) => !isNonEmptyString(columnId))) {
+          issues.push({
+            path: `ops[${index}].cols`,
+            message: 'drop_cols requires a non-empty cols array of column ids.',
+          });
+          return;
+        }
+
+        steps.push({
+          type: 'dropColumns',
+          columnIds: op.cols,
+        });
+        return;
+      }
+      case 'derive_score_bands': {
+        const compiledStep = compileDeriveScoreBandsOp(op, index);
+        issues.push(...compiledStep.issues);
+
+        if (compiledStep.value) {
+          steps.push(compiledStep.value);
+        }
+        return;
+      }
+      default:
+        issues.push({
+          path: `ops[${index}].op`,
+          message: `Unsupported op '${String((op as { op?: unknown }).op ?? '')}'.`,
+        });
+    }
+  });
+
+  if (issues.length > 0) {
+    return { issues };
+  }
+
+  return {
+    value: steps,
+    issues: [],
+  };
+}
+
+function compileDeriveScoreBandsOp(op: DeriveScoreBandsOp, opIndex: number): {
+  value?: WorkflowStepInput;
+  issues: CompilerIssue[];
+} {
+  const issues: CompilerIssue[] = [];
+
+  if (!isNonEmptyString(op.src)) {
+    issues.push({
+      path: `ops[${opIndex}].src`,
+      message: 'derive_score_bands requires a non-empty src column id.',
+    });
+  }
+
+  if (!op.out || typeof op.out !== 'object' || Array.isArray(op.out)) {
+    issues.push({
+      path: `ops[${opIndex}].out`,
+      message: 'derive_score_bands requires an out object.',
+    });
+  } else {
+    if (!isNonEmptyString(op.out.id)) {
+      issues.push({
+        path: `ops[${opIndex}].out.id`,
+        message: 'derive_score_bands requires out.id.',
+      });
+    }
+
+    if (!isNonEmptyString(op.out.name)) {
+      issues.push({
+        path: `ops[${opIndex}].out.name`,
+        message: 'derive_score_bands requires out.name.',
+      });
+    }
+  }
+
+  if (!Array.isArray(op.bands) || op.bands.length === 0) {
+    issues.push({
+      path: `ops[${opIndex}].bands`,
+      message: 'derive_score_bands requires a non-empty bands array.',
+    });
+  }
+
+  const cases: WorkflowMatchCase[] = [];
+
+  if (Array.isArray(op.bands)) {
+    let sawOtherwise = false;
+
+    op.bands.forEach((band, bandIndex) => {
+      if (!band || typeof band !== 'object' || Array.isArray(band)) {
+        issues.push({
+          path: `ops[${opIndex}].bands[${bandIndex}]`,
+          message: 'Each band must be an object.',
+        });
+        return;
+      }
+
+      const bandIssues = validateBand(band, opIndex, bandIndex);
+      issues.push(...bandIssues);
+
+      if (bandIssues.length > 0) {
+        return;
+      }
+
+      const caseResult = compileBandToMatchCase(band, opIndex, bandIndex);
+      issues.push(...caseResult.issues);
+
+      if (!caseResult.value) {
+        return;
+      }
+
+      if (caseResult.value.kind === 'otherwise') {
+        if (sawOtherwise) {
+          issues.push({
+            path: `ops[${opIndex}].bands[${bandIndex}]`,
+            message: 'Only one fully open band is allowed.',
+          });
+          return;
+        }
+
+        if (bandIndex !== op.bands.length - 1) {
+          issues.push({
+            path: `ops[${opIndex}].bands[${bandIndex}]`,
+            message: 'A fully open band must be last.',
+          });
+          return;
+        }
+
+        sawOtherwise = true;
+      } else if (sawOtherwise) {
+        issues.push({
+          path: `ops[${opIndex}].bands[${bandIndex}]`,
+          message: 'Bands cannot appear after a fully open fallback band.',
+        });
+        return;
+      }
+
+      cases.push(caseResult.value);
+    });
+  }
+
+  if (issues.length > 0 || !isNonEmptyString(op.src) || !op.out || !isNonEmptyString(op.out.id) || !isNonEmptyString(op.out.name)) {
+    return { issues };
+  }
+
+  return {
+    value: {
+      type: 'deriveColumn',
+      newColumn: {
+        columnId: op.out.id,
+        displayName: op.out.name,
+      },
+      expression: {
+        kind: 'match',
+        subject: call('toNumber', [columnExpr(op.src)]),
+        cases,
+      },
+    },
+    issues,
+  };
+}
+
+function validateBand(band: ScoreBand, opIndex: number, bandIndex: number): CompilerIssue[] {
+  const issues: CompilerIssue[] = [];
+  const basePath = `ops[${opIndex}].bands[${bandIndex}]`;
+
+  if (band.lo !== null && typeof band.lo !== 'number') {
+    issues.push({
+      path: `${basePath}.lo`,
+      message: 'Band lo must be a number or null.',
+    });
+  }
+
+  if (band.hi !== null && typeof band.hi !== 'number') {
+    issues.push({
+      path: `${basePath}.hi`,
+      message: 'Band hi must be a number or null.',
+    });
+  }
+
+  if (typeof band.loInc !== 'boolean') {
+    issues.push({
+      path: `${basePath}.loInc`,
+      message: 'Band loInc must be boolean.',
+    });
+  }
+
+  if (typeof band.hiInc !== 'boolean') {
+    issues.push({
+      path: `${basePath}.hiInc`,
+      message: 'Band hiInc must be boolean.',
+    });
+  }
+
+  if (typeof band.score !== 'number' || !Number.isFinite(band.score)) {
+    issues.push({
+      path: `${basePath}.score`,
+      message: 'Band score must be a finite number.',
+    });
+  }
+
+  if (typeof band.lo === 'number' && typeof band.hi === 'number') {
+    if (band.lo > band.hi) {
+      issues.push({
+        path: basePath,
+        message: 'Band lo cannot be greater than hi.',
+      });
+    }
+
+    if (band.lo === band.hi && (!band.loInc || !band.hiInc)) {
+      issues.push({
+        path: basePath,
+        message: 'Equal band bounds require both loInc and hiInc to be true.',
+      });
+    }
+  }
+
+  return issues;
+}
+
+function compileBandToMatchCase(
+  band: ScoreBand,
+  opIndex: number,
+  bandIndex: number,
+): {
+  value?: WorkflowMatchCase;
+  issues: CompilerIssue[];
+} {
+  const lowerCondition = buildLowerBoundCondition(band.lo, band.loInc);
+  const upperCondition = buildUpperBoundCondition(band.hi, band.hiInc);
+  const thenExpression = literalExpr(band.score);
+
+  if (!lowerCondition && !upperCondition) {
+    return {
+      value: {
+        kind: 'otherwise',
+        then: thenExpression,
+      },
+      issues: [],
+    };
+  }
+
+  const whenConditions = [lowerCondition, upperCondition].filter(
+    (condition): condition is WorkflowExpression => Boolean(condition),
+  );
+
+  if (whenConditions.length === 0) {
+    return {
+      issues: [
+        {
+          path: `ops[${opIndex}].bands[${bandIndex}]`,
+          message: 'Band must produce a valid lower or upper bound condition.',
+        },
+      ],
+    };
+  }
+
+  return {
+    value: {
+      kind: 'when',
+      when: whenConditions.length === 1 ? whenConditions[0] : call('and', whenConditions),
+      then: thenExpression,
+    },
+    issues: [],
+  };
+}
+
+function buildLowerBoundCondition(lowerBound: number | null, inclusive: boolean) {
+  if (lowerBound === null) {
+    return null;
+  }
+
+  const greaterThan = call('greaterThan', [caseValueExpr(), literalExpr(lowerBound)]);
+
+  if (!inclusive) {
+    return greaterThan;
+  }
+
+  return call('or', [
+    greaterThan,
+    call('equals', [caseValueExpr(), literalExpr(lowerBound)]),
+  ]);
+}
+
+function buildUpperBoundCondition(upperBound: number | null, inclusive: boolean) {
+  if (upperBound === null) {
+    return null;
+  }
+
+  const lessThan = call('lessThan', [caseValueExpr(), literalExpr(upperBound)]);
+
+  if (!inclusive) {
+    return lessThan;
+  }
+
+  return call('or', [
+    lessThan,
+    call('equals', [caseValueExpr(), literalExpr(upperBound)]),
+  ]);
+}
+
+function buildBenchmarkOpsRequest(input: {
+  benchmarkId: (typeof BENCHMARKS)[number]['id'];
+  prompt: string;
+  table: Table;
+  schema: Record<string, unknown>;
+  includeAssistantPrefill: boolean;
+  includeCuratedExamples: boolean;
+}): FrozenRequestExport {
+  const systemInstructionText = buildCompilerOpsSystemInstruction({
+    table: input.table,
+    includeCuratedExamples: input.includeCuratedExamples,
+  });
+  const assistantPrefill = input.includeAssistantPrefill
+    ? input.benchmarkId === 'email_fallback_red'
+      ? 'I will fill Email from Email (2) when needed, color any still-empty Email cells red, and then drop Email (2).'
+      : 'I will create a priority score column from Balance using three ordered numeric bands.'
+    : null;
+  const contents: FrozenRequestExport['contents'] = [
+    {
+      role: 'user',
+      parts: [{ text: input.prompt }],
+    },
+  ];
+
+  if (assistantPrefill) {
+    contents.push({
+      role: 'model',
+      parts: [{ text: assistantPrefill }],
+    });
+    contents.push({
+      role: 'user',
+      parts: [{ text: input.prompt }],
+    });
+  }
+
+  return {
+    requestUrl: `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+    systemInstructionText,
+    contents,
+    requestBody: {
+      systemInstruction: {
+        parts: [{ text: systemInstructionText }],
+      },
+      contents,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: input.schema,
+        temperature: 0,
+        maxOutputTokens: 2048,
+        thinkingConfig: {
+          thinkingLevel: 'minimal',
+        },
+      },
+    },
+  };
+}
+
+function buildCompilerOpsSystemInstruction(input: {
+  table: Table;
+  includeCuratedExamples: boolean;
+}) {
+  const columnLines = input.table.schema.columns
+    .map((column) => `- ${column.columnId} | ${column.displayName} | ${column.logicalType}`)
+    .join('\n');
+  const curatedExamples = input.includeCuratedExamples
+    ? `Curated examples:
+Example 1 user: If Email is empty, use Email (2), then drop Email (2).
+Example 1 response: {"mode":"draft","msg":"Use Email (2) only when Email is empty, then drop Email (2).","ass":[],"ops":[{"op":"fill_empty_from_col","dst":"col_email","src":"col_email_2"},{"op":"drop_cols","cols":["col_email_2"]}]}
+Example 2 user: We just need one email column. Use Email first, fall back to Email (2), and if both are empty color the final email cell red.
+Example 2 response: {"mode":"draft","msg":"Use Email (2) when Email is empty, color any still-empty Email cells red, then drop Email (2).","ass":[],"ops":[{"op":"fill_empty_from_col","dst":"col_email","src":"col_email_2"},{"op":"color_if_empty","col":"col_email","color":"#ffc7ce"},{"op":"drop_cols","cols":["col_email_2"]}]}
+Example 3 user: If balance is negative set priority score to 3, if balance is 0 to 200 set it to 2, otherwise set it to 1.
+Example 3 response: {"mode":"draft","msg":"Create a priority score from Balance using three numeric bands.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":null,"hi":0,"loInc":false,"hiInc":false,"score":3},{"lo":0,"hi":200,"loInc":true,"hiInc":true,"score":2},{"lo":200,"hi":null,"loInc":false,"hiInc":false,"score":1}]}]}
+Example 4 user: Clean the name column.
+Example 4 response: {"mode":"clarify","msg":"Which column should be cleaned, and what kind of cleanup do you want?","ass":[],"ops":[]}`
+    : 'Curated examples:\n(none)';
+
+  return `You are an expert Scratch My Table copilot.
+Translate the user request into a tiny compiler-friendly operation list.
+Return JSON only. Do not use markdown fences.
+Do not return canonical workflow AST, authoring IR, or step IDs.
+Return exactly one object with keys in this order: mode, msg, ass, ops.
+Use mode "draft" when you can act. Use mode "clarify" only when a required choice is missing.
+Return ops: [] only when mode is "clarify".
+
+Compiler-op response contract:
+- mode: "clarify" or "draft"
+- msg: short natural-language summary
+- ass: array of short strings
+- ops: ordered compiler ops
+
+Allowed compiler ops:
+- fill_empty_from_col
+  - Use when a destination column should keep its current value unless it is empty, then copy from a source column.
+  - Shape order: { "op", "dst", "src" }
+- color_if_empty
+  - Use when a column should be colored if its final value is still empty.
+  - Shape order: { "op", "col", "color" }
+- drop_cols
+  - Use to remove columns after earlier ops no longer need them.
+  - Shape order: { "op", "cols" }
+- derive_score_bands
+  - Use to derive a numeric score column from one source column using ordered numeric bands.
+  - This op always normalizes src with toNumber before applying bands.
+  - Each band has { "lo", "hi", "loInc", "hiInc", "score" }.
+  - null for lo means no lower bound. null for hi means no upper bound.
+  - Shape order: { "op", "src", "out", "bands" }
+
+Rules:
+- Use column ids exactly as provided.
+- Keep ops in the execution order they should run.
+- Use only the allowed op names above.
+- Keep property order aligned with the schema and examples.
+- When the user wants one email column with fallback then red formatting, use fill_empty_from_col, then color_if_empty, then drop_cols.
+- When the user wants a priority score from Balance, use derive_score_bands.
+
+Schema currently available to the returned ops:
+${columnLines}
+
+Current workflow/editor issues:
+- (none)
+
+Current workflow steps without IDs:
+[]
+
+Current workflow summary:
+- (empty workflow)
+
+Current AI draft workflow steps without IDs:
+(no draft yet)
+
+${curatedExamples}`;
+}
+
+function buildReport(input: {
+  experimentTitle: string;
+  schemaPath: string;
+  schema: Record<string, unknown>;
+  requestExports: Record<string, FrozenRequestExport>;
+  results: BenchmarkOpsExperimentResult[];
+  includeAssistantPrefill: boolean;
+  includeCuratedExamples: boolean;
+}) {
+  const schemaText = `${JSON.stringify(input.schema, null, 2)}\n`;
+  const lines = [
+    `# ${input.experimentTitle} Report`,
+    '',
+    `Generated at: \`${new Date().toISOString()}\``,
+    '',
+    '## Configuration',
+    '',
+    `- Request style: \`tiny compiler-op IR\``,
+    `- Model: \`${MODEL}\``,
+    `- Thinking level: \`minimal\``,
+    `- Temperature: \`0\``,
+    `- Iterations per benchmark: \`${ITERATIONS}\``,
+    `- Assistant prefill: \`${String(input.includeAssistantPrefill)}\``,
+    `- Curated examples: \`${String(input.includeCuratedExamples)}\``,
+    `- Schema file: \`${input.schemaPath}\``,
+    `- Schema size: \`${Buffer.byteLength(schemaText, 'utf8')}\` bytes`,
+    '',
+    '## Summary',
+    '',
+    '| Benchmark | Total | Valid | Clarify | Request error | Parse error | Compile failed | Structural failed | Semantic failed |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+  ];
+
+  BENCHMARKS.forEach((benchmark) => {
+    const results = input.results.filter((result) => result.benchmarkId === benchmark.id);
+    lines.push(
+      `| \`${benchmark.id}\` | ${results.length} | ${countStatus(results, 'valid_draft')} | ${countStatus(results, 'clarify')} | ${countStatus(results, 'request_error')} | ${countStatus(results, 'parse_error')} | ${countStatus(results, 'compile_failed')} | ${countStatus(results, 'structural_failed')} | ${countStatus(results, 'semantic_failed')} |`,
+    );
+  });
+
+  lines.push('', '## Detailed Results', '');
+
+  BENCHMARKS.forEach((benchmark) => {
+    lines.push(`### ${benchmark.id}`, '', `Prompt: ${benchmark.prompt}`, '', '| Run | Status | Mode | Notes |', '| ---: | --- | --- | --- |');
+
+    input.results
+      .filter((result) => result.benchmarkId === benchmark.id)
+      .forEach((result) => {
+        lines.push(
+          `| ${result.iteration} | \`${result.status}\` | ${result.mode ?? '-'} | ${escapeTable(result.issueSummary ?? result.rawTextPreview ?? '')} |`,
+        );
+      });
+
+    const failedResults = input.results.filter(
+      (result) => result.benchmarkId === benchmark.id && result.status !== 'valid_draft',
+    );
+
+    if (failedResults.length > 0) {
+      lines.push('', 'Representative raw output previews:', '');
+
+      failedResults.slice(0, 3).forEach((result) => {
+        lines.push(`- Run ${result.iteration} (\`${result.status}\`): ${result.rawTextPreview ?? '(no raw text preview)'}`);
+      });
+    }
+
+    lines.push('', 'Frozen request snapshot:', '', '```json', JSON.stringify(input.requestExports[benchmark.id], null, 2), '```', '');
+  });
+
+  lines.push('## Schema Snapshot', '', '```json', schemaText.trimEnd(), '```', '');
+
+  return `${lines.join('\n')}\n`;
+}
+
+function stripJsonCodeFence(value: string) {
+  const trimmed = value.trim();
+
+  if (trimmed.startsWith('```')) {
+    return trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  }
+
+  return trimmed;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+function columnExpr(columnId: string): WorkflowExpression {
+  return {
+    kind: 'column',
+    columnId,
+  };
+}
+
+function valueExpr(): WorkflowExpression {
+  return {
+    kind: 'value',
+  };
+}
+
+function caseValueExpr(): WorkflowExpression {
+  return {
+    kind: 'caseValue',
+  };
+}
+
+function literalExpr(value: string | number | boolean | null): WorkflowExpression {
+  return {
+    kind: 'literal',
+    value,
+  };
+}
+
+function call(name: WorkflowExpressionFunctionName, args: WorkflowExpression[]): WorkflowExpression {
+  return {
+    kind: 'call',
+    name,
+    args,
+  };
+}
+
+function countStatus(results: BenchmarkOpsExperimentResult[], status: BenchmarkOpsStatus) {
+  return results.filter((result) => result.status === status).length;
+}
+
+function escapeTable(value: string) {
+  return value.replace(/\|/g, '\\|');
 }
 
 ===== src\ai\canonicalReplayHarness.ts =====
@@ -3978,7 +4892,8 @@ function escapeTable(value: string) {
 ===== src\ai\compileAuthoringDraft.test.ts =====
 import { describe, expect, it } from 'vitest';
 
-import { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps, type AuthoringStepInput } from './index';
+import { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps } from './index';
+import type { AuthoringStepInput } from './authoringIr';
 
 describe('compileAuthoringDraft', () => {
   it('lowers unary, binary, ternary, nary, and nullary value expressions into canonical calls', () => {
@@ -5469,6 +6384,565 @@ function makeIssue(code: string, message: string, path: string): AIDraftIssue {
   };
 }
 
+===== src\ai\compilerOpsDraft.ts =====
+import type { AIDraftIssue } from './authoringIr';
+import type { WorkflowStepInput } from './types';
+import type {
+  WorkflowExpression,
+  WorkflowExpressionFunctionName,
+  WorkflowMatchCase,
+} from '../workflow/types';
+
+export interface GeminiCompilerOpsDraftResponse {
+  mode: 'clarify' | 'draft';
+  msg: string;
+  ass: string[];
+  ops: CompilerOpInput[];
+}
+
+export type CompilerOpInput =
+  | FillEmptyFromColOpInput
+  | ColorIfEmptyOpInput
+  | DropColsOpInput
+  | DeriveScoreBandsOpInput;
+
+export interface FillEmptyFromColOpInput {
+  op: 'fill_empty_from_col';
+  dst: string;
+  src: string;
+}
+
+export interface ColorIfEmptyOpInput {
+  op: 'color_if_empty';
+  col: string;
+  color: string;
+}
+
+export interface DropColsOpInput {
+  op: 'drop_cols';
+  cols: string[];
+}
+
+export interface DeriveScoreBandsOpInput {
+  op: 'derive_score_bands';
+  src: string;
+  out: {
+    id: string;
+    name: string;
+  };
+  bands: ScoreBandInput[];
+}
+
+export interface ScoreBandInput {
+  lo: number | null;
+  hi: number | null;
+  loInc: boolean;
+  hiInc: boolean;
+  score: number;
+}
+
+interface CompileResult<T> {
+  value: T | null;
+  issues: AIDraftIssue[];
+}
+
+export function compileGeminiCompilerOpsDraft(
+  ops: CompilerOpInput[],
+): CompileResult<WorkflowStepInput[]> {
+  const issues: AIDraftIssue[] = [];
+  const steps: WorkflowStepInput[] = [];
+
+  if (!Array.isArray(ops)) {
+    return {
+      value: null,
+      issues: [
+        makeIssue(
+          'authoringType',
+          'Gemini compiler ops must be an array.',
+          'ops',
+        ),
+      ],
+    };
+  }
+
+  ops.forEach((op, index) => {
+    if (!isRecord(op)) {
+      issues.push(
+        makeIssue(
+          'authoringType',
+          'Each compiler op must be an object.',
+          `ops[${index}]`,
+        ),
+      );
+      return;
+    }
+
+    switch (op.op) {
+      case 'fill_empty_from_col': {
+        if (!isNonEmptyString(op.dst)) {
+          issues.push(
+            makeIssue(
+              'authoringMissingField',
+              'fill_empty_from_col requires dst.',
+              `ops[${index}].dst`,
+            ),
+          );
+          return;
+        }
+
+        if (!isNonEmptyString(op.src)) {
+          issues.push(
+            makeIssue(
+              'authoringMissingField',
+              'fill_empty_from_col requires src.',
+              `ops[${index}].src`,
+            ),
+          );
+          return;
+        }
+
+        steps.push({
+          type: 'scopedRule',
+          columnIds: [op.dst],
+          cases: [
+            {
+              when: call('isEmpty', [valueExpr()]),
+              then: {
+                value: columnExpr(op.src),
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      case 'color_if_empty': {
+        if (!isNonEmptyString(op.col)) {
+          issues.push(
+            makeIssue(
+              'authoringMissingField',
+              'color_if_empty requires col.',
+              `ops[${index}].col`,
+            ),
+          );
+          return;
+        }
+
+        if (!isNonEmptyString(op.color)) {
+          issues.push(
+            makeIssue(
+              'authoringMissingField',
+              'color_if_empty requires color.',
+              `ops[${index}].color`,
+            ),
+          );
+          return;
+        }
+
+        steps.push({
+          type: 'scopedRule',
+          columnIds: [op.col],
+          cases: [
+            {
+              when: call('isEmpty', [valueExpr()]),
+              then: {
+                format: {
+                  fillColor: op.color,
+                },
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      case 'drop_cols': {
+        if (
+          !Array.isArray(op.cols)
+          || op.cols.length === 0
+          || op.cols.some((columnId) => !isNonEmptyString(columnId))
+        ) {
+          issues.push(
+            makeIssue(
+              'authoringType',
+              'drop_cols requires a non-empty cols array.',
+              `ops[${index}].cols`,
+            ),
+          );
+          return;
+        }
+
+        steps.push({
+          type: 'dropColumns',
+          columnIds: op.cols,
+        });
+        return;
+      }
+
+      case 'derive_score_bands': {
+        const compiled = compileDeriveScoreBandsOp(op, index);
+        issues.push(...compiled.issues);
+
+        if (compiled.value) {
+          steps.push(compiled.value);
+        }
+        return;
+      }
+
+      default:
+        issues.push(
+          makeIssue(
+            'authoringUnsupportedOp',
+            `Unsupported compiler op '${String((op as { op?: unknown }).op ?? '')}'.`,
+            `ops[${index}].op`,
+          ),
+        );
+    }
+  });
+
+  return {
+    value: issues.length === 0 ? steps : null,
+    issues,
+  };
+}
+
+function compileDeriveScoreBandsOp(
+  op: DeriveScoreBandsOpInput,
+  opIndex: number,
+): CompileResult<WorkflowStepInput> {
+  const issues: AIDraftIssue[] = [];
+
+  if (!isNonEmptyString(op.src)) {
+    issues.push(
+      makeIssue(
+        'authoringMissingField',
+        'derive_score_bands requires src.',
+        `ops[${opIndex}].src`,
+      ),
+    );
+  }
+
+  if (!isRecord(op.out)) {
+    issues.push(
+      makeIssue(
+        'authoringMissingField',
+        'derive_score_bands requires out.',
+        `ops[${opIndex}].out`,
+      ),
+    );
+  } else {
+    if (!isNonEmptyString(op.out.id)) {
+      issues.push(
+        makeIssue(
+          'authoringMissingField',
+          'derive_score_bands requires out.id.',
+          `ops[${opIndex}].out.id`,
+        ),
+      );
+    }
+
+    if (!isNonEmptyString(op.out.name)) {
+      issues.push(
+        makeIssue(
+          'authoringMissingField',
+          'derive_score_bands requires out.name.',
+          `ops[${opIndex}].out.name`,
+        ),
+      );
+    }
+  }
+
+  if (!Array.isArray(op.bands) || op.bands.length === 0) {
+    issues.push(
+      makeIssue(
+        'authoringInvalidMatch',
+        'derive_score_bands requires a non-empty bands array.',
+        `ops[${opIndex}].bands`,
+      ),
+    );
+    return { value: null, issues };
+  }
+
+  const cases: WorkflowMatchCase[] = [];
+  let sawOtherwise = false;
+
+  op.bands.forEach((band, bandIndex) => {
+    if (!isRecord(band)) {
+      issues.push(
+        makeIssue(
+          'authoringType',
+          'Each score band must be an object.',
+          `ops[${opIndex}].bands[${bandIndex}]`,
+        ),
+      );
+      return;
+    }
+
+    issues.push(...validateBand(band as ScoreBandInput, opIndex, bandIndex));
+    const compiledCase = compileBandToMatchCase(
+      band as ScoreBandInput,
+      opIndex,
+      bandIndex,
+      sawOtherwise,
+      bandIndex === op.bands.length - 1,
+    );
+    issues.push(...compiledCase.issues);
+
+    if (!compiledCase.value) {
+      return;
+    }
+
+    if (compiledCase.value.kind === 'otherwise') {
+      sawOtherwise = true;
+    }
+
+    cases.push(compiledCase.value);
+  });
+
+  if (
+    issues.length > 0
+    || !isNonEmptyString(op.src)
+    || !isRecord(op.out)
+    || !isNonEmptyString(op.out.id)
+    || !isNonEmptyString(op.out.name)
+  ) {
+    return { value: null, issues };
+  }
+
+  return {
+    value: {
+      type: 'deriveColumn',
+      newColumn: {
+        columnId: op.out.id,
+        displayName: op.out.name,
+      },
+      expression: {
+        kind: 'match',
+        subject: call('toNumber', [columnExpr(op.src)]),
+        cases,
+      },
+    },
+    issues,
+  };
+}
+
+function validateBand(
+  band: ScoreBandInput,
+  opIndex: number,
+  bandIndex: number,
+) {
+  const issues: AIDraftIssue[] = [];
+  const basePath = `ops[${opIndex}].bands[${bandIndex}]`;
+
+  if (band.lo !== null && typeof band.lo !== 'number') {
+    issues.push(makeIssue('authoringType', 'Band lo must be number or null.', `${basePath}.lo`));
+  }
+
+  if (band.hi !== null && typeof band.hi !== 'number') {
+    issues.push(makeIssue('authoringType', 'Band hi must be number or null.', `${basePath}.hi`));
+  }
+
+  if (typeof band.loInc !== 'boolean') {
+    issues.push(makeIssue('authoringType', 'Band loInc must be boolean.', `${basePath}.loInc`));
+  }
+
+  if (typeof band.hiInc !== 'boolean') {
+    issues.push(makeIssue('authoringType', 'Band hiInc must be boolean.', `${basePath}.hiInc`));
+  }
+
+  if (typeof band.score !== 'number' || !Number.isFinite(band.score)) {
+    issues.push(makeIssue('authoringType', 'Band score must be a finite number.', `${basePath}.score`));
+  }
+
+  if (typeof band.lo === 'number' && typeof band.hi === 'number') {
+    if (band.lo > band.hi) {
+      issues.push(makeIssue('authoringInvalidBetween', 'Band lo cannot be greater than hi.', basePath));
+    }
+
+    if (band.lo === band.hi && (!band.loInc || !band.hiInc)) {
+      issues.push(
+        makeIssue(
+          'authoringInvalidBetween',
+          'Equal band bounds require loInc and hiInc to both be true.',
+          basePath,
+        ),
+      );
+    }
+  }
+
+  return issues;
+}
+
+function compileBandToMatchCase(
+  band: ScoreBandInput,
+  opIndex: number,
+  bandIndex: number,
+  sawOtherwise: boolean,
+  isLastBand: boolean,
+): CompileResult<WorkflowMatchCase> {
+  const issues: AIDraftIssue[] = [];
+  const lowerCondition = buildLowerBoundCondition(band.lo, band.loInc);
+  const upperCondition = buildUpperBoundCondition(band.hi, band.hiInc);
+  const thenExpression = literalExpr(band.score);
+  const bandPath = `ops[${opIndex}].bands[${bandIndex}]`;
+
+  if (!lowerCondition && !upperCondition) {
+    if (sawOtherwise) {
+      issues.push(
+        makeIssue(
+          'authoringInvalidMatch',
+          'Only one fully-open fallback band is allowed.',
+          bandPath,
+        ),
+      );
+      return { value: null, issues };
+    }
+
+    if (!isLastBand) {
+      issues.push(
+        makeIssue(
+          'authoringInvalidMatch',
+          'A fully-open fallback band must be last.',
+          bandPath,
+        ),
+      );
+      return { value: null, issues };
+    }
+
+    return {
+      value: {
+        kind: 'otherwise',
+        then: thenExpression,
+      },
+      issues,
+    };
+  }
+
+  if (sawOtherwise) {
+    issues.push(
+      makeIssue(
+        'authoringInvalidMatch',
+        'Bands cannot appear after a fallback band.',
+        bandPath,
+      ),
+    );
+    return { value: null, issues };
+  }
+
+  const conditions = [lowerCondition, upperCondition].filter(
+    (condition): condition is WorkflowExpression => Boolean(condition),
+  );
+
+  if (conditions.length === 0) {
+    issues.push(
+      makeIssue(
+        'authoringInvalidBetween',
+        'Band must include at least one valid bound.',
+        bandPath,
+      ),
+    );
+    return { value: null, issues };
+  }
+
+  return {
+    value: {
+      kind: 'when',
+      when: conditions.length === 1 ? conditions[0] : call('and', conditions),
+      then: thenExpression,
+    },
+    issues,
+  };
+}
+
+function buildLowerBoundCondition(lowerBound: number | null, inclusive: boolean) {
+  if (lowerBound === null) {
+    return null;
+  }
+
+  const strict = call('greaterThan', [caseValueExpr(), literalExpr(lowerBound)]);
+
+  if (!inclusive) {
+    return strict;
+  }
+
+  return call('or', [
+    strict,
+    call('equals', [caseValueExpr(), literalExpr(lowerBound)]),
+  ]);
+}
+
+function buildUpperBoundCondition(upperBound: number | null, inclusive: boolean) {
+  if (upperBound === null) {
+    return null;
+  }
+
+  const strict = call('lessThan', [caseValueExpr(), literalExpr(upperBound)]);
+
+  if (!inclusive) {
+    return strict;
+  }
+
+  return call('or', [
+    strict,
+    call('equals', [caseValueExpr(), literalExpr(upperBound)]),
+  ]);
+}
+
+function columnExpr(columnId: string): WorkflowExpression {
+  return {
+    kind: 'column',
+    columnId,
+  };
+}
+
+function valueExpr(): WorkflowExpression {
+  return {
+    kind: 'value',
+  };
+}
+
+function caseValueExpr(): WorkflowExpression {
+  return {
+    kind: 'caseValue',
+  };
+}
+
+function literalExpr(value: string | number | boolean | null): WorkflowExpression {
+  return {
+    kind: 'literal',
+    value,
+  };
+}
+
+function call(
+  name: WorkflowExpressionFunctionName,
+  args: WorkflowExpression[],
+): WorkflowExpression {
+  return {
+    kind: 'call',
+    name,
+    args,
+  };
+}
+
+function makeIssue(code: string, message: string, path: string): AIDraftIssue {
+  return {
+    code,
+    severity: 'error',
+    message,
+    path,
+    phase: 'authoring',
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
 ===== src\ai\devLog.ts =====
 export interface AIDevLogEntry {
   turnId: string;
@@ -5621,6 +7095,34 @@ describeExperiment('Gemini experiment 1', () => {
       });
 
       expect(results).toHaveLength(BENCHMARKS.length * DEFAULT_EXPERIMENT_ITERATIONS);
+    },
+    180_000,
+  );
+});
+
+===== src\ai\experiment_10.test.ts =====
+import path from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { RUN_GEMINI_EXPERIMENTS } from './experimentHarness';
+import { executeBenchmarkOpsExperiment } from './benchmarkOpsExperimentHarness';
+
+const describeExperiment = RUN_GEMINI_EXPERIMENTS ? describe : describe.skip;
+
+describeExperiment('Gemini experiment 10', () => {
+  it(
+    'runs the tiny compiler-op schema without assistant prefill and without curated examples',
+    async () => {
+      const { results } = await executeBenchmarkOpsExperiment({
+        experimentTitle: 'Experiment 10',
+        schemaPath: path.resolve(process.cwd(), '.tools', 'ai-experiments', 'experiment_8_schema.json'),
+        reportPath: path.resolve(process.cwd(), '.tools', 'ai-experiments', 'experiment_10_report.md'),
+        includeAssistantPrefill: false,
+        includeCuratedExamples: false,
+      });
+
+      expect(results).toHaveLength(10);
     },
     180_000,
   );
@@ -5797,6 +7299,60 @@ describeExperiment('Gemini experiment 7', () => {
   );
 });
 
+===== src\ai\experiment_8.test.ts =====
+import path from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { RUN_GEMINI_EXPERIMENTS } from './experimentHarness';
+import { executeBenchmarkOpsExperiment } from './benchmarkOpsExperimentHarness';
+
+const describeExperiment = RUN_GEMINI_EXPERIMENTS ? describe : describe.skip;
+
+describeExperiment('Gemini experiment 8', () => {
+  it(
+    'runs the tiny compiler-op schema against the benchmark prompts and writes a report',
+    async () => {
+      const { results } = await executeBenchmarkOpsExperiment({
+        experimentTitle: 'Experiment 8',
+        schemaPath: path.resolve(process.cwd(), '.tools', 'ai-experiments', 'experiment_8_schema.json'),
+        reportPath: path.resolve(process.cwd(), '.tools', 'ai-experiments', 'experiment_8_report.md'),
+      });
+
+      expect(results).toHaveLength(10);
+    },
+    180_000,
+  );
+});
+
+===== src\ai\experiment_9.test.ts =====
+import path from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { RUN_GEMINI_EXPERIMENTS } from './experimentHarness';
+import { executeBenchmarkOpsExperiment } from './benchmarkOpsExperimentHarness';
+
+const describeExperiment = RUN_GEMINI_EXPERIMENTS ? describe : describe.skip;
+
+describeExperiment('Gemini experiment 9', () => {
+  it(
+    'runs the tiny compiler-op schema without assistant prefill while keeping curated examples',
+    async () => {
+      const { results } = await executeBenchmarkOpsExperiment({
+        experimentTitle: 'Experiment 9',
+        schemaPath: path.resolve(process.cwd(), '.tools', 'ai-experiments', 'experiment_8_schema.json'),
+        reportPath: path.resolve(process.cwd(), '.tools', 'ai-experiments', 'experiment_9_report.md'),
+        includeAssistantPrefill: false,
+        includeCuratedExamples: true,
+      });
+
+      expect(results).toHaveLength(10);
+    },
+    180_000,
+  );
+});
+
 ===== src\ai\experimentHarness.ts =====
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -5808,8 +7364,8 @@ import { validateWorkflowSemantics, validateWorkflowStructure, type Workflow } f
 import {
   assignWorkflowStepIds,
   buildGeminiRequestExport,
-  compileAuthoringDraft,
-  parseGeminiAuthoringResponse,
+  compileGeminiCompilerOpsDraft,
+  parseGeminiCompilerOpsResponse,
 } from './index';
 
 export const RUN_GEMINI_EXPERIMENTS = process.env.RUN_GEMINI_EXPERIMENTS === '1';
@@ -5968,7 +7524,7 @@ async function runBenchmarkIteration(input: {
     const rawText = extractCandidateText(rawResponseBody);
 
     try {
-      const parsed = parseGeminiAuthoringResponse(rawText);
+      const parsed = parseGeminiCompilerOpsResponse(rawText);
 
       if (parsed.mode !== 'draft') {
         return {
@@ -5977,11 +7533,11 @@ async function runBenchmarkIteration(input: {
           status: 'clarify',
           mode: parsed.mode,
           rawTextPreview: compact(rawText),
-          issueSummary: parsed.assistantMessage,
+          issueSummary: parsed.msg,
         };
       }
 
-      const compiled = compileAuthoringDraft(parsed.steps ?? []);
+      const compiled = compileGeminiCompilerOpsDraft(parsed.ops);
 
       if (!compiled.value || compiled.issues.length > 0) {
         return {
@@ -6235,9 +7791,8 @@ function escapeTable(value: string) {
 }
 
 ===== src\ai\gemini.ts =====
-import { compileAuthoringDraft } from './compileAuthoringDraft';
+import { compileGeminiCompilerOpsDraft, type GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
 import { buildGeminiContents, buildGeminiSystemInstruction } from './prompt';
-import type { AuthoringDraftResponse } from './authoringIr';
 import type { GeminiClientLogEvent, GeminiDraftTurnInput, GeminiDraftTurnResult } from './types';
 
 interface GeminiGenerateContentResponse {
@@ -6386,7 +7941,7 @@ export async function generateGeminiDraftTurn(
     emitLogEvent(input, 'response_received', 'Gemini response body received.', {
       rawText,
     });
-    const parsed = parseGeminiAuthoringResponse(rawText);
+    const parsed = parseGeminiCompilerOpsResponse(rawText);
     emitLogEvent(input, 'response_parsed', `Gemini response parsed in mode "${parsed.mode}".`, {
       rawText,
       responseMode: parsed.mode,
@@ -6400,7 +7955,7 @@ export async function generateGeminiDraftTurn(
       };
     }
 
-    const compiled = compileAuthoringDraft(parsed.steps ?? []);
+    const compiled = compileGeminiCompilerOpsDraft(parsed.ops);
 
     return {
       response: parsed,
@@ -6454,7 +8009,7 @@ export function buildGeminiRequestExport(
       generationConfig: {
         responseMimeType: 'application/json',
         responseJsonSchema: options.responseJsonSchema ?? GEMINI_RESPONSE_JSON_SCHEMA,
-        temperature: 0.2,
+        temperature: 0,
         maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
         ...(thinkingConfig ? { thinkingConfig } : {}),
       },
@@ -6462,7 +8017,7 @@ export function buildGeminiRequestExport(
   };
 }
 
-export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftResponse {
+export function parseGeminiCompilerOpsResponse(rawText: string): GeminiCompilerOpsDraftResponse {
   const parsed = JSON.parse(stripJsonCodeFence(rawText)) as Record<string, unknown>;
 
   if (!parsed || typeof parsed !== 'object') {
@@ -6470,42 +8025,35 @@ export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftRes
   }
 
   const mode = parsed.mode;
-  const assistantMessage = parsed.assistantMessage;
-  const assumptions = parsed.assumptions;
-  const steps = parsed.steps;
+  const msg = parsed.msg;
+  const ass = parsed.ass;
+  const ops = parsed.ops;
 
   if (mode !== 'clarify' && mode !== 'draft') {
     throw new Error('Gemini response must include mode "clarify" or "draft".');
   }
 
-  if (typeof assistantMessage !== 'string' || assistantMessage.trim() === '') {
-    throw new Error('Gemini response must include a non-empty assistantMessage string.');
+  if (typeof msg !== 'string' || msg.trim() === '') {
+    throw new Error('Gemini response must include a non-empty msg string.');
   }
 
-  if (!Array.isArray(assumptions) || assumptions.some((value) => typeof value !== 'string')) {
-    throw new Error('Gemini response must include an assumptions string array.');
+  if (!Array.isArray(ass) || ass.some((value) => typeof value !== 'string')) {
+    throw new Error('Gemini response must include ass as a string array.');
   }
 
-  if (mode === 'draft') {
-    if (!Array.isArray(steps)) {
-      throw new Error('Gemini draft responses must include a steps array.');
-    }
-    if (steps.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) {
-      throw new Error('Gemini draft steps must be objects.');
-    }
+  if (!Array.isArray(ops) || ops.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) {
+    throw new Error('Gemini response must include ops as an object array.');
+  }
 
-    return {
-      mode,
-      assistantMessage,
-      assumptions,
-      steps: steps as AuthoringDraftResponse['steps'],
-    };
+  if (mode === 'draft' && ops.length === 0) {
+    throw new Error('Gemini draft responses must include a non-empty ops array.');
   }
 
   return {
     mode,
-    assistantMessage,
-    assumptions,
+    msg,
+    ass,
+    ops: ops as GeminiCompilerOpsDraftResponse['ops'],
   };
 }
 
@@ -6576,31 +8124,176 @@ function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThi
 
 function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
   return {
+    $id: 'smt-benchmark-compiler-ops-v1',
     type: 'object',
     additionalProperties: false,
+    propertyOrdering: ['mode', 'msg', 'ass', 'ops'],
     properties: {
       mode: {
         type: 'string',
         enum: ['clarify', 'draft'],
+        description: 'Use draft when you can propose ops. Use clarify only when a required choice is missing.',
       },
-      assistantMessage: {
+      msg: {
         type: 'string',
+        description: 'Short plain-language summary.',
       },
-      assumptions: {
+      ass: {
         type: 'array',
+        description: 'Assumptions. Return [] when none.',
         items: {
           type: 'string',
         },
       },
-      steps: {
+      ops: {
         type: 'array',
+        description: 'Ordered compiler-friendly operations. Return [] only when mode is clarify.',
         items: {
-          type: 'object',
-          additionalProperties: true,
+          $ref: '#/$defs/op',
         },
       },
     },
-    required: ['mode', 'assistantMessage', 'assumptions'],
+    required: ['mode', 'msg', 'ass', 'ops'],
+    $defs: {
+      cid: {
+        type: 'string',
+        description: 'Column id exactly as provided, for example col_email.',
+      },
+      hex: {
+        type: 'string',
+        description: 'Hex fill color such as #ffc7ce.',
+      },
+      newCol: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['id', 'name'],
+        properties: {
+          id: {
+            type: 'string',
+            description: 'New column id.',
+          },
+          name: {
+            type: 'string',
+            description: 'New display name.',
+          },
+        },
+        required: ['id', 'name'],
+      },
+      band: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['lo', 'hi', 'loInc', 'hiInc', 'score'],
+        properties: {
+          lo: {
+            type: ['number', 'null'],
+            description: 'Lower bound. null means no lower bound.',
+          },
+          hi: {
+            type: ['number', 'null'],
+            description: 'Upper bound. null means no upper bound.',
+          },
+          loInc: {
+            type: 'boolean',
+            description: 'Whether the lower bound is inclusive.',
+          },
+          hiInc: {
+            type: 'boolean',
+            description: 'Whether the upper bound is inclusive.',
+          },
+          score: {
+            type: 'number',
+            description: 'Score to emit for this band.',
+          },
+        },
+        required: ['lo', 'hi', 'loInc', 'hiInc', 'score'],
+      },
+      fillEmptyFromCol: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'dst', 'src'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['fill_empty_from_col'],
+          },
+          dst: {
+            $ref: '#/$defs/cid',
+          },
+          src: {
+            $ref: '#/$defs/cid',
+          },
+        },
+        required: ['op', 'dst', 'src'],
+      },
+      colorIfEmpty: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'col', 'color'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['color_if_empty'],
+          },
+          col: {
+            $ref: '#/$defs/cid',
+          },
+          color: {
+            $ref: '#/$defs/hex',
+          },
+        },
+        required: ['op', 'col', 'color'],
+      },
+      dropCols: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'cols'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['drop_cols'],
+          },
+          cols: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/cid',
+            },
+          },
+        },
+        required: ['op', 'cols'],
+      },
+      deriveScoreBands: {
+        type: 'object',
+        additionalProperties: false,
+        propertyOrdering: ['op', 'src', 'out', 'bands'],
+        properties: {
+          op: {
+            type: 'string',
+            enum: ['derive_score_bands'],
+          },
+          src: {
+            $ref: '#/$defs/cid',
+          },
+          out: {
+            $ref: '#/$defs/newCol',
+          },
+          bands: {
+            type: 'array',
+            items: {
+              $ref: '#/$defs/band',
+            },
+          },
+        },
+        required: ['op', 'src', 'out', 'bands'],
+      },
+      op: {
+        oneOf: [
+          { $ref: '#/$defs/fillEmptyFromCol' },
+          { $ref: '#/$defs/colorIfEmpty' },
+          { $ref: '#/$defs/dropCols' },
+          { $ref: '#/$defs/deriveScoreBands' },
+        ],
+      },
+    },
   };
 }
 
@@ -6622,6 +8315,7 @@ function emitLogEvent(
 ===== src\ai\index.ts =====
 export { assignWorkflowStepIds, buildDraftPreviewWorkflow, formatDraftStepsForDebug, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
 export { appendAIDevLog } from './devLog';
+export { compileGeminiCompilerOpsDraft } from './compilerOpsDraft';
 export { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps, mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
 export {
   DEFAULT_GEMINI_MODEL,
@@ -6629,7 +8323,7 @@ export {
   buildGeminiRequestExport,
   generateGeminiDraftTurn,
   normalizeGeminiModelSelection,
-  parseGeminiAuthoringResponse,
+  parseGeminiCompilerOpsResponse,
 } from './gemini';
 export type { GeminiRequestExport } from './gemini';
 export {
@@ -6653,13 +8347,6 @@ export type {
 } from './types';
 export type {
   AIDraftIssue,
-  AuthoringBooleanExpression,
-  AuthoringCellPatch,
-  AuthoringDraftResponse,
-  AuthoringOperand,
-  AuthoringStepInput,
-  AuthoringValueExpression,
-  AuthoringValueInput,
 } from './authoringIr';
 
 ===== src\ai\prompt.ts =====
@@ -6675,76 +8362,14 @@ export interface GeminiContent {
 
 const CURATED_EXAMPLES = [
   {
-    user: 'Remove rows where email is empty.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will drop rows where the email column is empty.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'filterRows',
-          mode: 'drop',
-          where: {
-            kind: 'predicate',
-            op: 'isEmpty',
-            input: { source: 'column', columnId: 'col_email' },
-          },
-        },
-      ],
-    },
-  },
-  {
-    user: 'Normalize the email column by trimming and lowercasing it.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will normalize the email column in place.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'scopedRule',
-          columnIds: ['col_email'],
-          defaultPatch: {
-            value: {
-              kind: 'unary',
-              op: 'lower',
-              input: {
-                kind: 'unary',
-                op: 'trim',
-                input: { source: 'value' },
-              },
-            },
-          },
-        },
-      ],
-    },
-  },
-  {
     user: 'If Email is empty, use Email (2), then drop Email (2).',
     assistant: {
       mode: 'draft',
-      assistantMessage: 'I will create a single email column by using Email (2) only when Email is empty, then drop Email (2).',
-      assumptions: [],
-      steps: [
-        {
-          type: 'scopedRule',
-          columnIds: ['col_email'],
-          cases: [
-            {
-              when: {
-                kind: 'predicate',
-                op: 'isEmpty',
-                input: { source: 'value' },
-              },
-              then: {
-                value: { source: 'column', columnId: 'col_email_2' },
-              },
-            },
-          ],
-        },
-        {
-          type: 'dropColumns',
-          columnIds: ['col_email_2'],
-        },
+      msg: 'Use Email (2) only when Email is empty, then drop Email (2).',
+      ass: [],
+      ops: [
+        { op: 'fill_empty_from_col', dst: 'col_email', src: 'col_email_2' },
+        { op: 'drop_cols', cols: ['col_email_2'] },
       ],
     },
   },
@@ -6752,266 +8377,31 @@ const CURATED_EXAMPLES = [
     user: 'We just need one email column. Use Email first, fall back to Email (2), and if both are empty color the final email cell red.',
     assistant: {
       mode: 'draft',
-      assistantMessage: 'I will fill Email from Email (2) when needed, color the final email cell red when it is still empty, and then drop Email (2).',
-      assumptions: [],
-      steps: [
+      msg: 'Use Email (2) when Email is empty, color any still-empty Email cells red, then drop Email (2).',
+      ass: [],
+      ops: [
+        { op: 'fill_empty_from_col', dst: 'col_email', src: 'col_email_2' },
+        { op: 'color_if_empty', col: 'col_email', color: '#ffc7ce' },
+        { op: 'drop_cols', cols: ['col_email_2'] },
+      ],
+    },
+  },
+  {
+    user: "Let's calculate a priority score based on balance: negative => 3, 0..200 => 2, above => 1.",
+    assistant: {
+      mode: 'draft',
+      msg: 'Create a priority score from Balance using three numeric bands.',
+      ass: [],
+      ops: [
         {
-          type: 'scopedRule',
-          columnIds: ['col_email'],
-          cases: [
-            {
-              when: {
-                kind: 'predicate',
-                op: 'isEmpty',
-                input: { source: 'value' },
-              },
-              then: {
-                value: { source: 'column', columnId: 'col_email_2' },
-              },
-            },
-            {
-              when: {
-                kind: 'predicate',
-                op: 'isEmpty',
-                input: { source: 'value' },
-              },
-              then: {
-                format: {
-                  fillColor: '#FFC7CE',
-                },
-              },
-            },
+          op: 'derive_score_bands',
+          src: 'col_balance',
+          out: { id: 'col_priority_score', name: 'Priority Score' },
+          bands: [
+            { lo: null, hi: 0, loInc: false, hiInc: false, score: 3 },
+            { lo: 0, hi: 200, loInc: true, hiInc: true, score: 2 },
+            { lo: 200, hi: null, loInc: false, hiInc: false, score: 1 },
           ],
-        },
-        {
-          type: 'dropColumns',
-          columnIds: ['col_email_2'],
-        },
-      ],
-    },
-  },
-  {
-    user: 'Highlight VIP status cells in yellow.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will highlight the status cells for VIP rows.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'scopedRule',
-          columnIds: ['col_status'],
-          rowWhere: {
-            kind: 'compare',
-            op: 'eq',
-            left: { source: 'column', columnId: 'col_vip' },
-            right: { source: 'literal', value: true },
-          },
-          defaultPatch: {
-            format: {
-              fillColor: '#FFEB9C',
-            },
-          },
-        },
-      ],
-    },
-  },
-  {
-    user: 'Combine First Name and Last Name into Full Name, then drop the originals.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will create a Full Name column first and only then drop the source name columns.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'combineColumns',
-          columnIds: ['col_first_name', 'col_last_name'],
-          separator: ' ',
-          newColumn: {
-            columnId: 'col_full_name',
-            displayName: 'Full Name',
-          },
-        },
-        {
-          type: 'dropColumns',
-          columnIds: ['col_first_name', 'col_last_name'],
-        },
-      ],
-    },
-  },
-  {
-    user: 'Map status values to readable labels.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will derive a status label column using match-based classification with a fallback.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'deriveColumn',
-          newColumn: {
-            columnId: 'col_status_label',
-            displayName: 'Status Label',
-          },
-          derive: {
-            kind: 'match',
-            subject: {
-              kind: 'unary',
-              op: 'lower',
-              input: {
-                kind: 'unary',
-                op: 'trim',
-                input: { source: 'column', columnId: 'col_status' },
-              },
-            },
-            cases: [
-              {
-                kind: 'when',
-                when: {
-                  kind: 'compare',
-                  op: 'eq',
-                  left: { source: 'caseValue' },
-                  right: { source: 'literal', value: 'active' },
-                },
-                then: { source: 'literal', value: 'Active customer' },
-              },
-              {
-                kind: 'when',
-                when: {
-                  kind: 'boolean',
-                  op: 'or',
-                  items: [
-                    {
-                      kind: 'compare',
-                      op: 'eq',
-                      left: { source: 'caseValue' },
-                      right: { source: 'literal', value: 'pending' },
-                    },
-                    {
-                      kind: 'compare',
-                      op: 'eq',
-                      left: { source: 'caseValue' },
-                      right: { source: 'literal', value: 'queued' },
-                    },
-                  ],
-                },
-                then: { source: 'literal', value: 'Pending customer' },
-              },
-              {
-                kind: 'otherwise',
-                then: { source: 'literal', value: 'Other' },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  },
-  {
-    user: 'If balance is negative set priority score to 3, if balance is 0 to 200 set it to 2, otherwise set it to 1.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will derive a priority score column using ordered match conditions on the normalized balance.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'deriveColumn',
-          newColumn: {
-            columnId: 'col_priority_score',
-            displayName: 'Priority Score',
-          },
-          derive: {
-            kind: 'match',
-            subject: {
-              kind: 'unary',
-              op: 'toNumber',
-              input: { source: 'column', columnId: 'col_balance' },
-            },
-            cases: [
-              {
-                kind: 'when',
-                when: {
-                  kind: 'compare',
-                  op: 'lt',
-                  left: { source: 'caseValue' },
-                  right: { source: 'literal', value: 0 },
-                },
-                then: { source: 'literal', value: 3 },
-              },
-              {
-                kind: 'when',
-                when: {
-                  kind: 'between',
-                  input: { source: 'caseValue' },
-                  min: { source: 'literal', value: 0 },
-                  max: { source: 'literal', value: 200 },
-                  inclusiveMin: true,
-                  inclusiveMax: true,
-                },
-                then: { source: 'literal', value: 2 },
-              },
-              {
-                kind: 'otherwise',
-                then: { source: 'literal', value: 1 },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  },
-  {
-    user: 'If balance is 0 to 200 and email is not empty set priority band to medium, otherwise set it to other.',
-    assistant: {
-      mode: 'draft',
-      assistantMessage: 'I will derive a priority band column using a compound match condition over the normalized balance and row data.',
-      assumptions: [],
-      steps: [
-        {
-          type: 'deriveColumn',
-          newColumn: {
-            columnId: 'col_priority_band',
-            displayName: 'Priority Band',
-          },
-          derive: {
-            kind: 'match',
-            subject: {
-              kind: 'unary',
-              op: 'toNumber',
-              input: { source: 'column', columnId: 'col_balance' },
-            },
-            cases: [
-              {
-                kind: 'when',
-                when: {
-                  kind: 'boolean',
-                  op: 'and',
-                  items: [
-                    {
-                      kind: 'between',
-                      input: { source: 'caseValue' },
-                      min: { source: 'literal', value: 0 },
-                      max: { source: 'literal', value: 200 },
-                      inclusiveMin: true,
-                      inclusiveMax: true,
-                    },
-                    {
-                      kind: 'boolean',
-                      op: 'not',
-                      item: {
-                        kind: 'predicate',
-                        op: 'isEmpty',
-                        input: { source: 'column', columnId: 'col_email' },
-                      },
-                    },
-                  ],
-                },
-                then: { source: 'literal', value: 'medium' },
-              },
-              {
-                kind: 'otherwise',
-                then: { source: 'literal', value: 'other' },
-              },
-            ],
-          },
         },
       ],
     },
@@ -7020,8 +8410,9 @@ const CURATED_EXAMPLES = [
     user: 'Clean the name column.',
     assistant: {
       mode: 'clarify',
-      assistantMessage: 'Which column should be cleaned, and do you want trimming, lowercasing, uppercasing, or whitespace collapsing?',
-      assumptions: [],
+      msg: 'Which column should be cleaned, and what kind of cleanup do you want?',
+      ass: [],
+      ops: [],
     },
   },
 ];
@@ -7035,83 +8426,46 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
     : ['- (none)'];
   const workflowContextNote = context.workflowContextSource === 'lastValidSnapshot'
-    ? 'The canonical workflow summary below is the last valid snapshot because the live block workspace currently has issues. Use the live workspace snapshot and issue list to infer the intended fix. Applying the draft will replace the broken workspace with the drafted workflow.'
+    ? 'The canonical workflow summary below is the last valid snapshot because the live block workspace currently has issues. Use the live workspace snapshot and issue list to infer the intended fix. Applying the draft will replace the broken workspace.'
     : 'The canonical workflow summary below reflects the current valid workflow context.';
   const draftSemanticsNote = context.draft
-    ? 'There is an existing AI draft. Return the FULL updated workflow step list that should replace that AI draft.'
-    : 'There is no AI draft yet. Return the FULL updated workflow step list that should replace the current workflow.';
+    ? 'There is an existing AI draft. Return the FULL updated operation list that should replace that AI draft.'
+    : 'There is no AI draft yet. Return the FULL updated operation list that should replace the current workflow.';
   const promptSections = [
     'You are an expert Scratch My Table copilot.',
-    'Translate the user request into the AI authoring IR. Local code will compile that authoring IR into canonical Workflow IR v2.',
+    'Translate the user request into a tiny compiler-friendly operation list.',
+    'Local code will compile this operation list into canonical Workflow IR v2 and then run structural/semantic validation.',
     'Return JSON only. Do not use markdown fences.',
-    'Never return a workflow envelope or step IDs outside the documented response object.',
-    'If the request is ambiguous or missing a required choice, return mode "clarify" and ask a short targeted question.',
-    'If you can act, return mode "draft" and include the FULL updated workflow step list.',
-    'Never return mode "draft" with an empty steps array. If you cannot produce at least one valid workflow step, return mode "clarify" instead.',
-    'The returned steps are a full workflow replacement candidate.',
-    'You may rewrite, reorder, insert, or remove steps as needed.',
-    'If a later step drops a column, any logic that depends on that column must happen before the drop or be folded into an earlier step.',
+    'Do not return canonical AST, Blockly data, workflow envelopes, or step IDs.',
     workflowContextNote,
     draftSemanticsNote,
     '',
     'Response contract:',
     '- mode: "clarify" or "draft"',
-    '- assistantMessage: short natural-language explanation',
-    '- assumptions: array of short strings',
-    '- steps: required only when mode = "draft", and must contain at least one step',
+    '- msg: short natural-language summary',
+    '- ass: array of short strings',
+    '- ops: ordered compiler ops',
+    '- Always include all four fields.',
+    '- Use ops: [] only when mode is "clarify".',
+    '- Never return mode "draft" with an empty ops array.',
     '',
-    'Canonical step types to use in the AI authoring IR:',
-    '- comment',
-    '- scopedRule',
-    '- dropColumns',
-    '- renameColumn',
-    '- deriveColumn',
-    '- filterRows',
-    '- splitColumn',
-    '- combineColumns',
-    '- deduplicateRows',
-    '- sortRows',
+    'Allowed ops and exact field shapes:',
+    '- fill_empty_from_col: { "op": "fill_empty_from_col", "dst": "col_x", "src": "col_y" }',
+    '- color_if_empty: { "op": "color_if_empty", "col": "col_x", "color": "#ffc7ce" }',
+    '- drop_cols: { "op": "drop_cols", "cols": ["col_x", "col_y"] }',
+    '- derive_score_bands: { "op": "derive_score_bands", "src": "col_balance", "out": { "id": "col_priority_score", "name": "Priority Score" }, "bands": [{ "lo": null|number, "hi": null|number, "loInc": boolean, "hiInc": boolean, "score": number }] }',
     '',
-    'AI authoring IR rules:',
-    '- Do NOT emit canonical Workflow IR expression nodes like { "kind": "call" }, { "kind": "value" }, or { "kind": "caseValue" }.',
-    '- Use authoring operands instead:',
-    '- { "source": "column", "columnId": "..." }',
-    '- { "source": "value" }',
-    '- { "source": "caseValue" }',
-    '- { "source": "literal", "value": ... }',
-    '- deriveColumn uses "derive", not "expression".',
-    '- filterRows uses "where", not "condition".',
-    '- scopedRule uses optional "rowWhere", not "rowCondition".',
-    '- scopedRule patch values use authoring expressions, not canonical AST.',
-    '- value-expression kinds: nullary, unary, binary, ternary, nary, match',
-    '- boolean-expression kinds: predicate, compare, between, boolean',
-    '- unary ops: now, trim, lower, upper, toNumber, toString, toBoolean, collapseWhitespace, first, last, round, floor, ceil, abs',
-    '- binary ops: split, atIndex, extractRegex, add, subtract, multiply, divide, modulo, datePart',
-    '- ternary ops: substring, replace, replaceRegex, dateDiff, dateAdd',
-    '- n-ary ops: concat, coalesce',
-    '- predicate ops: isEmpty',
-    '- compare ops: eq, gt, lt, gte, lte, contains, startsWith, endsWith, matchesRegex',
-    '- boolean group ops: and, or, not',
-    '- Use gte and lte exactly. Do not invent names like greaterThanOrEquals or lessThanOrEquals.',
-    '- Use between for bounded ranges instead of manually expanding inclusive comparisons when the request is naturally a bucket or range.',
-    '- Use match for exclusive classification and bucketing.',
-    '- A match expression has one subject and an ordered cases array.',
-    '- Each match case is either { "kind": "when", "when": <boolean expression>, "then": <value expression or operand> } or { "kind": "otherwise", "then": <value expression or operand> }.',
-    '- Match cases are ordered and exclusive: the first matching when wins and later match cases do not run.',
-    '- "otherwise" is optional, but if present it must be unique and last.',
-    '- Use { "source": "caseValue" } only inside match.cases[*].when.',
-    '- Use { "source": "value" } only inside scopedRule.cases[*].when, scopedRule.cases[*].then.value, and scopedRule.defaultPatch.value.',
-    '- Do not use { "source": "value" } in deriveColumn.derive, filterRows.where, or scopedRule.rowWhere.',
-    '- Do not use { "source": "caseValue" } outside match case conditions.',
-    '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
-    '- scopedRule is the only canonical cell-level step.',
-    '- format patches currently support format.fillColor only, as a hex color like "#FFEB9C".',
-    '- CRITICAL: When writing regex patterns in JSON string literals, double-escape backslashes for JSON serialization. Example: the regex \\d+ must appear in JSON as "\\\\d+", and whitespace \\s must appear as "\\\\s".',
+    'Rules:',
+    '- Use column ids exactly as provided.',
+    '- Keep ops in execution order.',
+    '- Use only the allowed op names.',
+    '- For email fallback then red formatting: fill_empty_from_col, then color_if_empty, then drop_cols.',
+    '- For priority score bucketing: use derive_score_bands.',
+    '- In derive_score_bands, a band with lo = null has no lower bound, and hi = null has no upper bound.',
+    '- If both lo and hi are null, that band is a fallback and should be last.',
     '',
-    'Schema currently available to the returned workflow steps:',
+    'Schema currently available to the returned ops:',
     ...availableSchemaLines,
-    '- Columns marked "mixed" contain incompatible runtime values. Do not use them directly for sortRows or numeric/date math until earlier steps normalize them to one logical type.',
-    '- Columns marked "unknown" may be entirely empty or unresolved. Do not assume numeric or date semantics unless your draft first creates or normalizes those values.',
     '',
     'Current workflow/editor issues:',
     ...currentIssues,
@@ -7161,15 +8515,12 @@ export function buildRepairUserMessage(
 
   return [
     'Your previous draft did not validate locally.',
-    'Rewrite the FULL updated workflow step list so it satisfies these issues.',
-    'Return AI authoring IR only, not canonical Workflow IR expression nodes.',
-    'Use operands with "source" fields such as { "source": "column", "columnId": "..." }, { "source": "value" }, { "source": "caseValue" }, and { "source": "literal", "value": ... }.',
-    'Use compare ops eq, gt, lt, gte, lte, contains, startsWith, endsWith, and matchesRegex.',
-    'Use between for bounded buckets when appropriate.',
-    'Do not invent op names like greaterThanOrEquals or lessThanOrEquals.',
-    'Use { "source": "caseValue" }, not raw strings, inside match case conditions.',
+    'Rewrite the FULL operation list so it satisfies these issues.',
+    'Return compiler-op JSON only with keys: mode, msg, ass, ops.',
+    'Do not return canonical AST or workflow steps.',
+    'Use only these op names: fill_empty_from_col, color_if_empty, drop_cols, derive_score_bands.',
     'Do not ask a clarification question in this repair turn. Return mode "draft".',
-    'Return at least one workflow step. Do not return an empty steps array.',
+    'Return at least one op.',
     '',
     'Previous invalid response:',
     previousRawText,
@@ -7219,10 +8570,11 @@ export function stripDraftStepIds(steps: WorkflowStepInput[] | Workflow['steps']
 import type { WorkflowValidationIssue } from '../workflow';
 
 import { mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
+import type { GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
 import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
-import type { AIDraftIssue, AuthoringDraftResponse } from './authoringIr';
+import type { AIDraftIssue } from './authoringIr';
 import type {
   AIProgressEvent,
   AIDebugTrace,
@@ -7249,7 +8601,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'clarify';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: AuthoringDraftResponse;
+      response: GeminiCompilerOpsDraftResponse;
       repaired: false;
       debugTrace: AIDebugTrace;
     }
@@ -7257,7 +8609,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'draft';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: AuthoringDraftResponse;
+      response: GeminiCompilerOpsDraftResponse;
       repaired: boolean;
       draft: AIDraft;
       debugTrace: AIDebugTrace;
@@ -7266,7 +8618,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'invalidDraft';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: AuthoringDraftResponse;
+      response: GeminiCompilerOpsDraftResponse;
       repaired: boolean;
       validationIssues: AIDraftIssue[];
       debugTrace: AIDebugTrace;
@@ -7294,7 +8646,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'clarify',
       userMessage,
-      assistantMessage: createMessage('assistant', initialTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', initialTurn.response.msg),
       response: initialTurn.response,
       repaired: false,
       debugTrace: {
@@ -7324,7 +8676,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'draft',
       userMessage,
-      assistantMessage: createMessage('assistant', initialTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', initialTurn.response.msg),
       response: initialTurn.response,
       repaired: false,
       debugTrace: {
@@ -7340,8 +8692,8 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
       },
       draft: {
         steps: initialValidation.steps,
-        assumptions: initialTurn.response.assumptions,
-        assistantMessage: initialTurn.response.assistantMessage,
+        assumptions: initialTurn.response.ass,
+        assistantMessage: initialTurn.response.msg,
         validationIssues: [],
       },
     };
@@ -7390,7 +8742,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'invalidDraft',
       userMessage,
-      assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', repairTurn.response.msg),
       response: repairTurn.response,
       repaired: true,
       validationIssues: initialRelevantIssues,
@@ -7429,7 +8781,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     return {
       kind: 'invalidDraft',
       userMessage,
-      assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
+      assistantMessage: createMessage('assistant', repairTurn.response.msg),
       response: repairTurn.response,
       repaired: true,
       validationIssues: repairRelevantIssues,
@@ -7454,7 +8806,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
   return {
     kind: 'draft',
     userMessage,
-    assistantMessage: createMessage('assistant', repairTurn.response.assistantMessage),
+    assistantMessage: createMessage('assistant', repairTurn.response.msg),
     response: repairTurn.response,
     repaired: true,
     debugTrace: {
@@ -7473,8 +8825,8 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     },
     draft: {
       steps: repairedValidation.steps,
-      assumptions: repairTurn.response.assumptions,
-      assistantMessage: repairTurn.response.assistantMessage,
+      assumptions: repairTurn.response.ass,
+      assistantMessage: repairTurn.response.msg,
       validationIssues: [],
     },
   };
@@ -7700,7 +9052,8 @@ function emitProgress(options: RunGeminiDraftTurnOptions, stage: AIProgressEvent
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowStep } from '../workflow';
 
-import type { AIDraftIssue, AuthoringDraftResponse } from './authoringIr';
+import type { AIDraftIssue } from './authoringIr';
+import type { GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
 
 export type WorkflowStepInput =
   WorkflowStep extends infer Step
@@ -7754,12 +9107,12 @@ export interface AIDebugTrace {
   outcomeKind: 'clarify' | 'draft' | 'invalidDraft';
   repaired: boolean;
   initialRawText: string;
-  initialResponse: AuthoringDraftResponse;
+  initialResponse: GeminiCompilerOpsDraftResponse;
   initialCompiledSteps?: WorkflowStepInput[];
   initialCompilationIssues: AIDraftIssue[];
   initialValidationIssues: AIDraftIssue[];
   repairRawText?: string;
-  repairResponse?: AuthoringDraftResponse;
+  repairResponse?: GeminiCompilerOpsDraftResponse;
   repairCompiledSteps?: WorkflowStepInput[];
   repairCompilationIssues: AIDraftIssue[];
   repairValidationIssues: AIDraftIssue[];
@@ -7796,7 +9149,7 @@ export interface GeminiDraftTurnInput {
 }
 
 export interface GeminiDraftTurnResult {
-  response: AuthoringDraftResponse;
+  response: GeminiCompilerOpsDraftResponse;
   rawText: string;
   compiledSteps?: WorkflowStepInput[];
   compilationIssues: AIDraftIssue[];
@@ -10094,7 +11447,7 @@ function AIAssistantModal({
                   </div>
                 </dl>
                 <div className="ai-debug-trace__section">
-                  <strong>Initial parsed authoring response</strong>
+                  <strong>Initial parsed compiler-op response</strong>
                   <textarea
                     className="json-viewer ai-debug-trace__viewer"
                     readOnly
@@ -10137,7 +11490,7 @@ function AIAssistantModal({
                 ) : null}
                 {aiDebugTrace.repairRawText ? (
                   <div className="ai-debug-trace__section">
-                    <strong>Repair parsed authoring response</strong>
+                    <strong>Repair parsed compiler-op response</strong>
                     <textarea
                       className="json-viewer ai-debug-trace__viewer"
                       readOnly
@@ -12480,6 +13833,7 @@ function createSchemaColumnDropdown() {
 
 export const BLOCK_TYPES = {
   commentStep: 'comment_step',
+  scopedRuleSingleStep: 'scoped_rule_single_step',
   scopedRuleCasesStep: 'scoped_rule_cases_step',
   ruleCaseItem: 'rule_case_item',
   setValueActionItem: 'set_value_action_item',
@@ -12548,6 +13902,19 @@ export function registerWorkflowBlocks() {
       .appendField(new FieldCommentInput('Add a workflow note'), 'TEXT');
   });
 
+  Blockly.Blocks[BLOCK_TYPES.scopedRuleSingleStep] = {
+    init() {
+      this.appendDummyInput()
+        .appendField('on columns')
+        .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
+      this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
+      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('do');
+      this.setPreviousStatement(true, 'AUTHORING_STEP');
+      this.setNextStatement(true, 'AUTHORING_STEP');
+      this.setColour(TRANSFORM_COLOR);
+    },
+  };
+
   Blockly.Blocks[BLOCK_TYPES.scopedRuleCasesStep] = {
     init() {
       this.appendDummyInput()
@@ -12555,8 +13922,7 @@ export function registerWorkflowBlocks() {
         .appendField(new FieldColumnMultiSelect(), 'COLUMN_IDS');
       this.appendValueInput('ROW_CONDITION').setCheck('EXPRESSION').appendField('for rows where');
       this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.cases).setCheck('RULE_CASE_ITEM').appendField('cases');
-      this.appendDummyInput('DEFAULT_HEADER').appendField('otherwise default to');
-      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('do');
+      this.appendStatementInput(SCOPED_RULE_INPUT_NAMES.defaultActions).setCheck('CELL_ACTION_ITEM').appendField('otherwise do');
       this.setPreviousStatement(true, 'AUTHORING_STEP');
       this.setNextStatement(true, 'AUTHORING_STEP');
       this.setColour(TRANSFORM_COLOR);
@@ -12565,7 +13931,7 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.ruleCaseItem] = {
     init() {
-      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('case: when');
+      this.appendValueInput(RULE_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('if current cell');
       this.appendStatementInput(RULE_CASE_INPUT_NAMES.actions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'RULE_CASE_ITEM');
       this.setNextStatement(true, 'RULE_CASE_ITEM');
@@ -12578,7 +13944,7 @@ export function registerWorkflowBlocks() {
     init() {
       this.appendValueInput(CELL_ACTION_INPUT_NAMES.value)
         .setCheck('EXPRESSION')
-        .appendField('set value')
+        .appendField('set cell')
         .appendField('to');
       this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
       this.setNextStatement(true, 'CELL_ACTION_ITEM');
@@ -12706,7 +14072,7 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.currentValueExpression] = {
     init() {
-      this.appendDummyInput().appendField('current value');
+      this.appendDummyInput().appendField('current cell');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -12714,7 +14080,7 @@ export function registerWorkflowBlocks() {
 
   Blockly.Blocks[BLOCK_TYPES.caseValueExpression] = {
     init() {
-      this.appendDummyInput().appendField('case value');
+      this.appendDummyInput().appendField('matched value');
       this.setOutput(true, 'EXPRESSION');
       this.setColour(VALUE_COLOR);
     },
@@ -12967,8 +14333,8 @@ export function registerWorkflowBlocks() {
   };
   Blockly.Blocks[BLOCK_TYPES.matchWhenCaseItem] = {
     init() {
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when');
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.when).setCheck('EXPRESSION').appendField('when matched value');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then return');
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);
@@ -12977,8 +14343,7 @@ export function registerWorkflowBlocks() {
   };
   Blockly.Blocks[BLOCK_TYPES.matchOtherwiseCaseItem] = {
     init() {
-      this.appendDummyInput().appendField('otherwise');
-      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('then');
+      this.appendValueInput(MATCH_CASE_INPUT_NAMES.then).setCheck('EXPRESSION').appendField('otherwise return');
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);
@@ -14369,6 +15734,7 @@ describe('block-based workflow authoring', () => {
     };
     const workspace = buildWorkspaceFromTable(table, workflow);
     const authored = workspaceToAuthoringWorkflow(workspace);
+    const roundtrip = workspaceToWorkflow(workspace);
     const [topBlock] = workspace.getTopBlocks(false);
     const authoredStep = authored.workflow?.steps[0];
 
@@ -14380,16 +15746,18 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type).sort()).toEqual([
       BLOCK_TYPES.currentValueExpression,
       BLOCK_TYPES.lowerFunction,
-      BLOCK_TYPES.scopedRuleCasesStep,
+      BLOCK_TYPES.scopedRuleSingleStep,
       BLOCK_TYPES.setValueActionItem,
       BLOCK_TYPES.trimFunction,
     ]);
-    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleSingleStep);
     expect(getWorkspaceMetadata(workspace)).toEqual({
       workflowId: workflow.workflowId,
       name: workflow.name,
       description: workflow.description,
     });
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
     expect(authored.issues).toEqual([]);
     expect(authoredStep.columnIds).toEqual(['col_email']);
     expect(authoredStep.mode).toBe('single');
@@ -14515,7 +15883,7 @@ describe('block-based workflow authoring', () => {
     const defaultActionBlock = topBlock?.getInputTargetBlock('DEFAULT_ACTIONS');
     const defaultColorBlock = defaultActionBlock?.getInputTargetBlock('COLOR');
 
-    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleSingleStep);
     expect(defaultActionBlock?.type).toBe(BLOCK_TYPES.highlightActionItem);
     expect(defaultColorBlock?.type).toBe(BLOCK_TYPES.literalColor);
     expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#ffeb9c');
@@ -14553,9 +15921,19 @@ describe('block-based workflow authoring', () => {
 
     const workspace = buildWorkspaceFromColumnIds(['col_status'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
-    const [topBlock] = workspace.getTopBlocks(false);
+    const [topBlock] = workspace.getTopBlocks(false) as Array<{
+      type: string;
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      getInputTargetBlock: (inputName: string) => {
+        inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      } | null;
+    }>;
+    const ruleCaseBlock = topBlock?.getInputTargetBlock('CASES');
+    const otherwiseInput = topBlock?.inputList.find((input) => input.name === 'DEFAULT_ACTIONS');
 
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(ruleCaseBlock?.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('if current cell');
+    expect(otherwiseInput?.fieldRow?.[0]?.getText?.()).toBe('otherwise do');
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
   });
@@ -14941,7 +16319,7 @@ describe('block-based workflow authoring', () => {
     expect(matchWhenBlocks).toHaveLength(4);
     expect(matchOtherwiseBlocks).toHaveLength(2);
     expect(caseValueBlocks.length).toBeGreaterThanOrEqual(6);
-    expect(caseValueToolboxEntry?.searchText).toContain('case value');
+    expect(caseValueToolboxEntry?.searchText).toContain('matched value');
   });
 
   it('reconstructs arithmetic and rounding function trees', () => {
@@ -15362,7 +16740,7 @@ describe('block-based workflow authoring', () => {
 
   it('surfaces invalid editor blocks clearly when required inputs are missing', () => {
     const workspace = createHeadlessWorkflowWorkspace();
-    const block = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const block = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
 
     block.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
 
@@ -15372,11 +16750,48 @@ describe('block-based workflow authoring', () => {
     expect(result.issues).toEqual([
       {
         code: 'missingRuleCases',
-        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
+        message: `Block '${BLOCK_TYPES.scopedRuleSingleStep}' must define at least one action in 'do'.`,
         blockId: block.id,
-        blockType: BLOCK_TYPES.scopedRuleCasesStep,
+        blockType: BLOCK_TYPES.scopedRuleSingleStep,
       },
     ]);
+  });
+
+  it('compiles single scoped-rule blocks with row conditions to canonical scopedRule steps', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
+    const rowConditionBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
+    const rowColumnBlock = workspace.newBlock(BLOCK_TYPES.columnExpression);
+    const usLiteralBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const lowerBlock = workspace.newBlock(BLOCK_TYPES.lowerFunction);
+    const trimBlock = workspace.newBlock(BLOCK_TYPES.trimFunction);
+    const currentCellBlock = workspace.newBlock(BLOCK_TYPES.currentValueExpression);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    rowColumnBlock.setFieldValue('col_region', 'COLUMN_ID');
+    usLiteralBlock.setFieldValue('US', 'VALUE');
+
+    scopedRuleBlock.getInput('ROW_CONDITION')?.connection?.connect(rowConditionBlock.outputConnection!);
+    rowConditionBlock.getInput('FIRST')?.connection?.connect(rowColumnBlock.outputConnection!);
+    rowConditionBlock.getInput('SECOND')?.connection?.connect(usLiteralBlock.outputConnection!);
+    scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(lowerBlock.outputConnection!);
+    lowerBlock.getInput('INPUT')?.connection?.connect(trimBlock.outputConnection!);
+    trimBlock.getInput('INPUT')?.connection?.connect(currentCellBlock.outputConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+    expect(result.workflow?.steps[0]).toEqual({
+      id: 'step_scoped_rule_1',
+      type: 'scopedRule',
+      columnIds: ['col_email'],
+      rowCondition: call('equals', column('col_region'), literal('US')),
+      defaultPatch: {
+        value: call('lower', call('trim', value())),
+      },
+    });
   });
 
   it('reports multiple invalid action inputs in a scoped rule alongside floating orphan expression blocks', () => {
@@ -15467,9 +16882,24 @@ describe('block-based workflow authoring', () => {
     expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
   });
 
+  it('lays out the simple scoped-rule block with row conditions and do actions', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+
+    expect(scopedRuleBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('on columns');
+    expect(scopedRuleBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('for rows where');
+    expect(scopedRuleBlock.inputList[2]?.fieldRow?.[0]?.getText?.()).toBe('do');
+    expect(scopedRuleBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
+  });
+
   it('lays out scoped-rule cases and defaults with nested cell-action statements', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
     const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem) as {
@@ -15477,6 +16907,7 @@ describe('block-based workflow authoring', () => {
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
     const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
     const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem) as {
@@ -15484,12 +16915,36 @@ describe('block-based workflow authoring', () => {
     };
 
     expect(ruleCaseBlock.inputList.map((input) => input.name)).toEqual(['WHEN', 'ACTIONS']);
-    expect(ruleCaseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('case: when');
+    expect(ruleCaseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('if current cell');
     expect(ruleCaseBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('do');
+    expect(scopedRuleBlock.inputList.find((input) => input.name === 'DEFAULT_ACTIONS')?.fieldRow?.[0]?.getText?.()).toBe('otherwise do');
+    expect(setValueActionBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('set cell');
     expect(ruleCaseBlock.getInput('ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
     expect(scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
     expect(setValueActionBlock.getInput('VALUE')?.connection?.getCheck()).toEqual(['EXPRESSION']);
     expect(highlightActionBlock.getInput('COLOR')?.connection?.getCheck()).toEqual(['COLOR_LITERAL']);
+  });
+
+  it('uses updated value and match labels for value-returning authoring', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const currentValueBlock = workspace.newBlock(BLOCK_TYPES.currentValueExpression) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+    const caseValueBlock = workspace.newBlock(BLOCK_TYPES.caseValueExpression) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+    const matchWhenBlock = workspace.newBlock(BLOCK_TYPES.matchWhenCaseItem) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+    const matchOtherwiseBlock = workspace.newBlock(BLOCK_TYPES.matchOtherwiseCaseItem) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+
+    expect(currentValueBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('current cell');
+    expect(caseValueBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('matched value');
+    expect(matchWhenBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('when matched value');
+    expect(matchWhenBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('then return');
+    expect(matchOtherwiseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('otherwise return');
   });
 
   it('compiles rule-case value actions from nested set-value blocks', () => {
@@ -15721,7 +17176,7 @@ describe('block-based workflow authoring', () => {
 
     setEditorSchemaColumns(baseColumns, ['col_email', 'email_safe'], schemaByBlockId);
 
-    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedRuleSingleStep);
     expect(getSchemaColumnOptions(transformBlock?.id)).toContainEqual(['Email (safe) [email_safe]', 'email_safe']);
     expect(getSelectableColumns(transformBlock?.id).map((entry) => entry.columnId)).toContain('email_safe');
     expect(transformBlock?.getField('COLUMN_IDS')?.getText()).toContain('Email (safe)');
@@ -16070,6 +17525,7 @@ import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 const workspaceMetadata = new WeakMap<Blockly.Workspace, AuthoringWorkflowMetadata>();
 const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.commentStep,
+  BLOCK_TYPES.scopedRuleSingleStep,
   BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,
@@ -16487,6 +17943,57 @@ function readStepBlock(block: Blockly.Block): { step?: AuthoringStep; issues: Ed
         },
         issues: [],
       };
+    case BLOCK_TYPES.scopedRuleSingleStep: {
+      const issues: EditorIssue[] = [];
+      const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
+      const rowCondition = readOptionalExpression(block, 'ROW_CONDITION');
+      const singlePatch = readAuthoringCellPatchActions(block, 'DEFAULT_ACTIONS');
+      const resolvedColumnIds = 'issue' in columnIds ? [] : columnIds.columnIds;
+      const resolvedRowCondition = 'issue' in rowCondition ? undefined : rowCondition.expression;
+
+      if ('issue' in columnIds) {
+        issues.push(columnIds.issue);
+      }
+
+      if ('issue' in rowCondition) {
+        issues.push(rowCondition.issue);
+      }
+
+      issues.push(...singlePatch.issues);
+
+      if (issues.length > 0) {
+        return { issues };
+      }
+
+      if (!isAuthoringCellPatchEnabled(singlePatch.patch)) {
+        return {
+          issues: [
+            {
+              code: 'missingRuleCases',
+              message: `Block '${block.type}' must define at least one action in 'do'.`,
+              blockId: block.id,
+              blockType: block.type,
+            },
+          ],
+        };
+      }
+
+      return {
+        step: {
+          kind: 'scopedRule',
+          stepId: stepMetadata.stepId,
+          sourceBlockId: block.id,
+          sourceBlockType: block.type,
+          columnIds: resolvedColumnIds,
+          rowCondition: resolvedRowCondition,
+          mode: 'single',
+          singlePatch: singlePatch.patch,
+          cases: [],
+          defaultPatch: createEmptyAuthoringCellPatch(),
+        },
+        issues: [],
+      };
+    }
     case BLOCK_TYPES.scopedRuleCasesStep: {
       const issues: EditorIssue[] = [];
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
@@ -16768,7 +18275,7 @@ function readAuthoringCellPatchActions(
 
     if (current.type === BLOCK_TYPES.setValueActionItem) {
       if (valueEnabled) {
-        issues.push(duplicateCellActionIssue(block, current, 'set value'));
+        issues.push(duplicateCellActionIssue(block, current, 'set cell'));
         current = current.getNextBlock();
         continue;
       }
@@ -17635,7 +19142,12 @@ function createCommentBlock(workspace: Blockly.Workspace, step: AuthoringComment
 }
 
 function createScopedRuleBlock(workspace: Blockly.Workspace, step: AuthoringScopedRuleStep, isTopBlock: boolean) {
-  const block = createBlock(workspace, BLOCK_TYPES.scopedRuleCasesStep, isTopBlock ? 24 : undefined, isTopBlock ? 24 : undefined);
+  const block = createBlock(
+    workspace,
+    step.mode === 'single' ? BLOCK_TYPES.scopedRuleSingleStep : BLOCK_TYPES.scopedRuleCasesStep,
+    isTopBlock ? 24 : undefined,
+    isTopBlock ? 24 : undefined,
+  );
 
   setBlockMetadata(block, step.stepId);
   block.setFieldValue(serializeColumnSelectionValue(step.columnIds), 'COLUMN_IDS');
@@ -18529,6 +20041,18 @@ describe('workflow toolbox search', () => {
     );
   });
 
+  it('finds both scoped edit block variants by intent keywords', () => {
+    const simpleContents = getWorkflowToolboxCategoryContents('category_scoped_rules', 'edit cells normalize');
+    const advancedContents = getWorkflowToolboxCategoryContents('category_scoped_rules', 'conditional otherwise');
+
+    expect(simpleContents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleSingleStep })]),
+    );
+    expect(advancedContents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleCasesStep })]),
+    );
+  });
+
   it('returns a no-match label when a category search is empty', () => {
     expect(getWorkflowToolboxCategoryContents('category_math', 'definitely-not-a-math-block')).toEqual([
       {
@@ -18566,6 +20090,7 @@ describe('workflow toolbox search', () => {
 
     expect(contents).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleSingleStep }),
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.scopedRuleCasesStep }),
         expect.objectContaining({ kind: 'block', type: BLOCK_TYPES.ruleCaseItem }),
       ]),
@@ -18612,12 +20137,16 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     colour: WORKFLOW_TOOLBOX_COLOURS.scopedRules,
     entries: [
       {
+        type: BLOCK_TYPES.scopedRuleSingleStep,
+        searchText: 'edit cells normalize trim lowercase set cell apply transform scoped rule',
+      },
+      {
         type: BLOCK_TYPES.scopedRuleCasesStep,
-        searchText: 'scoped rule transform update cells value color format highlight case default apply',
+        searchText: 'conditional edit cells if current cell otherwise do highlight value format scoped rule',
       },
       {
         type: BLOCK_TYPES.ruleCaseItem,
-        searchText: 'rule case branch when then condition result color format value',
+        searchText: 'conditional edit cells if current cell do case branch condition action',
       },
     ],
   },
@@ -18628,7 +20157,7 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     entries: [
       {
         type: BLOCK_TYPES.setValueActionItem,
-        searchText: 'cell actions set value update replace expression patch current cell',
+        searchText: 'cell actions set cell update replace expression patch current cell',
       },
       {
         type: BLOCK_TYPES.highlightActionItem,
@@ -18662,8 +20191,8 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     name: 'Values',
     colour: WORKFLOW_TOOLBOX_COLOURS.values,
     entries: [
-      { type: BLOCK_TYPES.currentValueExpression, searchText: 'current value selected cell input value' },
-      { type: BLOCK_TYPES.caseValueExpression, searchText: 'case value match subject result current match value operand' },
+      { type: BLOCK_TYPES.currentValueExpression, searchText: 'current cell selected cell input value' },
+      { type: BLOCK_TYPES.caseValueExpression, searchText: 'matched value match subject result case value operand' },
       { type: BLOCK_TYPES.literalString, searchText: 'text string literal value characters' },
       { type: BLOCK_TYPES.literalColor, searchText: 'color hex highlight fill swatch literal value' },
       { type: BLOCK_TYPES.literalNumber, searchText: 'number numeric literal integer decimal' },
@@ -18724,9 +20253,9 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
       { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex predicate text logic binary' },
       { type: BLOCK_TYPES.unaryPredicateFunction, searchText: 'is empty blank null missing predicate unary logic' },
       { type: BLOCK_TYPES.logicalBinaryFunction, searchText: 'and or logical group combine conditions boolean' },
-      { type: BLOCK_TYPES.matchExpression, searchText: 'match classify bucket branch first matching case exclusive subject' },
-      { type: BLOCK_TYPES.matchWhenCaseItem, searchText: 'match when case branch condition then result bucket classify' },
-      { type: BLOCK_TYPES.matchOtherwiseCaseItem, searchText: 'match otherwise case default fallback else then result' },
+      { type: BLOCK_TYPES.matchExpression, searchText: 'match classify map status return label bucket matched value subject' },
+      { type: BLOCK_TYPES.matchWhenCaseItem, searchText: 'match when matched value then return case branch condition result' },
+      { type: BLOCK_TYPES.matchOtherwiseCaseItem, searchText: 'match otherwise return case default fallback else result' },
       { type: BLOCK_TYPES.notFunction, searchText: 'not negate boolean invert logical' },
     ],
   },
@@ -19116,6 +20645,7 @@ type ToolboxWithItemLookup = Blockly.IToolbox & {
 
 const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.commentStep,
+  BLOCK_TYPES.scopedRuleSingleStep,
   BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,
@@ -19127,6 +20657,7 @@ const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.sortRowsStep,
 ]);
 const SCHEMA_AFFECTING_BLOCK_TYPES = new Set<string>([
+  BLOCK_TYPES.scopedRuleSingleStep,
   BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,

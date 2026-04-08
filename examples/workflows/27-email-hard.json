@@ -1,0 +1,405 @@
+{
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_contact_readiness_cleanup",
+  "workflows": [
+    {
+      "version": 2,
+      "workflowId": "wf_contact_readiness_cleanup",
+      "name": "Contact readiness cleanup",
+      "description": "Normalize email and phone, derive preferred contact method and customer tier, highlight at-risk rows, drop Email (2), and remove rows with no usable contact method.",
+      "steps": [
+        {
+          "id": "step_clean_email",
+          "type": "scopedRule",
+          "columnIds": ["col_email"],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "lower",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "call",
+                      "name": "coalesce",
+                      "args": [
+                        {
+                          "kind": "call",
+                          "name": "trim",
+                          "args": [
+                            {
+                              "kind": "value"
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "call",
+                          "name": "trim",
+                          "args": [
+                            {
+                              "kind": "column",
+                              "columnId": "col_email_2"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "step_clean_phone",
+          "type": "scopedRule",
+          "columnIds": ["col_phone"],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "replaceRegex",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "coalesce",
+                  "args": [
+                    {
+                      "kind": "value"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": ""
+                    }
+                  ]
+                },
+                {
+                  "kind": "literal",
+                  "value": "[^0-9]"
+                },
+                {
+                  "kind": "literal",
+                  "value": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "step_derive_preferred_contact_method",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_preferred_contact_method",
+            "displayName": "Preferred Contact Method"
+          },
+          "expression": {
+            "kind": "match",
+            "subject": {
+              "kind": "column",
+              "columnId": "col_email"
+            },
+            "cases": [
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "contains",
+                  "args": [
+                    {
+                      "kind": "caseValue"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": "@"
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "email"
+                }
+              },
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "and",
+                  "args": [
+                    {
+                      "kind": "call",
+                      "name": "isEmpty",
+                      "args": [
+                        {
+                          "kind": "caseValue"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "call",
+                      "name": "matchesRegex",
+                      "args": [
+                        {
+                          "kind": "column",
+                          "columnId": "col_phone"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "^\\d{10}$"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "sms"
+                }
+              },
+              {
+                "kind": "otherwise",
+                "then": {
+                  "kind": "literal",
+                  "value": "none"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "step_derive_customer_tier",
+          "type": "deriveColumn",
+          "newColumn": {
+            "columnId": "col_customer_tier",
+            "displayName": "Customer Tier"
+          },
+          "expression": {
+            "kind": "match",
+            "subject": {
+              "kind": "call",
+              "name": "toNumber",
+              "args": [
+                {
+                  "kind": "column",
+                  "columnId": "col_balance"
+                }
+              ]
+            },
+            "cases": [
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "and",
+                  "args": [
+                    {
+                      "kind": "call",
+                      "name": "equals",
+                      "args": [
+                        {
+                          "kind": "column",
+                          "columnId": "col_vip"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": true
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "call",
+                      "name": "equals",
+                      "args": [
+                        {
+                          "kind": "call",
+                          "name": "lower",
+                          "args": [
+                            {
+                              "kind": "call",
+                              "name": "trim",
+                              "args": [
+                                {
+                                  "kind": "column",
+                                  "columnId": "col_status"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "literal",
+                          "value": "active"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "vip-active"
+                }
+              },
+              {
+                "kind": "when",
+                "when": {
+                  "kind": "call",
+                  "name": "lessThan",
+                  "args": [
+                    {
+                      "kind": "caseValue"
+                    },
+                    {
+                      "kind": "literal",
+                      "value": 0
+                    }
+                  ]
+                },
+                "then": {
+                  "kind": "literal",
+                  "value": "at-risk"
+                }
+              },
+              {
+                "kind": "otherwise",
+                "then": {
+                  "kind": "literal",
+                  "value": "standard"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "step_highlight_and_normalize_status_for_at_risk",
+          "type": "scopedRule",
+          "columnIds": ["col_status"],
+          "rowCondition": {
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_customer_tier"
+              },
+              {
+                "kind": "literal",
+                "value": "at-risk"
+              }
+            ]
+          },
+          "cases": [
+            {
+              "when": {
+                "kind": "call",
+                "name": "isEmpty",
+                "args": [
+                  {
+                    "kind": "value"
+                  }
+                ]
+              },
+              "then": {
+                "format": {
+                  "fillColor": "#ffeb9c"
+                }
+              }
+            },
+            {
+              "when": {
+                "kind": "call",
+                "name": "not",
+                "args": [
+                  {
+                    "kind": "call",
+                    "name": "isEmpty",
+                    "args": [
+                      {
+                        "kind": "value"
+                      }
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "value": {
+                  "kind": "call",
+                  "name": "lower",
+                  "args": [
+                    {
+                      "kind": "call",
+                      "name": "trim",
+                      "args": [
+                        {
+                          "kind": "value"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                "format": {
+                  "fillColor": "#ffeb9c"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "step_highlight_balance_for_at_risk",
+          "type": "scopedRule",
+          "columnIds": ["col_balance"],
+          "rowCondition": {
+            "kind": "call",
+            "name": "equals",
+            "args": [
+              {
+                "kind": "column",
+                "columnId": "col_customer_tier"
+              },
+              {
+                "kind": "literal",
+                "value": "at-risk"
+              }
+            ]
+          },
+          "defaultPatch": {
+            "format": {
+              "fillColor": "#ffeb9c"
+            }
+          }
+        },
+        {
+          "id": "step_drop_email_2",
+          "type": "dropColumns",
+          "columnIds": ["col_email_2"]
+        },
+        {
+          "id": "step_keep_contactable_rows",
+          "type": "filterRows",
+          "mode": "keep",
+          "condition": {
+            "kind": "call",
+            "name": "not",
+            "args": [
+              {
+                "kind": "call",
+                "name": "equals",
+                "args": [
+                  {
+                    "kind": "column",
+                    "columnId": "col_preferred_contact_method"
+                  },
+                  {
+                    "kind": "literal",
+                    "value": "none"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "runOrderWorkflowIds": ["wf_contact_readiness_cleanup"]
+}

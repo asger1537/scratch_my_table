@@ -49,6 +49,7 @@ describe('block-based workflow authoring', () => {
     };
     const workspace = buildWorkspaceFromTable(table, workflow);
     const authored = workspaceToAuthoringWorkflow(workspace);
+    const roundtrip = workspaceToWorkflow(workspace);
     const [topBlock] = workspace.getTopBlocks(false);
     const authoredStep = authored.workflow?.steps[0];
 
@@ -60,16 +61,18 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type).sort()).toEqual([
       BLOCK_TYPES.currentValueExpression,
       BLOCK_TYPES.lowerFunction,
-      BLOCK_TYPES.scopedRuleCasesStep,
+      BLOCK_TYPES.scopedRuleSingleStep,
       BLOCK_TYPES.setValueActionItem,
       BLOCK_TYPES.trimFunction,
     ]);
-    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleSingleStep);
     expect(getWorkspaceMetadata(workspace)).toEqual({
       workflowId: workflow.workflowId,
       name: workflow.name,
       description: workflow.description,
     });
+    expect(roundtrip.issues).toEqual([]);
+    expect(roundtrip.workflow).toEqual(workflow);
     expect(authored.issues).toEqual([]);
     expect(authoredStep.columnIds).toEqual(['col_email']);
     expect(authoredStep.mode).toBe('single');
@@ -195,7 +198,7 @@ describe('block-based workflow authoring', () => {
     const defaultActionBlock = topBlock?.getInputTargetBlock('DEFAULT_ACTIONS');
     const defaultColorBlock = defaultActionBlock?.getInputTargetBlock('COLOR');
 
-    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleSingleStep);
     expect(defaultActionBlock?.type).toBe(BLOCK_TYPES.highlightActionItem);
     expect(defaultColorBlock?.type).toBe(BLOCK_TYPES.literalColor);
     expect(defaultColorBlock?.getFieldValue('VALUE')).toBe('#ffeb9c');
@@ -233,9 +236,19 @@ describe('block-based workflow authoring', () => {
 
     const workspace = buildWorkspaceFromColumnIds(['col_status'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
-    const [topBlock] = workspace.getTopBlocks(false);
+    const [topBlock] = workspace.getTopBlocks(false) as Array<{
+      type: string;
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      getInputTargetBlock: (inputName: string) => {
+        inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      } | null;
+    }>;
+    const ruleCaseBlock = topBlock?.getInputTargetBlock('CASES');
+    const otherwiseInput = topBlock?.inputList.find((input) => input.name === 'DEFAULT_ACTIONS');
 
     expect(topBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(ruleCaseBlock?.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('if current cell');
+    expect(otherwiseInput?.fieldRow?.[0]?.getText?.()).toBe('otherwise do');
     expect(roundtrip.issues).toEqual([]);
     expect(roundtrip.workflow).toEqual(workflow);
   });
@@ -621,7 +634,7 @@ describe('block-based workflow authoring', () => {
     expect(matchWhenBlocks).toHaveLength(4);
     expect(matchOtherwiseBlocks).toHaveLength(2);
     expect(caseValueBlocks.length).toBeGreaterThanOrEqual(6);
-    expect(caseValueToolboxEntry?.searchText).toContain('case value');
+    expect(caseValueToolboxEntry?.searchText).toContain('matched value');
   });
 
   it('reconstructs arithmetic and rounding function trees', () => {
@@ -1042,7 +1055,7 @@ describe('block-based workflow authoring', () => {
 
   it('surfaces invalid editor blocks clearly when required inputs are missing', () => {
     const workspace = createHeadlessWorkflowWorkspace();
-    const block = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep);
+    const block = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
 
     block.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
 
@@ -1052,11 +1065,48 @@ describe('block-based workflow authoring', () => {
     expect(result.issues).toEqual([
       {
         code: 'missingRuleCases',
-        message: `Block '${BLOCK_TYPES.scopedRuleCasesStep}' must define at least one case or a default patch.`,
+        message: `Block '${BLOCK_TYPES.scopedRuleSingleStep}' must define at least one action in 'do'.`,
         blockId: block.id,
-        blockType: BLOCK_TYPES.scopedRuleCasesStep,
+        blockType: BLOCK_TYPES.scopedRuleSingleStep,
       },
     ]);
+  });
+
+  it('compiles single scoped-rule blocks with row conditions to canonical scopedRule steps', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
+    const rowConditionBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
+    const rowColumnBlock = workspace.newBlock(BLOCK_TYPES.columnExpression);
+    const usLiteralBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const lowerBlock = workspace.newBlock(BLOCK_TYPES.lowerFunction);
+    const trimBlock = workspace.newBlock(BLOCK_TYPES.trimFunction);
+    const currentCellBlock = workspace.newBlock(BLOCK_TYPES.currentValueExpression);
+
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_email']), 'COLUMN_IDS');
+    rowColumnBlock.setFieldValue('col_region', 'COLUMN_ID');
+    usLiteralBlock.setFieldValue('US', 'VALUE');
+
+    scopedRuleBlock.getInput('ROW_CONDITION')?.connection?.connect(rowConditionBlock.outputConnection!);
+    rowConditionBlock.getInput('FIRST')?.connection?.connect(rowColumnBlock.outputConnection!);
+    rowConditionBlock.getInput('SECOND')?.connection?.connect(usLiteralBlock.outputConnection!);
+    scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(lowerBlock.outputConnection!);
+    lowerBlock.getInput('INPUT')?.connection?.connect(trimBlock.outputConnection!);
+    trimBlock.getInput('INPUT')?.connection?.connect(currentCellBlock.outputConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+    expect(result.workflow?.steps[0]).toEqual({
+      id: 'step_scoped_rule_1',
+      type: 'scopedRule',
+      columnIds: ['col_email'],
+      rowCondition: call('equals', column('col_region'), literal('US')),
+      defaultPatch: {
+        value: call('lower', call('trim', value())),
+      },
+    });
   });
 
   it('reports multiple invalid action inputs in a scoped rule alongside floating orphan expression blocks', () => {
@@ -1147,9 +1197,24 @@ describe('block-based workflow authoring', () => {
     expect(logicalBlock.getInput('ITEM1')).toBeTruthy();
   });
 
+  it('lays out the simple scoped-rule block with row conditions and do actions', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
+      getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
+    };
+
+    expect(scopedRuleBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('on columns');
+    expect(scopedRuleBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('for rows where');
+    expect(scopedRuleBlock.inputList[2]?.fieldRow?.[0]?.getText?.()).toBe('do');
+    expect(scopedRuleBlock.getInput('ROW_CONDITION')?.connection?.getCheck()).toEqual(['EXPRESSION']);
+    expect(scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
+  });
+
   it('lays out scoped-rule cases and defaults with nested cell-action statements', () => {
     const workspace = createHeadlessWorkflowWorkspace();
     const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleCasesStep) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
     const ruleCaseBlock = workspace.newBlock(BLOCK_TYPES.ruleCaseItem) as {
@@ -1157,6 +1222,7 @@ describe('block-based workflow authoring', () => {
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
     const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem) as {
+      inputList: Array<{ name: string; fieldRow?: Array<{ getText?: () => string }> }>;
       getInput: (name: string) => { connection?: { getCheck: () => string[] | null } | null } | null;
     };
     const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem) as {
@@ -1164,12 +1230,36 @@ describe('block-based workflow authoring', () => {
     };
 
     expect(ruleCaseBlock.inputList.map((input) => input.name)).toEqual(['WHEN', 'ACTIONS']);
-    expect(ruleCaseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('case: when');
+    expect(ruleCaseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('if current cell');
     expect(ruleCaseBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('do');
+    expect(scopedRuleBlock.inputList.find((input) => input.name === 'DEFAULT_ACTIONS')?.fieldRow?.[0]?.getText?.()).toBe('otherwise do');
+    expect(setValueActionBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('set cell');
     expect(ruleCaseBlock.getInput('ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
     expect(scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.getCheck()).toEqual(['CELL_ACTION_ITEM']);
     expect(setValueActionBlock.getInput('VALUE')?.connection?.getCheck()).toEqual(['EXPRESSION']);
     expect(highlightActionBlock.getInput('COLOR')?.connection?.getCheck()).toEqual(['COLOR_LITERAL']);
+  });
+
+  it('uses updated value and match labels for value-returning authoring', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const currentValueBlock = workspace.newBlock(BLOCK_TYPES.currentValueExpression) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+    const caseValueBlock = workspace.newBlock(BLOCK_TYPES.caseValueExpression) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+    const matchWhenBlock = workspace.newBlock(BLOCK_TYPES.matchWhenCaseItem) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+    const matchOtherwiseBlock = workspace.newBlock(BLOCK_TYPES.matchOtherwiseCaseItem) as {
+      inputList: Array<{ fieldRow?: Array<{ getText?: () => string }> }>;
+    };
+
+    expect(currentValueBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('current cell');
+    expect(caseValueBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('matched value');
+    expect(matchWhenBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('when matched value');
+    expect(matchWhenBlock.inputList[1]?.fieldRow?.[0]?.getText?.()).toBe('then return');
+    expect(matchOtherwiseBlock.inputList[0]?.fieldRow?.[0]?.getText?.()).toBe('otherwise return');
   });
 
   it('compiles rule-case value actions from nested set-value blocks', () => {
@@ -1401,7 +1491,7 @@ describe('block-based workflow authoring', () => {
 
     setEditorSchemaColumns(baseColumns, ['col_email', 'email_safe'], schemaByBlockId);
 
-    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedRuleCasesStep);
+    expect(transformBlock?.type).toBe(BLOCK_TYPES.scopedRuleSingleStep);
     expect(getSchemaColumnOptions(transformBlock?.id)).toContainEqual(['Email (safe) [email_safe]', 'email_safe']);
     expect(getSelectableColumns(transformBlock?.id).map((entry) => entry.columnId)).toContain('email_safe');
     expect(transformBlock?.getField('COLUMN_IDS')?.getText()).toContain('Email (safe)');

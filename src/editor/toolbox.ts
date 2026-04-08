@@ -25,12 +25,16 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     colour: WORKFLOW_TOOLBOX_COLOURS.scopedRules,
     entries: [
       {
+        type: BLOCK_TYPES.scopedRuleSingleStep,
+        searchText: 'edit cells normalize trim lowercase set cell apply transform scoped rule',
+      },
+      {
         type: BLOCK_TYPES.scopedRuleCasesStep,
-        searchText: 'scoped rule transform update cells value color format highlight case default apply',
+        searchText: 'conditional edit cells if current cell otherwise do highlight value format scoped rule',
       },
       {
         type: BLOCK_TYPES.ruleCaseItem,
-        searchText: 'rule case branch when then condition result color format value',
+        searchText: 'conditional edit cells if current cell do case branch condition action',
       },
     ],
   },
@@ -41,7 +45,7 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     entries: [
       {
         type: BLOCK_TYPES.setValueActionItem,
-        searchText: 'cell actions set value update replace expression patch current cell',
+        searchText: 'cell actions set cell update replace expression patch current cell',
       },
       {
         type: BLOCK_TYPES.highlightActionItem,
@@ -75,8 +79,8 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     name: 'Values',
     colour: WORKFLOW_TOOLBOX_COLOURS.values,
     entries: [
-      { type: BLOCK_TYPES.currentValueExpression, searchText: 'current value selected cell input value' },
-      { type: BLOCK_TYPES.caseValueExpression, searchText: 'case value match subject result current match value operand' },
+      { type: BLOCK_TYPES.currentValueExpression, searchText: 'current cell selected cell input value' },
+      { type: BLOCK_TYPES.caseValueExpression, searchText: 'matched value match subject result case value operand' },
       { type: BLOCK_TYPES.literalString, searchText: 'text string literal value characters' },
       { type: BLOCK_TYPES.literalColor, searchText: 'color hex highlight fill swatch literal value' },
       { type: BLOCK_TYPES.literalNumber, searchText: 'number numeric literal integer decimal' },
@@ -137,9 +141,9 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
       { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex predicate text logic binary' },
       { type: BLOCK_TYPES.unaryPredicateFunction, searchText: 'is empty blank null missing predicate unary logic' },
       { type: BLOCK_TYPES.logicalBinaryFunction, searchText: 'and or logical group combine conditions boolean' },
-      { type: BLOCK_TYPES.matchExpression, searchText: 'match classify bucket branch first matching case exclusive subject' },
-      { type: BLOCK_TYPES.matchWhenCaseItem, searchText: 'match when case branch condition then result bucket classify' },
-      { type: BLOCK_TYPES.matchOtherwiseCaseItem, searchText: 'match otherwise case default fallback else then result' },
+      { type: BLOCK_TYPES.matchExpression, searchText: 'match classify map status return label bucket matched value subject' },
+      { type: BLOCK_TYPES.matchWhenCaseItem, searchText: 'match when matched value then return case branch condition result' },
+      { type: BLOCK_TYPES.matchOtherwiseCaseItem, searchText: 'match otherwise return case default fallback else result' },
       { type: BLOCK_TYPES.notFunction, searchText: 'not negate boolean invert logical' },
     ],
   },

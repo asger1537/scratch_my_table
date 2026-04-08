@@ -75,6 +75,7 @@ type ToolboxWithItemLookup = Blockly.IToolbox & {
 
 const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.commentStep,
+  BLOCK_TYPES.scopedRuleSingleStep,
   BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,
@@ -86,6 +87,7 @@ const STEP_BLOCK_TYPES = new Set<string>([
   BLOCK_TYPES.sortRowsStep,
 ]);
 const SCHEMA_AFFECTING_BLOCK_TYPES = new Set<string>([
+  BLOCK_TYPES.scopedRuleSingleStep,
   BLOCK_TYPES.scopedRuleCasesStep,
   BLOCK_TYPES.dropColumnsStep,
   BLOCK_TYPES.renameColumnStep,

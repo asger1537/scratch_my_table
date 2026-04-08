@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "type": "workflowPackage",
+  "activeWorkflowId": "wf_consolidate_emails",
+  "workflows": [
+    {
+      "version": 2,
+      "workflowId": "wf_consolidate_emails",
+      "name": "Consolidate Email Columns",
+      "steps": [
+        {
+          "id": "step_coalesce_emails",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_email"
+          ],
+          "defaultPatch": {
+            "value": {
+              "kind": "call",
+              "name": "coalesce",
+              "args": [
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "value"
+                    }
+                  ]
+                },
+                {
+                  "kind": "call",
+                  "name": "trim",
+                  "args": [
+                    {
+                      "kind": "column",
+                      "columnId": "col_email_2"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "step_color_empty_emails",
+          "type": "scopedRule",
+          "columnIds": [
+            "col_email"
+          ],
+          "cases": [
+            {
+              "when": {
+                "kind": "call",
+                "name": "isEmpty",
+                "args": [
+                  {
+                    "kind": "value"
+                  }
+                ]
+              },
+              "then": {
+                "format": {
+                  "fillColor": "#ff0000"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "step_drop_email_2",
+          "type": "dropColumns",
+          "columnIds": [
+            "col_email_2"
+          ]
+        }
+      ]
+    }
+  ],
+  "runOrderWorkflowIds": [
+    "wf_consolidate_emails"
+  ]
+}
