@@ -1,6 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { importCsvWorkbook } from '../domain/csv';
 import { getActiveTable, type Table } from '../domain/model';
 import { importXlsxWorkbook } from '../domain/xlsx';
 import { validateWorkflowSemantics, validateWorkflowStructure, type Workflow } from '../workflow';
@@ -8,8 +9,8 @@ import { validateWorkflowSemantics, validateWorkflowStructure, type Workflow } f
 import {
   assignWorkflowStepIds,
   buildGeminiRequestExport,
-  compileGeminiCompilerOpsDraft,
-  parseGeminiCompilerOpsResponse,
+  compileAuthoringDraft,
+  parseGeminiAuthoringResponse,
 } from './index';
 
 export const RUN_GEMINI_EXPERIMENTS = process.env.RUN_GEMINI_EXPERIMENTS === '1';
@@ -21,13 +22,21 @@ export const GEMINI_ENV_PATH = path.resolve(process.cwd(), '.tools', 'gemini.env
 export const BENCHMARKS = [
   {
     id: 'email_fallback_red',
+    tablePreset: 'customersMessy',
     prompt:
       "We just need one email column. We should use the main email column but if its empty we should use the email (2) column. If both are empty we should color red",
   },
   {
     id: 'priority_score',
+    tablePreset: 'customersMessy',
     prompt:
       "Let's calculate a priority score based on the balance. If it's negative let's set a priority score of 3, if its between 0 and 200 let's set a score of 2 and if it's above lets set a score of 1",
+  },
+  {
+    id: 'contact_tier_pipeline',
+    tablePreset: 'contactTierPipeline',
+    prompt:
+      "Goal 1: Normalize the primary Email column. If Email is empty or whitespace, fall back to Email (2). Then trim it and lowercase it.\n\nGoal 2: Normalize the Phone column by removing spaces, dashes, parentheses, and other non-digit characters.\n\nGoal 3: Derive a new column called Preferred Contact Method using a match:\n\nreturn \"email\" if the final Email contains @\nreturn \"sms\" if there is no usable email but Phone has 10 digits\nreturn \"none\" otherwise\n\nGoal 4: Derive a new column called Customer Tier using a match over normalized Status and Balance:\n\nreturn \"vip-active\" if VIP is true and Status is \"active\"\nreturn \"at-risk\" if Balance is below 0\nreturn \"standard\" otherwise\n\nGoal 5: On columns Status and Balance, for rows where Customer Tier is \"at-risk\", highlight the cells and also normalize Status to lowercase trimmed text.\n\nGoal 6: Drop helper columns like Email (2) once they are no longer needed.\n\nGoal 7: Filter rows to keep only customers where Preferred Contact Method is not \"none\".",
   },
 ] as const;
 
@@ -63,7 +72,11 @@ export interface SchemaExperimentConfig {
 export async function executeSchemaExperiment(config: SchemaExperimentConfig) {
   const apiKey = await readGeminiApiKey();
   const schema = JSON.parse(await readFile(config.schemaPath, 'utf8')) as Record<string, unknown>;
-  const table = await loadCustomersMessyTable();
+  const tablesByBenchmark = Object.fromEntries(
+    await Promise.all(
+      BENCHMARKS.map(async (benchmark) => [benchmark.id, await loadBenchmarkTable(benchmark.id)] as const),
+    ),
+  ) as Record<(typeof BENCHMARKS)[number]['id'], Table>;
   const results: ExperimentResult[] = [];
   const model = config.model ?? DEFAULT_EXPERIMENT_MODEL;
   const thinkingEnabled = config.thinkingEnabled ?? DEFAULT_EXPERIMENT_THINKING_ENABLED;
@@ -75,7 +88,7 @@ export async function executeSchemaExperiment(config: SchemaExperimentConfig) {
         await runBenchmarkIteration({
           apiKey,
           schema,
-          table,
+          table: tablesByBenchmark[benchmark.id],
           benchmarkId: benchmark.id,
           prompt: benchmark.prompt,
           iteration,
@@ -168,7 +181,7 @@ async function runBenchmarkIteration(input: {
     const rawText = extractCandidateText(rawResponseBody);
 
     try {
-      const parsed = parseGeminiCompilerOpsResponse(rawText);
+      const parsed = parseGeminiAuthoringResponse(rawText);
 
       if (parsed.mode !== 'draft') {
         return {
@@ -181,7 +194,7 @@ async function runBenchmarkIteration(input: {
         };
       }
 
-      const compiled = compileGeminiCompilerOpsDraft(parsed.ops);
+      const compiled = compileAuthoringDraft(parsed.steps);
 
       if (!compiled.value || compiled.issues.length > 0) {
         return {
@@ -379,6 +392,40 @@ export async function loadCustomersMessyTable() {
 
   if (!table) {
     throw new Error('Expected active table for Customers_Messy.xlsx.');
+  }
+
+  return table;
+}
+
+export async function loadBenchmarkTable(benchmarkId: (typeof BENCHMARKS)[number]['id']) {
+  const benchmark = BENCHMARKS.find((candidate) => candidate.id === benchmarkId);
+
+  if (!benchmark) {
+    throw new Error(`Unknown benchmark '${benchmarkId}'.`);
+  }
+
+  switch (benchmark.tablePreset) {
+    case 'customersMessy':
+      return loadCustomersMessyTable();
+    case 'contactTierPipeline':
+      return loadContactTierPipelineTable();
+  }
+}
+
+async function loadContactTierPipelineTable() {
+  const csvText = [
+    'Customer ID,Email,Email (2),Phone,Status,Balance,VIP?',
+    '1001," Alice@Example.com ",,"(555) 123-4567"," Active ",150,true',
+    '1002,"   ",backup@example.com,5559876543,active,-20,true',
+    '1003,,,"555-000-1111",Pending,0,false',
+    '1004,,,"not a phone"," Inactive ",oops,false',
+    '',
+  ].join('\r\n');
+  const workbook = importCsvWorkbook('contact-tier-pipeline.csv', csvText);
+  const table = getActiveTable(workbook);
+
+  if (!table) {
+    throw new Error('Expected active table for contact-tier-pipeline.csv.');
   }
 
   return table;

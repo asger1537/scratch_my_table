@@ -1,7 +1,7 @@
 import type { WorkflowValidationIssue } from '../workflow';
 
 import { mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
-import type { GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
+import type { AuthoringDraftResponse } from './authoringIr';
 import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
@@ -32,7 +32,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'clarify';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: GeminiCompilerOpsDraftResponse;
+      response: AuthoringDraftResponse;
       repaired: false;
       debugTrace: AIDebugTrace;
     }
@@ -40,7 +40,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'draft';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: GeminiCompilerOpsDraftResponse;
+      response: AuthoringDraftResponse;
       repaired: boolean;
       draft: AIDraft;
       debugTrace: AIDebugTrace;
@@ -49,7 +49,7 @@ export type GeminiDraftTurnOutcome =
       kind: 'invalidDraft';
       userMessage: AIMessage;
       assistantMessage: AIMessage;
-      response: GeminiCompilerOpsDraftResponse;
+      response: AuthoringDraftResponse;
       repaired: boolean;
       validationIssues: AIDraftIssue[];
       debugTrace: AIDebugTrace;

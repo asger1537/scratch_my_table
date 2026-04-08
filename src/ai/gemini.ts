@@ -1,5 +1,6 @@
-import { compileGeminiCompilerOpsDraft, type GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
-import { buildGeminiContents, buildGeminiSystemInstruction } from './prompt';
+import { compileAuthoringDraft } from './compileAuthoringDraft';
+import { type AuthoringDraftResponse } from './authoringIr';
+import { buildGeminiContents, buildGeminiSystemInstruction, type GeminiPromptOptions } from './prompt';
 import type { GeminiClientLogEvent, GeminiDraftTurnInput, GeminiDraftTurnResult } from './types';
 
 interface GeminiGenerateContentResponse {
@@ -67,6 +68,7 @@ const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
 
 interface BuildGeminiRequestExportOptions {
   responseJsonSchema?: GeminiResponseJsonSchema;
+  promptOptions?: GeminiPromptOptions;
 }
 
 export interface GeminiRequestExport {
@@ -148,7 +150,7 @@ export async function generateGeminiDraftTurn(
     emitLogEvent(input, 'response_received', 'Gemini response body received.', {
       rawText,
     });
-    const parsed = parseGeminiCompilerOpsResponse(rawText);
+    const parsed = parseGeminiAuthoringResponse(rawText);
     emitLogEvent(input, 'response_parsed', `Gemini response parsed in mode "${parsed.mode}".`, {
       rawText,
       responseMode: parsed.mode,
@@ -162,7 +164,7 @@ export async function generateGeminiDraftTurn(
       };
     }
 
-    const compiled = compileGeminiCompilerOpsDraft(parsed.ops);
+    const compiled = compileAuthoringDraft(parsed.steps);
 
     return {
       response: parsed,
@@ -196,7 +198,7 @@ export function buildGeminiRequestExport(
   input: GeminiDraftTurnInput,
   options: BuildGeminiRequestExportOptions = {},
 ): GeminiRequestExport {
-  const systemInstructionText = buildGeminiSystemInstruction(input.context);
+  const systemInstructionText = buildGeminiSystemInstruction(input.context, options.promptOptions);
   const contents = buildGeminiContents(input.context.messages, input.userMessage);
   const normalizedModel = normalizeGeminiModel(input.settings.model);
   const thinkingConfig = buildThinkingConfig(normalizedModel, input.settings.thinkingEnabled);
@@ -224,17 +226,17 @@ export function buildGeminiRequestExport(
   };
 }
 
-export function parseGeminiCompilerOpsResponse(rawText: string): GeminiCompilerOpsDraftResponse {
+export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftResponse {
   const parsed = JSON.parse(stripJsonCodeFence(rawText)) as Record<string, unknown>;
 
-  if (!parsed || typeof parsed !== 'object') {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Gemini returned an invalid authoring response.');
   }
 
   const mode = parsed.mode;
   const msg = parsed.msg;
   const ass = parsed.ass;
-  const ops = parsed.ops;
+  const steps = parsed.steps;
 
   if (mode !== 'clarify' && mode !== 'draft') {
     throw new Error('Gemini response must include mode "clarify" or "draft".');
@@ -248,19 +250,19 @@ export function parseGeminiCompilerOpsResponse(rawText: string): GeminiCompilerO
     throw new Error('Gemini response must include ass as a string array.');
   }
 
-  if (!Array.isArray(ops) || ops.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) {
-    throw new Error('Gemini response must include ops as an object array.');
+  if (!Array.isArray(steps) || steps.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) {
+    throw new Error('Gemini response must include steps as an object array.');
   }
 
-  if (mode === 'draft' && ops.length === 0) {
-    throw new Error('Gemini draft responses must include a non-empty ops array.');
+  if (mode === 'draft' && steps.length === 0) {
+    throw new Error('Gemini draft responses must include a non-empty steps array.');
   }
 
   return {
     mode,
     msg,
     ass,
-    ops: ops as GeminiCompilerOpsDraftResponse['ops'],
+    steps: steps as AuthoringDraftResponse['steps'],
   };
 }
 
@@ -331,176 +333,410 @@ function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThi
 
 function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
   return {
-    $id: 'smt-benchmark-compiler-ops-v1',
+    $id: 'smt-authoring-ir-v1',
     type: 'object',
     additionalProperties: false,
-    propertyOrdering: ['mode', 'msg', 'ass', 'ops'],
+    propertyOrdering: ['mode', 'msg', 'ass', 'steps'],
     properties: {
       mode: {
         type: 'string',
         enum: ['clarify', 'draft'],
-        description: 'Use draft when you can propose ops. Use clarify only when a required choice is missing.',
       },
       msg: {
         type: 'string',
-        description: 'Short plain-language summary.',
       },
       ass: {
         type: 'array',
-        description: 'Assumptions. Return [] when none.',
         items: {
           type: 'string',
         },
       },
-      ops: {
+      steps: {
         type: 'array',
-        description: 'Ordered compiler-friendly operations. Return [] only when mode is clarify.',
         items: {
-          $ref: '#/$defs/op',
+          oneOf: [
+            buildCommentStepSchema(),
+            buildScopedRuleStepSchema(),
+            buildDropColumnsStepSchema(),
+            buildRenameColumnStepSchema(),
+            buildDeriveColumnStepSchema(),
+            buildFilterRowsStepSchema(),
+            buildSplitColumnStepSchema(),
+            buildCombineColumnsStepSchema(),
+            buildDeduplicateRowsStepSchema(),
+            buildSortRowsStepSchema(),
+          ],
         },
       },
     },
-    required: ['mode', 'msg', 'ass', 'ops'],
-    $defs: {
-      cid: {
+    required: ['mode', 'msg', 'ass', 'steps'],
+  };
+}
+
+function buildCommentStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
         type: 'string',
-        description: 'Column id exactly as provided, for example col_email.',
+        enum: ['comment'],
       },
-      hex: {
+      text: {
         type: 'string',
-        description: 'Hex fill color such as #ffc7ce.',
       },
-      newCol: {
-        type: 'object',
-        additionalProperties: false,
-        propertyOrdering: ['id', 'name'],
-        properties: {
-          id: {
-            type: 'string',
-            description: 'New column id.',
+    },
+    required: ['type', 'text'],
+  };
+}
+
+function buildScopedRuleStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['scopedRule'],
+      },
+      columnIds: buildStringArraySchema(),
+      rowWhere: buildAuthoringBooleanExpressionSchema(),
+      cases: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            when: buildAuthoringBooleanExpressionSchema(),
+            then: buildAuthoringCellPatchSchema(),
           },
-          name: {
-            type: 'string',
-            description: 'New display name.',
-          },
+          required: ['when', 'then'],
         },
-        required: ['id', 'name'],
       },
-      band: {
-        type: 'object',
-        additionalProperties: false,
-        propertyOrdering: ['lo', 'hi', 'loInc', 'hiInc', 'score'],
-        properties: {
-          lo: {
-            type: ['number', 'null'],
-            description: 'Lower bound. null means no lower bound.',
-          },
-          hi: {
-            type: ['number', 'null'],
-            description: 'Upper bound. null means no upper bound.',
-          },
-          loInc: {
-            type: 'boolean',
-            description: 'Whether the lower bound is inclusive.',
-          },
-          hiInc: {
-            type: 'boolean',
-            description: 'Whether the upper bound is inclusive.',
-          },
-          score: {
-            type: 'number',
-            description: 'Score to emit for this band.',
-          },
-        },
-        required: ['lo', 'hi', 'loInc', 'hiInc', 'score'],
+      defaultPatch: buildAuthoringCellPatchSchema(),
+    },
+    required: ['type', 'columnIds'],
+  };
+}
+
+function buildDropColumnsStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['dropColumns'],
       },
-      fillEmptyFromCol: {
-        type: 'object',
-        additionalProperties: false,
-        propertyOrdering: ['op', 'dst', 'src'],
-        properties: {
-          op: {
-            type: 'string',
-            enum: ['fill_empty_from_col'],
-          },
-          dst: {
-            $ref: '#/$defs/cid',
-          },
-          src: {
-            $ref: '#/$defs/cid',
-          },
-        },
-        required: ['op', 'dst', 'src'],
+      columnIds: buildStringArraySchema(),
+    },
+    required: ['type', 'columnIds'],
+  };
+}
+
+function buildRenameColumnStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['renameColumn'],
       },
-      colorIfEmpty: {
-        type: 'object',
-        additionalProperties: false,
-        propertyOrdering: ['op', 'col', 'color'],
-        properties: {
-          op: {
-            type: 'string',
-            enum: ['color_if_empty'],
-          },
-          col: {
-            $ref: '#/$defs/cid',
-          },
-          color: {
-            $ref: '#/$defs/hex',
-          },
-        },
-        required: ['op', 'col', 'color'],
+      columnId: {
+        type: 'string',
       },
-      dropCols: {
-        type: 'object',
-        additionalProperties: false,
-        propertyOrdering: ['op', 'cols'],
-        properties: {
-          op: {
-            type: 'string',
-            enum: ['drop_cols'],
-          },
-          cols: {
-            type: 'array',
-            items: {
-              $ref: '#/$defs/cid',
+      newDisplayName: {
+        type: 'string',
+      },
+    },
+    required: ['type', 'columnId', 'newDisplayName'],
+  };
+}
+
+function buildDeriveColumnStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['deriveColumn'],
+      },
+      newColumn: buildNewColumnSchema(),
+      derive: buildAuthoringValueInputSchema(),
+    },
+    required: ['type', 'newColumn', 'derive'],
+  };
+}
+
+function buildFilterRowsStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['filterRows'],
+      },
+      mode: {
+        type: 'string',
+        enum: ['keep', 'drop'],
+      },
+      where: buildAuthoringBooleanExpressionSchema(),
+    },
+    required: ['type', 'mode', 'where'],
+  };
+}
+
+function buildSplitColumnStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['splitColumn'],
+      },
+      columnId: {
+        type: 'string',
+      },
+      delimiter: {
+        type: 'string',
+      },
+      outputColumns: {
+        type: 'array',
+        items: buildNewColumnSchema(),
+      },
+    },
+    required: ['type', 'columnId', 'delimiter', 'outputColumns'],
+  };
+}
+
+function buildCombineColumnsStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['combineColumns'],
+      },
+      columnIds: buildStringArraySchema(),
+      separator: {
+        type: 'string',
+      },
+      newColumn: buildNewColumnSchema(),
+    },
+    required: ['type', 'columnIds', 'separator', 'newColumn'],
+  };
+}
+
+function buildDeduplicateRowsStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['deduplicateRows'],
+      },
+      columnIds: buildStringArraySchema(),
+    },
+    required: ['type', 'columnIds'],
+  };
+}
+
+function buildSortRowsStepSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      type: {
+        type: 'string',
+        enum: ['sortRows'],
+      },
+      sorts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            columnId: {
+              type: 'string',
+            },
+            direction: {
+              type: 'string',
+              enum: ['asc', 'desc'],
             },
           },
+          required: ['columnId', 'direction'],
         },
-        required: ['op', 'cols'],
       },
-      deriveScoreBands: {
+    },
+    required: ['type', 'sorts'],
+  };
+}
+
+function buildNewColumnSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      columnId: {
+        type: 'string',
+      },
+      displayName: {
+        type: 'string',
+      },
+    },
+    required: ['columnId', 'displayName'],
+  };
+}
+
+function buildAuthoringCellPatchSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      value: buildAuthoringValueInputSchema(),
+      format: {
         type: 'object',
         additionalProperties: false,
-        propertyOrdering: ['op', 'src', 'out', 'bands'],
         properties: {
-          op: {
+          fillColor: {
             type: 'string',
-            enum: ['derive_score_bands'],
-          },
-          src: {
-            $ref: '#/$defs/cid',
-          },
-          out: {
-            $ref: '#/$defs/newCol',
-          },
-          bands: {
-            type: 'array',
-            items: {
-              $ref: '#/$defs/band',
-            },
           },
         },
-        required: ['op', 'src', 'out', 'bands'],
+      },
+    },
+  };
+}
+
+function buildAuthoringValueInputSchema() {
+  return {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      source: {
+        type: 'string',
+        enum: ['column', 'value', 'caseValue', 'literal'],
+      },
+      kind: {
+        type: 'string',
+        enum: ['nullary', 'unary', 'binary', 'ternary', 'nary', 'match'],
       },
       op: {
-        oneOf: [
-          { $ref: '#/$defs/fillEmptyFromCol' },
-          { $ref: '#/$defs/colorIfEmpty' },
-          { $ref: '#/$defs/dropCols' },
-          { $ref: '#/$defs/deriveScoreBands' },
+        type: 'string',
+        enum: [
+          'now',
+          'trim',
+          'lower',
+          'upper',
+          'toNumber',
+          'toString',
+          'toBoolean',
+          'collapseWhitespace',
+          'first',
+          'last',
+          'round',
+          'floor',
+          'ceil',
+          'abs',
+          'split',
+          'atIndex',
+          'extractRegex',
+          'add',
+          'subtract',
+          'multiply',
+          'divide',
+          'modulo',
+          'datePart',
+          'substring',
+          'replace',
+          'replaceRegex',
+          'dateDiff',
+          'dateAdd',
+          'concat',
+          'coalesce',
         ],
       },
+      columnId: {
+        type: 'string',
+      },
+      value: buildScalarSchema(),
+      input: buildLooseObjectSchema(),
+      left: buildLooseObjectSchema(),
+      right: buildLooseObjectSchema(),
+      first: buildLooseObjectSchema(),
+      second: buildLooseObjectSchema(),
+      third: buildLooseObjectSchema(),
+      items: buildLooseObjectArraySchema(),
+      subject: buildLooseObjectSchema(),
+      cases: buildLooseObjectArraySchema(),
+      then: buildLooseObjectSchema(),
+      when: buildLooseObjectSchema(),
     },
+  };
+}
+
+function buildAuthoringBooleanExpressionSchema() {
+  return {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      kind: {
+        type: 'string',
+        enum: ['predicate', 'compare', 'between', 'boolean'],
+      },
+      op: {
+        type: 'string',
+        enum: ['isEmpty', 'eq', 'gt', 'lt', 'gte', 'lte', 'contains', 'startsWith', 'endsWith', 'matchesRegex', 'and', 'or', 'not'],
+      },
+      input: buildLooseObjectSchema(),
+      left: buildLooseObjectSchema(),
+      right: buildLooseObjectSchema(),
+      min: buildLooseObjectSchema(),
+      max: buildLooseObjectSchema(),
+      inclusiveMin: {
+        type: 'boolean',
+      },
+      inclusiveMax: {
+        type: 'boolean',
+      },
+      items: buildLooseObjectArraySchema(),
+      item: buildLooseObjectSchema(),
+    },
+    required: ['kind'],
+  };
+}
+
+function buildLooseObjectSchema() {
+  return {
+    type: 'object',
+    additionalProperties: true,
+  };
+}
+
+function buildLooseObjectArraySchema() {
+  return {
+    type: 'array',
+    items: buildLooseObjectSchema(),
+  };
+}
+
+function buildStringArraySchema() {
+  return {
+    type: 'array',
+    items: {
+      type: 'string',
+    },
+  };
+}
+
+function buildScalarSchema() {
+  return {
+    type: ['string', 'number', 'boolean', 'null'],
   };
 }
 

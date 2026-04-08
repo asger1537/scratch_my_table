@@ -1,6 +1,5 @@
 export { assignWorkflowStepIds, buildDraftPreviewWorkflow, formatDraftStepsForDebug, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
 export { appendAIDevLog } from './devLog';
-export { compileGeminiCompilerOpsDraft } from './compilerOpsDraft';
 export { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps, mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
 export {
   DEFAULT_GEMINI_MODEL,
@@ -8,7 +7,7 @@ export {
   buildGeminiRequestExport,
   generateGeminiDraftTurn,
   normalizeGeminiModelSelection,
-  parseGeminiCompilerOpsResponse,
+  parseGeminiAuthoringResponse,
 } from './gemini';
 export type { GeminiRequestExport } from './gemini';
 export {
@@ -32,4 +31,6 @@ export type {
 } from './types';
 export type {
   AIDraftIssue,
+  AuthoringDraftResponse,
+  AuthoringStepInput,
 } from './authoringIr';

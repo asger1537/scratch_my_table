@@ -581,6 +581,342 @@ describe('compileAuthoringDraft', () => {
       },
     ]);
   });
+
+  it('compiles email fallback through scopedRule authoring inputs into canonical value-based logic', () => {
+    const steps: AuthoringStepInput[] = [
+      {
+        type: 'scopedRule',
+        columnIds: ['col_email'],
+        cases: [
+          {
+            when: {
+              kind: 'predicate',
+              op: 'isEmpty',
+              input: { source: 'value' },
+            },
+            then: {
+              value: { source: 'column', columnId: 'col_email_2' },
+            },
+          },
+        ],
+      },
+      {
+        type: 'dropColumns',
+        columnIds: ['col_email_2'],
+      },
+    ];
+
+    expect(compileAuthoringDraftToWorkflowSteps(steps)).toEqual([
+      {
+        type: 'scopedRule',
+        columnIds: ['col_email'],
+        cases: [
+          {
+            when: call('isEmpty', value()),
+            then: {
+              value: column('col_email_2'),
+            },
+          },
+        ],
+      },
+      {
+        type: 'dropColumns',
+        columnIds: ['col_email_2'],
+      },
+    ]);
+  });
+
+  it('compiles phone normalization via replaceRegex(toString(value), ...) inside scopedRule', () => {
+    const steps: AuthoringStepInput[] = [
+      {
+        type: 'scopedRule',
+        columnIds: ['col_phone'],
+        defaultPatch: {
+          value: {
+            kind: 'ternary',
+            op: 'replaceRegex',
+            first: {
+              kind: 'unary',
+              op: 'toString',
+              input: { source: 'value' },
+            },
+            second: { source: 'literal', value: '[^0-9]+' },
+            third: { source: 'literal', value: '' },
+          },
+        },
+      },
+    ];
+
+    expect(compileAuthoringDraftToWorkflowSteps(steps)).toEqual([
+      {
+        type: 'scopedRule',
+        columnIds: ['col_phone'],
+        defaultPatch: {
+          value: call(
+            'replaceRegex',
+            call('toString', value()),
+            literal('[^0-9]+'),
+            literal(''),
+          ),
+        },
+      },
+    ]);
+  });
+
+  it('compiles preferred contact derivation with match over caseValue and row columns', () => {
+    const steps: AuthoringStepInput[] = [
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_preferred_contact_method',
+          displayName: 'Preferred Contact Method',
+        },
+        derive: {
+          kind: 'match',
+          subject: { source: 'column', columnId: 'col_email' },
+          cases: [
+            {
+              kind: 'when',
+              when: {
+                kind: 'compare',
+                op: 'contains',
+                left: { source: 'caseValue' },
+                right: { source: 'literal', value: '@' },
+              },
+              then: { source: 'literal', value: 'email' },
+            },
+            {
+              kind: 'when',
+              when: {
+                kind: 'boolean',
+                op: 'and',
+                items: [
+                  {
+                    kind: 'predicate',
+                    op: 'isEmpty',
+                    input: { source: 'caseValue' },
+                  },
+                  {
+                    kind: 'compare',
+                    op: 'matchesRegex',
+                    left: { source: 'column', columnId: 'col_phone' },
+                    right: { source: 'literal', value: '^\\d{10}$' },
+                  },
+                ],
+              },
+              then: { source: 'literal', value: 'sms' },
+            },
+            {
+              kind: 'otherwise',
+              then: { source: 'literal', value: 'none' },
+            },
+          ],
+        },
+      },
+    ];
+
+    expect(compileAuthoringDraftToWorkflowSteps(steps)).toEqual([
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_preferred_contact_method',
+          displayName: 'Preferred Contact Method',
+        },
+        expression: {
+          kind: 'match',
+          subject: column('col_email'),
+          cases: [
+            {
+              kind: 'when',
+              when: call('contains', caseValue(), literal('@')),
+              then: literal('email'),
+            },
+            {
+              kind: 'when',
+              when: call(
+                'and',
+                call('isEmpty', caseValue()),
+                call('matchesRegex', column('col_phone'), literal('^\\d{10}$')),
+              ),
+              then: literal('sms'),
+            },
+            {
+              kind: 'otherwise',
+              then: literal('none'),
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('compiles customer tier derivation and at-risk row-conditional scoped rules', () => {
+    const steps: AuthoringStepInput[] = [
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_customer_tier',
+          displayName: 'Customer Tier',
+        },
+        derive: {
+          kind: 'match',
+          subject: { source: 'literal', value: true },
+          cases: [
+            {
+              kind: 'when',
+              when: {
+                kind: 'boolean',
+                op: 'and',
+                items: [
+                  {
+                    kind: 'compare',
+                    op: 'eq',
+                    left: { source: 'column', columnId: 'col_vip' },
+                    right: { source: 'literal', value: true },
+                  },
+                  {
+                    kind: 'compare',
+                    op: 'eq',
+                    left: {
+                      kind: 'unary',
+                      op: 'lower',
+                      input: {
+                        kind: 'unary',
+                        op: 'trim',
+                        input: { source: 'column', columnId: 'col_status' },
+                      },
+                    },
+                    right: { source: 'literal', value: 'active' },
+                  },
+                ],
+              },
+              then: { source: 'literal', value: 'vip-active' },
+            },
+            {
+              kind: 'when',
+              when: {
+                kind: 'compare',
+                op: 'lt',
+                left: {
+                  kind: 'unary',
+                  op: 'toNumber',
+                  input: { source: 'column', columnId: 'col_balance' },
+                },
+                right: { source: 'literal', value: 0 },
+              },
+              then: { source: 'literal', value: 'at-risk' },
+            },
+            {
+              kind: 'otherwise',
+              then: { source: 'literal', value: 'standard' },
+            },
+          ],
+        },
+      },
+      {
+        type: 'scopedRule',
+        columnIds: ['col_status'],
+        rowWhere: {
+          kind: 'compare',
+          op: 'eq',
+          left: { source: 'column', columnId: 'col_customer_tier' },
+          right: { source: 'literal', value: 'at-risk' },
+        },
+        defaultPatch: {
+          value: {
+            kind: 'unary',
+            op: 'lower',
+            input: {
+              kind: 'unary',
+              op: 'trim',
+              input: { source: 'value' },
+            },
+          },
+          format: {
+            fillColor: '#FFC7CE',
+          },
+        },
+      },
+      {
+        type: 'scopedRule',
+        columnIds: ['col_balance'],
+        rowWhere: {
+          kind: 'compare',
+          op: 'eq',
+          left: { source: 'column', columnId: 'col_customer_tier' },
+          right: { source: 'literal', value: 'at-risk' },
+        },
+        defaultPatch: {
+          format: {
+            fillColor: '#FFC7CE',
+          },
+        },
+      },
+    ];
+
+    expect(compileAuthoringDraftToWorkflowSteps(steps)).toEqual([
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_customer_tier',
+          displayName: 'Customer Tier',
+        },
+        expression: {
+          kind: 'match',
+          subject: literal(true),
+          cases: [
+            {
+              kind: 'when',
+              when: call(
+                'and',
+                call('equals', column('col_vip'), literal(true)),
+                call(
+                  'equals',
+                  call('lower', call('trim', column('col_status'))),
+                  literal('active'),
+                ),
+              ),
+              then: literal('vip-active'),
+            },
+            {
+              kind: 'when',
+              when: call(
+                'lessThan',
+                call('toNumber', column('col_balance')),
+                literal(0),
+              ),
+              then: literal('at-risk'),
+            },
+            {
+              kind: 'otherwise',
+              then: literal('standard'),
+            },
+          ],
+        },
+      },
+      {
+        type: 'scopedRule',
+        columnIds: ['col_status'],
+        rowCondition: call('equals', column('col_customer_tier'), literal('at-risk')),
+        defaultPatch: {
+          value: call('lower', call('trim', value())),
+          format: {
+            fillColor: '#FFC7CE',
+          },
+        },
+      },
+      {
+        type: 'scopedRule',
+        columnIds: ['col_balance'],
+        rowCondition: call('equals', column('col_customer_tier'), literal('at-risk')),
+        defaultPatch: {
+          format: {
+            fillColor: '#FFC7CE',
+          },
+        },
+      },
+    ]);
+  });
 });
 
 function column(columnId: string) {
@@ -600,6 +936,12 @@ function literal(value: string | number | boolean | null) {
 function caseValue() {
   return {
     kind: 'caseValue' as const,
+  };
+}
+
+function value() {
+  return {
+    kind: 'value' as const,
   };
 }
 

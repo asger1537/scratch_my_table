@@ -3,6 +3,10 @@ import { validateWorkflowSemantics, type Workflow } from '../workflow';
 import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
 import type { AIDraft, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
 
+export interface GeminiPromptOptions {
+  includeCuratedExamples?: boolean;
+}
+
 export interface GeminiContent {
   role: 'user' | 'model';
   parts: Array<{ text: string }>;
@@ -15,9 +19,27 @@ const CURATED_EXAMPLES = [
       mode: 'draft',
       msg: 'Use Email (2) only when Email is empty, then drop Email (2).',
       ass: [],
-      ops: [
-        { op: 'fill_empty_from_col', dst: 'col_email', src: 'col_email_2' },
-        { op: 'drop_cols', cols: ['col_email_2'] },
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'predicate',
+                op: 'isEmpty',
+                input: { source: 'value' },
+              },
+              then: {
+                value: { source: 'column', columnId: 'col_email_2' },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
       ],
     },
   },
@@ -25,12 +47,119 @@ const CURATED_EXAMPLES = [
     user: 'We just need one email column. Use Email first, fall back to Email (2), and if both are empty color the final email cell red.',
     assistant: {
       mode: 'draft',
-      msg: 'Use Email (2) when Email is empty, color any still-empty Email cells red, then drop Email (2).',
+      msg: 'Fill Email from Email (2) when needed, color any still-empty Email cells red, then drop Email (2).',
       ass: [],
-      ops: [
-        { op: 'fill_empty_from_col', dst: 'col_email', src: 'col_email_2' },
-        { op: 'color_if_empty', col: 'col_email', color: '#ffc7ce' },
-        { op: 'drop_cols', cols: ['col_email_2'] },
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'predicate',
+                op: 'isEmpty',
+                input: { source: 'value' },
+              },
+              then: {
+                value: { source: 'column', columnId: 'col_email_2' },
+              },
+            },
+            {
+              when: {
+                kind: 'predicate',
+                op: 'isEmpty',
+                input: { source: 'value' },
+              },
+              then: {
+                format: {
+                  fillColor: '#FFC7CE',
+                },
+              },
+            },
+          ],
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+      ],
+    },
+  },
+  {
+    user: 'Make Email use Email (2) when empty, then trim and lowercase the final Email, drop Email (2), then keep only rows where Email contains @.',
+    assistant: {
+      mode: 'draft',
+      msg: 'Fill Email from Email (2), normalize the final Email, drop Email (2), then keep only rows where Email contains @.',
+      ass: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'predicate',
+                op: 'isEmpty',
+                input: { source: 'value' },
+              },
+              then: {
+                value: { source: 'column', columnId: 'col_email_2' },
+              },
+            },
+          ],
+          defaultPatch: {
+            value: {
+              kind: 'unary',
+              op: 'lower',
+              input: {
+                kind: 'unary',
+                op: 'trim',
+                input: { source: 'value' },
+              },
+            },
+          },
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+        {
+          type: 'filterRows',
+          mode: 'keep',
+          where: {
+            kind: 'compare',
+            op: 'contains',
+            left: { source: 'column', columnId: 'col_email' },
+            right: { source: 'literal', value: '@' },
+          },
+        },
+      ],
+    },
+  },
+  {
+    user: 'Normalize the Phone column by removing every non-digit character.',
+    assistant: {
+      mode: 'draft',
+      msg: 'Normalize Phone in place by keeping only digits.',
+      ass: [],
+      steps: [
+        {
+          type: 'scopedRule',
+          columnIds: ['col_phone'],
+          defaultPatch: {
+            value: {
+              kind: 'ternary',
+              op: 'replaceRegex',
+              first: {
+                kind: 'unary',
+                op: 'toString',
+                input: { source: 'value' },
+              },
+              second: { source: 'literal', value: '[^0-9]+' },
+              third: { source: 'literal', value: '' },
+            },
+          },
+        },
       ],
     },
   },
@@ -38,18 +167,118 @@ const CURATED_EXAMPLES = [
     user: "Let's calculate a priority score based on balance: negative => 3, 0..200 => 2, above => 1.",
     assistant: {
       mode: 'draft',
-      msg: 'Create a priority score from Balance using three numeric bands.',
+      msg: 'Create a priority score from Balance using ordered match cases on the numeric balance.',
       ass: [],
-      ops: [
+      steps: [
         {
-          op: 'derive_score_bands',
-          src: 'col_balance',
-          out: { id: 'col_priority_score', name: 'Priority Score' },
-          bands: [
-            { lo: null, hi: 0, loInc: false, hiInc: false, score: 3 },
-            { lo: 0, hi: 200, loInc: true, hiInc: true, score: 2 },
-            { lo: 200, hi: null, loInc: false, hiInc: false, score: 1 },
-          ],
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_priority_score',
+            displayName: 'Priority Score',
+          },
+          derive: {
+            kind: 'match',
+            subject: {
+              kind: 'unary',
+              op: 'toNumber',
+              input: { source: 'column', columnId: 'col_balance' },
+            },
+            cases: [
+              {
+                kind: 'when',
+                when: {
+                  kind: 'compare',
+                  op: 'lt',
+                  left: { source: 'caseValue' },
+                  right: { source: 'literal', value: 0 },
+                },
+                then: { source: 'literal', value: 3 },
+              },
+              {
+                kind: 'when',
+                when: {
+                  kind: 'between',
+                  input: { source: 'caseValue' },
+                  min: { source: 'literal', value: 0 },
+                  max: { source: 'literal', value: 200 },
+                  inclusiveMin: true,
+                  inclusiveMax: true,
+                },
+                then: { source: 'literal', value: 2 },
+              },
+              {
+                kind: 'otherwise',
+                then: { source: 'literal', value: 1 },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  },
+  {
+    user: 'Map status values to readable labels.',
+    assistant: {
+      mode: 'draft',
+      msg: 'Derive a status label using ordered match cases over normalized status text.',
+      ass: [],
+      steps: [
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_label',
+            displayName: 'Status Label',
+          },
+          derive: {
+            kind: 'match',
+            subject: {
+              kind: 'unary',
+              op: 'lower',
+              input: {
+                kind: 'unary',
+                op: 'trim',
+                input: { source: 'column', columnId: 'col_status' },
+              },
+            },
+            cases: [
+              {
+                kind: 'when',
+                when: {
+                  kind: 'compare',
+                  op: 'eq',
+                  left: { source: 'caseValue' },
+                  right: { source: 'literal', value: 'active' },
+                },
+                then: { source: 'literal', value: 'Active customer' },
+              },
+              {
+                kind: 'when',
+                when: {
+                  kind: 'boolean',
+                  op: 'or',
+                  items: [
+                    {
+                      kind: 'compare',
+                      op: 'eq',
+                      left: { source: 'caseValue' },
+                      right: { source: 'literal', value: 'pending' },
+                    },
+                    {
+                      kind: 'compare',
+                      op: 'eq',
+                      left: { source: 'caseValue' },
+                      right: { source: 'literal', value: 'queued' },
+                    },
+                  ],
+                },
+                then: { source: 'literal', value: 'Pending customer' },
+              },
+              {
+                kind: 'otherwise',
+                then: { source: 'literal', value: 'Other' },
+              },
+            ],
+          },
         },
       ],
     },
@@ -58,14 +287,17 @@ const CURATED_EXAMPLES = [
     user: 'Clean the name column.',
     assistant: {
       mode: 'clarify',
-      msg: 'Which column should be cleaned, and what kind of cleanup do you want?',
+      msg: 'Which column should be cleaned, and what cleanup do you want applied?',
       ass: [],
-      ops: [],
+      steps: [],
     },
   },
-];
+] as const;
 
-export function buildGeminiSystemInstruction(context: AIPromptContext): string {
+export function buildGeminiSystemInstruction(
+  context: AIPromptContext,
+  options: GeminiPromptOptions = {},
+): string {
   const availableSchemaLines = getAvailableSchemaPromptLines(context);
   const workflowSummary = summarizeWorkflowSteps(context.workflow);
   const workflowSteps = context.workflow.steps.length > 0 ? JSON.stringify(stripWorkflowStepIds(context.workflow.steps), null, 2) : '(no steps yet)';
@@ -77,14 +309,16 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     ? 'The canonical workflow summary below is the last valid snapshot because the live block workspace currently has issues. Use the live workspace snapshot and issue list to infer the intended fix. Applying the draft will replace the broken workspace.'
     : 'The canonical workflow summary below reflects the current valid workflow context.';
   const draftSemanticsNote = context.draft
-    ? 'There is an existing AI draft. Return the FULL updated operation list that should replace that AI draft.'
-    : 'There is no AI draft yet. Return the FULL updated operation list that should replace the current workflow.';
+    ? 'There is an existing AI draft. Return the FULL updated authoring step list that should replace that AI draft.'
+    : 'There is no AI draft yet. Return the FULL updated authoring step list that should replace the current workflow.';
+  const includeCuratedExamples = options.includeCuratedExamples !== false;
   const promptSections = [
     'You are an expert Scratch My Table copilot.',
-    'Translate the user request into a tiny compiler-friendly operation list.',
-    'Local code will compile this operation list into canonical Workflow IR v2 and then run structural/semantic validation.',
+    'Translate the user request into the Scratch My Table AI authoring IR.',
+    'Local code will compile your authoring IR into canonical Workflow IR v2 and then run structural and semantic validation.',
     'Return JSON only. Do not use markdown fences.',
-    'Do not return canonical AST, Blockly data, workflow envelopes, or step IDs.',
+    'Do not return canonical Workflow IR v2, Blockly data, workflow envelopes, or step IDs.',
+    'Never emit canonical { "kind": "call" }, { "kind": "column" }, { "kind": "value" }, or { "kind": "caseValue" } nodes directly. Use the authoring shapes below.',
     workflowContextNote,
     draftSemanticsNote,
     '',
@@ -92,27 +326,61 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '- mode: "clarify" or "draft"',
     '- msg: short natural-language summary',
     '- ass: array of short strings',
-    '- ops: ordered compiler ops',
+    '- steps: ordered authoring steps',
     '- Always include all four fields.',
-    '- Use ops: [] only when mode is "clarify".',
-    '- Never return mode "draft" with an empty ops array.',
+    '- Use steps: [] only when mode is "clarify".',
+    '- Never return mode "draft" with an empty steps array.',
     '',
-    'Allowed ops and exact field shapes:',
-    '- fill_empty_from_col: { "op": "fill_empty_from_col", "dst": "col_x", "src": "col_y" }',
-    '- color_if_empty: { "op": "color_if_empty", "col": "col_x", "color": "#ffc7ce" }',
-    '- drop_cols: { "op": "drop_cols", "cols": ["col_x", "col_y"] }',
-    '- derive_score_bands: { "op": "derive_score_bands", "src": "col_balance", "out": { "id": "col_priority_score", "name": "Priority Score" }, "bands": [{ "lo": null|number, "hi": null|number, "loInc": boolean, "hiInc": boolean, "score": number }] }',
+    'Authoring step shapes:',
+    '- comment: { "type": "comment", "text": "..." }',
+    '- scopedRule: { "type": "scopedRule", "columnIds": ["col_x"], "rowWhere"?: <boolean expression>, "cases"?: [{ "when": <boolean expression>, "then": <cell patch> }], "defaultPatch"?: <cell patch> }',
+    '- dropColumns: { "type": "dropColumns", "columnIds": ["col_x", "col_y"] }',
+    '- renameColumn: { "type": "renameColumn", "columnId": "col_x", "newDisplayName": "New name" }',
+    '- deriveColumn: { "type": "deriveColumn", "newColumn": { "columnId": "col_new", "displayName": "New" }, "derive": <value expression> }',
+    '- filterRows: { "type": "filterRows", "mode": "keep"|"drop", "where": <boolean expression> }',
+    '- splitColumn: { "type": "splitColumn", "columnId": "col_x", "delimiter": ",", "outputColumns": [{ "columnId": "col_a", "displayName": "A" }, { "columnId": "col_b", "displayName": "B" }] }',
+    '- combineColumns: { "type": "combineColumns", "columnIds": ["col_a", "col_b"], "separator": " ", "newColumn": { "columnId": "col_full_name", "displayName": "Full Name" } }',
+    '- deduplicateRows: { "type": "deduplicateRows", "columnIds": ["col_x"] }',
+    '- sortRows: { "type": "sortRows", "sorts": [{ "columnId": "col_x", "direction": "asc"|"desc" }] }',
+    '',
+    'Cell patch shape:',
+    '- { "value"?: <value expression>, "format"?: { "fillColor": "#FFEB9C" } }',
+    '',
+    'Authoring operands:',
+    '- column operand: { "source": "column", "columnId": "col_x" }',
+    '- scoped current-cell operand: { "source": "value" }',
+    '- current match subject operand: { "source": "caseValue" }',
+    '- literal operand: { "source": "literal", "value": "text" | 123 | true | false | null }',
+    '- Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
+    '- Use { "source": "caseValue" } only inside match.cases[*].when.',
+    '',
+    'Value expression shapes:',
+    '- nullary: { "kind": "nullary", "op": "now" }',
+    '- unary: { "kind": "unary", "op": "trim"|"lower"|"upper"|"toNumber"|"toString"|"toBoolean"|"collapseWhitespace"|"first"|"last"|"round"|"floor"|"ceil"|"abs", "input": <value expression> }',
+    '- binary: { "kind": "binary", "op": "split"|"atIndex"|"extractRegex"|"add"|"subtract"|"multiply"|"divide"|"modulo"|"datePart", "left": <value expression>, "right": <value expression> }',
+    '- ternary: { "kind": "ternary", "op": "substring"|"replace"|"replaceRegex"|"dateDiff"|"dateAdd", "first": <value expression>, "second": <value expression>, "third": <value expression> }',
+    '- nary: { "kind": "nary", "op": "concat"|"coalesce", "items": [<value expression>, ...] }',
+    '- match: { "kind": "match", "subject": <value expression>, "cases": [{ "kind": "when", "when": <boolean expression>, "then": <value expression> }, { "kind": "otherwise", "then": <value expression> }] }',
+    '',
+    'Boolean expression shapes:',
+    '- predicate: { "kind": "predicate", "op": "isEmpty", "input": <value expression> }',
+    '- compare: { "kind": "compare", "op": "eq"|"gt"|"lt"|"gte"|"lte"|"contains"|"startsWith"|"endsWith"|"matchesRegex", "left": <value expression>, "right": <value expression> }',
+    '- between: { "kind": "between", "input": <value expression>, "min": <value expression>, "max": <value expression>, "inclusiveMin": true|false, "inclusiveMax": true|false }',
+    '- boolean group: { "kind": "boolean", "op": "and"|"or", "items": [<boolean expression>, ...] }',
+    '- boolean not: { "kind": "boolean", "op": "not", "item": <boolean expression> }',
     '',
     'Rules:',
     '- Use column ids exactly as provided.',
-    '- Keep ops in execution order.',
-    '- Use only the allowed op names.',
-    '- For email fallback then red formatting: fill_empty_from_col, then color_if_empty, then drop_cols.',
-    '- For priority score bucketing: use derive_score_bands.',
-    '- In derive_score_bands, a band with lo = null has no lower bound, and hi = null has no upper bound.',
-    '- If both lo and hi are null, that band is a fallback and should be last.',
+    '- Keep steps in execution order.',
+    '- If a later step drops a column, any logic that depends on that column must happen before the drop or be folded into an earlier step.',
+    '- Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment. Do not refuse mixed columns just because they are mixed.',
+    '- isEmpty(...) already treats whitespace-only strings as empty.',
+    '- Use match for exclusive classification and bucketing. Match is ordered and first-match-wins.',
+    '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
+    '- scopedRule uses { "source": "value" }. match case conditions use { "source": "caseValue" }. Do not mix them up.',
+    '- For regex patterns in JSON string literals, double-escape backslashes for JSON serialization. Example: \\d+ must appear as "\\\\d+".',
     '',
-    'Schema currently available to the returned ops:',
+    'Schema currently available to the returned steps:',
     ...availableSchemaLines,
     '',
     'Current workflow/editor issues:',
@@ -126,12 +394,6 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
     '',
     'Current AI draft workflow steps without IDs:',
     draftSummary,
-    '',
-    'Curated examples:',
-    ...CURATED_EXAMPLES.flatMap((example, index) => [
-      `Example ${index + 1} user: ${example.user}`,
-      `Example ${index + 1} response: ${JSON.stringify(example.assistant)}`,
-    ]),
   ];
 
   if (context.workflowContextSource === 'lastValidSnapshot') {
@@ -141,6 +403,17 @@ export function buildGeminiSystemInstruction(context: AIPromptContext): string {
       'Current block workspace snapshot:',
       context.workspacePromptSnapshot || '(live workspace snapshot unavailable)',
       '',
+    );
+  }
+
+  if (includeCuratedExamples) {
+    promptSections.push(
+      '',
+      'Curated examples:',
+      ...CURATED_EXAMPLES.flatMap((example, index) => [
+        `Example ${index + 1} user: ${example.user}`,
+        `Example ${index + 1} response: ${JSON.stringify(example.assistant)}`,
+      ]),
     );
   }
 
@@ -163,12 +436,16 @@ export function buildRepairUserMessage(
 
   return [
     'Your previous draft did not validate locally.',
-    'Rewrite the FULL operation list so it satisfies these issues.',
-    'Return compiler-op JSON only with keys: mode, msg, ass, ops.',
-    'Do not return canonical AST or workflow steps.',
-    'Use only these op names: fill_empty_from_col, color_if_empty, drop_cols, derive_score_bands.',
+    'Rewrite the FULL authoring step list so it satisfies these issues.',
+    'Return JSON only with keys: mode, msg, ass, steps.',
+    'Return authoring IR only. Do not return canonical Workflow IR v2, canonical call nodes, or step IDs.',
+    'Use authoring operands only: { "source": "column" }, { "source": "value" }, { "source": "caseValue" }, { "source": "literal" }.',
+    'Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.',
+    'Use authoring boolean kinds only: predicate, compare, between, boolean.',
+    'Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
+    'Use { "source": "caseValue" } only inside match.cases[*].when.',
     'Do not ask a clarification question in this repair turn. Return mode "draft".',
-    'Return at least one op.',
+    'Return at least one step.',
     '',
     'Previous invalid response:',
     previousRawText,

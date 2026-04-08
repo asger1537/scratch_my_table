@@ -1,8 +1,7 @@
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowStep } from '../workflow';
 
-import type { AIDraftIssue } from './authoringIr';
-import type { GeminiCompilerOpsDraftResponse } from './compilerOpsDraft';
+import type { AIDraftIssue, AuthoringDraftResponse } from './authoringIr';
 
 export type WorkflowStepInput =
   WorkflowStep extends infer Step
@@ -56,12 +55,12 @@ export interface AIDebugTrace {
   outcomeKind: 'clarify' | 'draft' | 'invalidDraft';
   repaired: boolean;
   initialRawText: string;
-  initialResponse: GeminiCompilerOpsDraftResponse;
+  initialResponse: AuthoringDraftResponse;
   initialCompiledSteps?: WorkflowStepInput[];
   initialCompilationIssues: AIDraftIssue[];
   initialValidationIssues: AIDraftIssue[];
   repairRawText?: string;
-  repairResponse?: GeminiCompilerOpsDraftResponse;
+  repairResponse?: AuthoringDraftResponse;
   repairCompiledSteps?: WorkflowStepInput[];
   repairCompilationIssues: AIDraftIssue[];
   repairValidationIssues: AIDraftIssue[];
@@ -98,7 +97,7 @@ export interface GeminiDraftTurnInput {
 }
 
 export interface GeminiDraftTurnResult {
-  response: GeminiCompilerOpsDraftResponse;
+  response: AuthoringDraftResponse;
   rawText: string;
   compiledSteps?: WorkflowStepInput[];
   compilationIssues: AIDraftIssue[];

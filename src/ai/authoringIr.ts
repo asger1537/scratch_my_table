@@ -276,3 +276,10 @@ export type AuthoringStepInput =
   | AuthoringCombineColumnsStepInput
   | AuthoringDeduplicateRowsStepInput
   | AuthoringSortRowsStepInput;
+
+export interface AuthoringDraftResponse {
+  mode: 'clarify' | 'draft';
+  msg: string;
+  ass: string[];
+  steps: AuthoringStepInput[];
+}

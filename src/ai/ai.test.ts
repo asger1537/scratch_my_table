@@ -8,7 +8,7 @@ import {
   buildRepairUserMessage,
   formatDraftStepsForDebug,
   generateGeminiDraftTurn,
-  parseGeminiCompilerOpsResponse,
+  parseGeminiAuthoringResponse,
   replaceWorkflowSteps,
   runGeminiDraftTurn,
   type AISettings,
@@ -18,19 +18,20 @@ import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 
 describe('AI workflow copilot helpers', () => {
-  it('builds prompt context for compiler-op IR without leaking raw row values', () => {
+  it('builds prompt context for authoring IR without leaking raw row values', () => {
     const context = createPromptContext();
     const instruction = buildGeminiSystemInstruction(context);
 
-    expect(instruction).toContain('Translate the user request into a tiny compiler-friendly operation list.');
-    expect(instruction).toContain('Response contract:');
-    expect(instruction).toContain('mode: "clarify" or "draft"');
-    expect(instruction).toContain('msg: short natural-language summary');
-    expect(instruction).toContain('ass: array of short strings');
-    expect(instruction).toContain('ops: ordered compiler ops');
-    expect(instruction).toContain('fill_empty_from_col');
-    expect(instruction).toContain('derive_score_bands');
-    expect(instruction).toContain('Current workflow summary:');
+    expect(instruction).toContain('Translate the user request into the Scratch My Table AI authoring IR.');
+    expect(instruction).toContain('steps: ordered authoring steps');
+    expect(instruction).toContain('Authoring operands:');
+    expect(instruction).toContain('{ "source": "value" }');
+    expect(instruction).toContain('{ "source": "caseValue" }');
+    expect(instruction).toContain('"kind": "match"');
+    expect(instruction).toContain('replaceRegex');
+    expect(instruction).toContain('Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment.');
+    expect(instruction).not.toContain('fill_empty_from_col');
+    expect(instruction).not.toContain('normalize_text_col');
     expect(instruction).not.toContain('alice@example.com');
   });
 
@@ -53,7 +54,7 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('"type": "scoped_rule_cases_step"');
   });
 
-  it('builds a replayable Gemini request export with the compiler-op schema and no API key leakage', () => {
+  it('builds a replayable Gemini request export with the authoring schema and no API key leakage', () => {
     const context = createPromptContext();
     const settings = createAISettings();
     const userMessage = {
@@ -84,13 +85,18 @@ describe('AI workflow copilot helpers', () => {
           }),
           msg: expect.objectContaining({ type: 'string' }),
           ass: expect.objectContaining({ type: 'array' }),
-          ops: expect.objectContaining({ type: 'array' }),
+          steps: expect.objectContaining({ type: 'array' }),
         }),
-        required: ['mode', 'msg', 'ass', 'ops'],
+        required: ['mode', 'msg', 'ass', 'steps'],
       }),
     );
-    expect(serializedSchema).toContain('"fill_empty_from_col"');
-    expect(serializedSchema).toContain('"derive_score_bands"');
+    expect(serializedSchema).toContain('"derive"');
+    expect(serializedSchema).toContain('"where"');
+    expect(serializedSchema).toContain('"rowWhere"');
+    expect(serializedSchema).toContain('"match"');
+    expect(serializedSchema).toContain('"caseValue"');
+    expect(serializedSchema).toContain('"replaceRegex"');
+    expect(serializedSchema).not.toContain('"fill_empty_from_col"');
     expect(serializedSchema).not.toContain('"const"');
     expect(serializedSchema).not.toContain('"minLength"');
     expect(serializedSchema).not.toContain('"pattern"');
@@ -98,65 +104,107 @@ describe('AI workflow copilot helpers', () => {
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
   });
 
-  it('builds repair prompts for compiler-op IR', () => {
+  it('builds repair prompts for authoring IR', () => {
     const context = createPromptContext();
 
     const repairMessage = buildRepairUserMessage(
-      '{"mode":"draft","msg":"Draft.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":0,"hi":"bad","loInc":true,"hiInc":true,"score":2}]}]}',
+      '{"mode":"draft","msg":"Draft.","ass":[],"steps":[{"type":"deriveColumn","newColumn":{"columnId":"col_priority_score","displayName":"Priority Score"},"derive":{"kind":"match","subject":{"kind":"unary","op":"toNumber","input":{"source":"column","columnId":"col_balance"}},"cases":[{"kind":"when","when":{"kind":"compare","op":"gteish","left":{"source":"caseValue"},"right":{"source":"literal","value":0}},"then":{"source":"literal","value":2}}]}}]}',
       [
         {
-          code: 'authoringType',
-          path: 'ops[0].bands[0].hi',
-          message: 'Band hi must be number or null.',
+          code: 'authoringUnsupportedOp',
+          path: 'steps[0].derive.cases[0].when.op',
+          message: "Unsupported compare op 'gteish'.",
         },
       ],
       context,
     );
 
-    expect(repairMessage).toContain('Return compiler-op JSON only with keys: mode, msg, ass, ops.');
-    expect(repairMessage).toContain('Use only these op names: fill_empty_from_col, color_if_empty, drop_cols, derive_score_bands.');
+    expect(repairMessage).toContain('Return JSON only with keys: mode, msg, ass, steps.');
+    expect(repairMessage).toContain('Return authoring IR only.');
+    expect(repairMessage).toContain('Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.');
+    expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when.');
+    expect(repairMessage).not.toContain('fill_empty_from_col');
     expect(repairMessage).toContain('- col_email | Email | string');
   });
 
-  it('parses clarify and draft compiler-op responses and rejects malformed payloads', () => {
+  it('parses clarify and draft authoring responses and rejects malformed payloads', () => {
     expect(
-      parseGeminiCompilerOpsResponse('{"mode":"clarify","msg":"Which email column should I use?","ass":[],"ops":[]}'),
+      parseGeminiAuthoringResponse('{"mode":"clarify","msg":"Which email column should I use?","ass":[],"steps":[]}'),
     ).toEqual({
       mode: 'clarify',
       msg: 'Which email column should I use?',
       ass: [],
-      ops: [],
+      steps: [],
     });
 
     expect(
-      parseGeminiCompilerOpsResponse('```json\n{"mode":"draft","msg":"Done.","ass":[],"ops":[{"op":"drop_cols","cols":["col_email_2"]}]}\n```'),
+      parseGeminiAuthoringResponse(
+        '```json\n{"mode":"draft","msg":"Done.","ass":[],"steps":[{"type":"dropColumns","columnIds":["col_email_2"]}]}\n```',
+      ),
     ).toEqual({
       mode: 'draft',
       msg: 'Done.',
       ass: [],
-      ops: [{ op: 'drop_cols', cols: ['col_email_2'] }],
+      steps: [{ type: 'dropColumns', columnIds: ['col_email_2'] }],
     });
 
-    expect(() => parseGeminiCompilerOpsResponse('{"mode":"maybe","msg":"Done.","ass":[],"ops":[]}')).toThrow(
+    expect(() => parseGeminiAuthoringResponse('{"mode":"maybe","msg":"Done.","ass":[],"steps":[]}')).toThrow(
       'Gemini response must include mode "clarify" or "draft".',
     );
-    expect(() => parseGeminiCompilerOpsResponse('{"mode":"clarify","msg":"   ","ass":[],"ops":[]}')).toThrow(
+    expect(() => parseGeminiAuthoringResponse('{"mode":"clarify","msg":"   ","ass":[],"steps":[]}')).toThrow(
       'Gemini response must include a non-empty msg string.',
     );
-    expect(() => parseGeminiCompilerOpsResponse('{"mode":"clarify","msg":"Done.","ops":[]}')).toThrow(
+    expect(() => parseGeminiAuthoringResponse('{"mode":"clarify","msg":"Done.","steps":[]}')).toThrow(
       'Gemini response must include ass as a string array.',
     );
-    expect(() => parseGeminiCompilerOpsResponse('{"mode":"draft","msg":"Missing ops","ass":[],"ops":[]}')).toThrow(
-      'Gemini draft responses must include a non-empty ops array.',
+    expect(() => parseGeminiAuthoringResponse('{"mode":"draft","msg":"Missing steps","ass":[],"steps":[]}')).toThrow(
+      'Gemini draft responses must include a non-empty steps array.',
     );
   });
 
-  it('generates and compiles valid compiler-op drafts from Gemini', async () => {
+  it('generates and compiles valid authoring drafts from Gemini', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","msg":"Create priority score.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":null,"hi":0,"loInc":false,"hiInc":false,"score":3},{"lo":0,"hi":200,"loInc":true,"hiInc":true,"score":2},{"lo":200,"hi":null,"loInc":false,"hiInc":false,"score":1}]}]}',
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'Create priority score.',
+            ass: [],
+            steps: [
+              {
+                type: 'deriveColumn',
+                newColumn: {
+                  columnId: 'col_priority_score',
+                  displayName: 'Priority Score',
+                },
+                derive: {
+                  kind: 'match',
+                  subject: {
+                    kind: 'unary',
+                    op: 'toNumber',
+                    input: { source: 'column', columnId: 'col_balance' },
+                  },
+                  cases: [
+                    {
+                      kind: 'when',
+                      when: {
+                        kind: 'compare',
+                        op: 'lt',
+                        left: { source: 'caseValue' },
+                        right: { source: 'literal', value: 0 },
+                      },
+                      then: { source: 'literal', value: 3 },
+                    },
+                    {
+                      kind: 'otherwise',
+                      then: { source: 'literal', value: 1 },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
         ),
       );
 
@@ -186,6 +234,129 @@ describe('AI workflow copilot helpers', () => {
       expect.objectContaining({
         type: 'deriveColumn',
       }),
+    ]);
+  });
+
+  it('compiles authoring drafts with scopedRule normalization, dropColumns, and filterRows into canonical steps', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'Clean and filter email.',
+            ass: [],
+            steps: [
+              {
+                type: 'scopedRule',
+                columnIds: ['col_email'],
+                cases: [
+                  {
+                    when: {
+                      kind: 'predicate',
+                      op: 'isEmpty',
+                      input: { source: 'value' },
+                    },
+                    then: {
+                      value: { source: 'column', columnId: 'col_email_2' },
+                    },
+                  },
+                ],
+                defaultPatch: {
+                  value: {
+                    kind: 'unary',
+                    op: 'lower',
+                    input: {
+                      kind: 'unary',
+                      op: 'trim',
+                      input: { source: 'value' },
+                    },
+                  },
+                },
+              },
+              {
+                type: 'dropColumns',
+                columnIds: ['col_email_2'],
+              },
+              {
+                type: 'filterRows',
+                mode: 'keep',
+                where: {
+                  kind: 'compare',
+                  op: 'contains',
+                  left: { source: 'column', columnId: 'col_email' },
+                  right: { source: 'literal', value: '@' },
+                },
+              },
+            ],
+          }),
+        ),
+      );
+
+    const result = await generateGeminiDraftTurn(
+      {
+        settings: createAISettings(),
+        context: createPromptContext(),
+        userMessage: {
+          role: 'user',
+          text: 'Fallback email, normalize, and keep rows with @.',
+          timestamp: '2026-03-31T09:00:00.000Z',
+        },
+        phase: 'initial',
+      },
+      fetchFn,
+    );
+
+    expect(result.compilationIssues).toEqual([]);
+    expect(result.compiledSteps).toEqual([
+      {
+        type: 'scopedRule',
+        columnIds: ['col_email'],
+        cases: [
+          {
+            when: {
+              kind: 'call',
+              name: 'isEmpty',
+              args: [{ kind: 'value' }],
+            },
+            then: {
+              value: {
+                kind: 'column',
+                columnId: 'col_email_2',
+              },
+            },
+          },
+        ],
+        defaultPatch: {
+          value: {
+            kind: 'call',
+            name: 'lower',
+            args: [
+              {
+                kind: 'call',
+                name: 'trim',
+                args: [{ kind: 'value' }],
+              },
+            ],
+          },
+        },
+      },
+      {
+        type: 'dropColumns',
+        columnIds: ['col_email_2'],
+      },
+      {
+        type: 'filterRows',
+        mode: 'keep',
+        condition: {
+          kind: 'call',
+          name: 'contains',
+          args: [
+            { kind: 'column', columnId: 'col_email' },
+            { kind: 'literal', value: '@' },
+          ],
+        },
+      },
     ]);
   });
 
@@ -233,17 +404,99 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
-  it('routes compiler errors into repair before canonical workflow validation', async () => {
+  it('routes authoring compile errors into repair before canonical workflow validation', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","msg":"First attempt.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":0,"hi":"bad","loInc":true,"hiInc":true,"score":2}]}]}',
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'First attempt.',
+            ass: [],
+            steps: [
+              {
+                type: 'deriveColumn',
+                newColumn: {
+                  columnId: 'col_priority_score',
+                  displayName: 'Priority Score',
+                },
+                derive: {
+                  kind: 'match',
+                  subject: {
+                    kind: 'unary',
+                    op: 'toNumber',
+                    input: { source: 'column', columnId: 'col_balance' },
+                  },
+                  cases: [
+                    {
+                      kind: 'when',
+                      when: {
+                        kind: 'compare',
+                        op: 'gteish',
+                        left: { source: 'caseValue' },
+                        right: { source: 'literal', value: 0 },
+                      },
+                      then: { source: 'literal', value: 2 },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
         ),
       )
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","msg":"I corrected the score bands.","ass":[],"ops":[{"op":"derive_score_bands","src":"col_balance","out":{"id":"col_priority_score","name":"Priority Score"},"bands":[{"lo":null,"hi":0,"loInc":false,"hiInc":false,"score":3},{"lo":0,"hi":200,"loInc":true,"hiInc":true,"score":2},{"lo":200,"hi":null,"loInc":false,"hiInc":false,"score":1}]}]}',
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'I corrected the match conditions.',
+            ass: [],
+            steps: [
+              {
+                type: 'deriveColumn',
+                newColumn: {
+                  columnId: 'col_priority_score',
+                  displayName: 'Priority Score',
+                },
+                derive: {
+                  kind: 'match',
+                  subject: {
+                    kind: 'unary',
+                    op: 'toNumber',
+                    input: { source: 'column', columnId: 'col_balance' },
+                  },
+                  cases: [
+                    {
+                      kind: 'when',
+                      when: {
+                        kind: 'compare',
+                        op: 'lt',
+                        left: { source: 'caseValue' },
+                        right: { source: 'literal', value: 0 },
+                      },
+                      then: { source: 'literal', value: 3 },
+                    },
+                    {
+                      kind: 'when',
+                      when: {
+                        kind: 'between',
+                        input: { source: 'caseValue' },
+                        min: { source: 'literal', value: 0 },
+                        max: { source: 'literal', value: 200 },
+                        inclusiveMin: true,
+                        inclusiveMax: true,
+                      },
+                      then: { source: 'literal', value: 2 },
+                    },
+                    {
+                      kind: 'otherwise',
+                      then: { source: 'literal', value: 1 },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
         ),
       );
     const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([]);
@@ -264,7 +517,7 @@ describe('AI workflow copilot helpers', () => {
         debugTrace: expect.objectContaining({
           initialCompilationIssues: [
             expect.objectContaining({
-              code: 'authoringType',
+              code: 'authoringUnsupportedOp',
             }),
           ],
           repairCompilationIssues: [],
@@ -278,12 +531,64 @@ describe('AI workflow copilot helpers', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","msg":"First attempt.","ass":[],"ops":[{"op":"fill_empty_from_col","dst":"col_email","src":"col_missing"},{"op":"drop_cols","cols":["col_email_2"]}]}',
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'First attempt.',
+            ass: [],
+            steps: [
+              {
+                type: 'scopedRule',
+                columnIds: ['col_email'],
+                cases: [
+                  {
+                    when: {
+                      kind: 'predicate',
+                      op: 'isEmpty',
+                      input: { source: 'value' },
+                    },
+                    then: {
+                      value: { source: 'column', columnId: 'col_missing' },
+                    },
+                  },
+                ],
+              },
+              {
+                type: 'dropColumns',
+                columnIds: ['col_email_2'],
+              },
+            ],
+          }),
         ),
       )
       .mockResolvedValueOnce(
         createGeminiResponse(
-          '{"mode":"draft","msg":"I fixed the source column.","ass":["Using Email (2) as fallback."],"ops":[{"op":"fill_empty_from_col","dst":"col_email","src":"col_email_2"},{"op":"drop_cols","cols":["col_email_2"]}]}',
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'I fixed the source column.',
+            ass: ['Using Email (2) as fallback.'],
+            steps: [
+              {
+                type: 'scopedRule',
+                columnIds: ['col_email'],
+                cases: [
+                  {
+                    when: {
+                      kind: 'predicate',
+                      op: 'isEmpty',
+                      input: { source: 'value' },
+                    },
+                    then: {
+                      value: { source: 'column', columnId: 'col_email_2' },
+                    },
+                  },
+                ],
+              },
+              {
+                type: 'dropColumns',
+                columnIds: ['col_email_2'],
+              },
+            ],
+          }),
         ),
       );
     const validateCandidateWorkflow = vi
@@ -512,11 +817,19 @@ function createTable(): Table {
           missingCount: 2,
         },
         {
+          columnId: 'col_phone',
+          displayName: 'Phone',
+          logicalType: 'mixed',
+          nullable: true,
+          sourceIndex: 2,
+          missingCount: 1,
+        },
+        {
           columnId: 'col_status',
           displayName: 'Status',
           logicalType: 'string',
           nullable: false,
-          sourceIndex: 2,
+          sourceIndex: 3,
           missingCount: 0,
         },
         {
@@ -524,7 +837,7 @@ function createTable(): Table {
           displayName: 'Balance',
           logicalType: 'mixed',
           nullable: true,
-          sourceIndex: 3,
+          sourceIndex: 4,
           missingCount: 2,
         },
         {
@@ -532,7 +845,7 @@ function createTable(): Table {
           displayName: 'VIP',
           logicalType: 'boolean',
           nullable: true,
-          sourceIndex: 4,
+          sourceIndex: 5,
           missingCount: 0,
         },
       ],
@@ -543,6 +856,7 @@ function createTable(): Table {
         cellsByColumnId: {
           col_email: 'alice@example.com',
           col_email_2: null,
+          col_phone: '(555) 123-4567',
           col_status: 'active',
           col_balance: '15',
           col_vip: true,

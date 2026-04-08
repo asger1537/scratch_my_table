@@ -2289,7 +2289,7 @@ function AIAssistantModal({
                   </div>
                 </dl>
                 <div className="ai-debug-trace__section">
-                  <strong>Initial parsed compiler-op response</strong>
+                  <strong>Initial parsed authoring response</strong>
                   <textarea
                     className="json-viewer ai-debug-trace__viewer"
                     readOnly
@@ -2332,7 +2332,7 @@ function AIAssistantModal({
                 ) : null}
                 {aiDebugTrace.repairRawText ? (
                   <div className="ai-debug-trace__section">
-                    <strong>Repair parsed compiler-op response</strong>
+                    <strong>Repair parsed authoring response</strong>
                     <textarea
                       className="json-viewer ai-debug-trace__viewer"
                       readOnly
