@@ -45,10 +45,11 @@ export interface BenchmarkOpsExperimentResult {
 
 export interface BenchmarkOpsExperimentConfig {
   experimentTitle: string;
-  schemaPath: string;
+  schemaPath?: string;
   reportPath: string;
   includeAssistantPrefill?: boolean;
   includeCuratedExamples?: boolean;
+  disableStructuredOutput?: boolean;
 }
 
 export async function executeBenchmarkOpsExperiment(config: BenchmarkOpsExperimentConfig) {
@@ -58,7 +59,9 @@ export async function executeBenchmarkOpsExperiment(config: BenchmarkOpsExperime
       BENCHMARKS.map(async (benchmark) => [benchmark.id, await loadBenchmarkTable(benchmark.id)] as const),
     ),
   ) as Record<(typeof BENCHMARKS)[number]['id'], Table>;
-  const schema = JSON.parse(await readFile(config.schemaPath, 'utf8')) as Record<string, unknown>;
+  const schema = config.schemaPath
+    ? (JSON.parse(await readFile(config.schemaPath, 'utf8')) as Record<string, unknown>)
+    : null;
   const requestExports = Object.fromEntries(
     BENCHMARKS.map((benchmark) => [
       benchmark.id,
@@ -70,6 +73,7 @@ export async function executeBenchmarkOpsExperiment(config: BenchmarkOpsExperime
         schema,
         includeAssistantPrefill: config.includeAssistantPrefill ?? true,
         includeCuratedExamples: config.includeCuratedExamples ?? true,
+        disableStructuredOutput: config.disableStructuredOutput ?? false,
       }),
     ]),
   ) as Record<(typeof BENCHMARKS)[number]['id'], GeminiRequestExport>;
@@ -93,12 +97,13 @@ export async function executeBenchmarkOpsExperiment(config: BenchmarkOpsExperime
     config.reportPath,
     buildReport({
       experimentTitle: config.experimentTitle,
-      schemaPath: config.schemaPath,
+      schemaPath: config.schemaPath ?? '(none)',
       schema,
       requestExports,
       results,
       includeAssistantPrefill: config.includeAssistantPrefill ?? true,
       includeCuratedExamples: config.includeCuratedExamples ?? true,
+      disableStructuredOutput: config.disableStructuredOutput ?? false,
     }),
     'utf8',
   );
@@ -229,9 +234,10 @@ function buildBenchmarkRequest(input: {
   benchmarkId: (typeof BENCHMARKS)[number]['id'];
   prompt: string;
   table: Table;
-  schema: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
   includeAssistantPrefill: boolean;
   includeCuratedExamples: boolean;
+  disableStructuredOutput: boolean;
 }): GeminiRequestExport {
   const baseContext: AIPromptContext = {
     table: input.table,
@@ -252,7 +258,7 @@ function buildBenchmarkRequest(input: {
     ? buildAssistantPrefillMessages(input.benchmarkId, input.prompt)
     : [];
 
-  return buildGeminiRequestExport(
+  const requestExport = buildGeminiRequestExport(
     {
       settings: {
         apiKey: input.apiKey,
@@ -267,12 +273,20 @@ function buildBenchmarkRequest(input: {
       phase: 'initial',
     },
     {
-      responseJsonSchema: input.schema,
+      ...(input.schema ? { responseJsonSchema: input.schema } : {}),
       promptOptions: {
         includeCuratedExamples: input.includeCuratedExamples,
       },
     },
   );
+
+  if (input.disableStructuredOutput) {
+    const generationConfig = requestExport.requestBody.generationConfig as unknown as Record<string, unknown>;
+    delete generationConfig.responseJsonSchema;
+    delete generationConfig.responseMimeType;
+  }
+
+  return requestExport;
 }
 
 function buildAssistantPrefillMessages(
@@ -299,13 +313,14 @@ function getAssistantPrefill(benchmarkId: (typeof BENCHMARKS)[number]['id']) {
 function buildReport(input: {
   experimentTitle: string;
   schemaPath: string;
-  schema: Record<string, unknown>;
+  schema: Record<string, unknown> | null;
   requestExports: Record<string, GeminiRequestExport>;
   results: BenchmarkOpsExperimentResult[];
   includeAssistantPrefill: boolean;
   includeCuratedExamples: boolean;
+  disableStructuredOutput: boolean;
 }) {
-  const schemaText = `${JSON.stringify(input.schema, null, 2)}\n`;
+  const schemaText = input.schema ? `${JSON.stringify(input.schema, null, 2)}\n` : '';
   const lines = [
     `# ${input.experimentTitle} Report`,
     '',
@@ -320,6 +335,7 @@ function buildReport(input: {
     `- Iterations per benchmark: \`${ITERATIONS}\``,
     `- Assistant prefill: \`${String(input.includeAssistantPrefill)}\``,
     `- Curated examples: \`${String(input.includeCuratedExamples)}\``,
+    `- Structured output: \`${input.disableStructuredOutput ? 'disabled' : 'enabled'}\``,
     `- Schema file: \`${input.schemaPath}\``,
     `- Schema size: \`${Buffer.byteLength(schemaText, 'utf8')}\` bytes`,
     '',
@@ -364,7 +380,11 @@ function buildReport(input: {
     lines.push('', 'Frozen request snapshot:', '', '```json', JSON.stringify(input.requestExports[benchmark.id], null, 2), '```', '');
   });
 
-  lines.push('## Schema Snapshot', '', '```json', schemaText.trimEnd(), '```', '');
+  if (input.schema) {
+    lines.push('## Schema Snapshot', '', '```json', schemaText.trimEnd(), '```', '');
+  } else {
+    lines.push('## Schema Snapshot', '', '(none)', '');
+  }
 
   return `${lines.join('\n')}\n`;
 }

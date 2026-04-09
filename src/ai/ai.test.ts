@@ -30,6 +30,9 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('"kind": "match"');
     expect(instruction).toContain('replaceRegex');
     expect(instruction).toContain('Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment.');
+    expect(instruction).toContain('Operator input type requirements (critical):');
+    expect(instruction).toContain('trim/lower/upper/collapseWhitespace require string-like input.');
+    expect(instruction).toContain('In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds.');
     expect(instruction).not.toContain('fill_empty_from_col');
     expect(instruction).not.toContain('normalize_text_col');
     expect(instruction).not.toContain('alice@example.com');
@@ -54,7 +57,7 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('"type": "scoped_rule_cases_step"');
   });
 
-  it('builds a replayable Gemini request export with the authoring schema and no API key leakage', () => {
+  it('builds a replayable Gemini request export without structured-output schema by default', () => {
     const context = createPromptContext();
     const settings = createAISettings();
     const userMessage = {
@@ -69,39 +72,51 @@ describe('AI workflow copilot helpers', () => {
       userMessage,
       phase: 'initial',
     });
-    const responseJsonSchema = requestExport.requestBody.generationConfig.responseJsonSchema as Record<string, unknown>;
-    const serializedSchema = JSON.stringify(responseJsonSchema);
 
     expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(4096);
     expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     expect(requestExport.requestBody.generationConfig.temperature).toBe(0);
-    expect(responseJsonSchema).toEqual(
+    expect(requestExport.requestBody.generationConfig.responseMimeType).toBeUndefined();
+    expect(requestExport.requestBody.generationConfig.responseJsonSchema).toBeUndefined();
+    expect(requestExport.requestBody.generationConfig).toEqual(
       expect.objectContaining({
-        type: 'object',
-        properties: expect.objectContaining({
-          mode: expect.objectContaining({
-            type: 'string',
-            enum: ['clarify', 'draft'],
-          }),
-          msg: expect.objectContaining({ type: 'string' }),
-          ass: expect.objectContaining({ type: 'array' }),
-          steps: expect.objectContaining({ type: 'array' }),
-        }),
-        required: ['mode', 'msg', 'ass', 'steps'],
+        temperature: 0,
+        maxOutputTokens: 4096,
       }),
     );
-    expect(serializedSchema).toContain('"derive"');
-    expect(serializedSchema).toContain('"where"');
-    expect(serializedSchema).toContain('"rowWhere"');
-    expect(serializedSchema).toContain('"match"');
-    expect(serializedSchema).toContain('"caseValue"');
-    expect(serializedSchema).toContain('"replaceRegex"');
-    expect(serializedSchema).not.toContain('"fill_empty_from_col"');
-    expect(serializedSchema).not.toContain('"const"');
-    expect(serializedSchema).not.toContain('"minLength"');
-    expect(serializedSchema).not.toContain('"pattern"');
-    expect(serializedSchema).not.toContain('"uniqueItems"');
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
+  });
+
+  it('includes structured-output fields only when an explicit schema override is provided', () => {
+    const context = createPromptContext();
+    const settings = createAISettings();
+    const userMessage = {
+      role: 'user' as const,
+      text: 'Normalize the email column.',
+      timestamp: '2026-03-31T09:00:00.000Z',
+    };
+    const schemaOverride = {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['clarify', 'draft'] },
+      },
+      required: ['mode'],
+    };
+
+    const requestExport = buildGeminiRequestExport(
+      {
+        settings,
+        context,
+        userMessage,
+        phase: 'initial',
+      },
+      {
+        responseJsonSchema: schemaOverride,
+      },
+    );
+
+    expect(requestExport.requestBody.generationConfig.responseMimeType).toBe('application/json');
+    expect(requestExport.requestBody.generationConfig.responseJsonSchema).toEqual(schemaOverride);
   });
 
   it('builds repair prompts for authoring IR', () => {

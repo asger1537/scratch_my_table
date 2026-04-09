@@ -64,7 +64,6 @@ export const GEMINI_MODEL_OPTIONS = [
 const GEMINI_MODEL_OPTION_VALUES = new Set<string>(GEMINI_MODEL_OPTIONS.map((option) => option.value));
 const GEMINI_REQUEST_TIMEOUT_MS = 45_000;
 const GEMINI_MAX_OUTPUT_TOKENS = 4096;
-const GEMINI_RESPONSE_JSON_SCHEMA = buildGeminiResponseJsonSchema();
 
 interface BuildGeminiRequestExportOptions {
   responseJsonSchema?: GeminiResponseJsonSchema;
@@ -84,8 +83,8 @@ export interface GeminiRequestExport {
     };
     contents: ReturnType<typeof buildGeminiContents>;
     generationConfig: {
-      responseMimeType: 'application/json';
-      responseJsonSchema: GeminiResponseJsonSchema;
+      responseMimeType?: 'application/json';
+      responseJsonSchema?: GeminiResponseJsonSchema;
       temperature: number;
       maxOutputTokens: number;
       thinkingConfig?: GeminiThinkingConfig;
@@ -103,9 +102,7 @@ export async function generateGeminiDraftTurn(
   }, GEMINI_REQUEST_TIMEOUT_MS);
 
   try {
-    const requestExport = buildGeminiRequestExport(input, {
-      responseJsonSchema: GEMINI_RESPONSE_JSON_SCHEMA,
-    });
+    const requestExport = buildGeminiRequestExport(input);
     const loggedRequestExport = requestExport as unknown as Record<string, unknown>;
 
     emitLogEvent(input, 'request_started', 'Gemini request started.', {
@@ -202,6 +199,17 @@ export function buildGeminiRequestExport(
   const contents = buildGeminiContents(input.context.messages, input.userMessage);
   const normalizedModel = normalizeGeminiModel(input.settings.model);
   const thinkingConfig = buildThinkingConfig(normalizedModel, input.settings.thinkingEnabled);
+  const generationConfig = {
+    ...(options.responseJsonSchema
+      ? {
+          responseMimeType: 'application/json' as const,
+          responseJsonSchema: options.responseJsonSchema,
+        }
+      : {}),
+    temperature: 0,
+    maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+    ...(thinkingConfig ? { thinkingConfig } : {}),
+  };
 
   return {
     exportedAt: new Date().toISOString(),
@@ -215,13 +223,7 @@ export function buildGeminiRequestExport(
         parts: [{ text: systemInstructionText }],
       },
       contents,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseJsonSchema: options.responseJsonSchema ?? GEMINI_RESPONSE_JSON_SCHEMA,
-        temperature: 0,
-        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
-        ...(thinkingConfig ? { thinkingConfig } : {}),
-      },
+      generationConfig,
     },
   };
 }
@@ -329,415 +331,6 @@ function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThi
   }
 
   return undefined;
-}
-
-function buildGeminiResponseJsonSchema(): GeminiResponseJsonSchema {
-  return {
-    $id: 'smt-authoring-ir-v1',
-    type: 'object',
-    additionalProperties: false,
-    propertyOrdering: ['mode', 'msg', 'ass', 'steps'],
-    properties: {
-      mode: {
-        type: 'string',
-        enum: ['clarify', 'draft'],
-      },
-      msg: {
-        type: 'string',
-      },
-      ass: {
-        type: 'array',
-        items: {
-          type: 'string',
-        },
-      },
-      steps: {
-        type: 'array',
-        items: {
-          oneOf: [
-            buildCommentStepSchema(),
-            buildScopedRuleStepSchema(),
-            buildDropColumnsStepSchema(),
-            buildRenameColumnStepSchema(),
-            buildDeriveColumnStepSchema(),
-            buildFilterRowsStepSchema(),
-            buildSplitColumnStepSchema(),
-            buildCombineColumnsStepSchema(),
-            buildDeduplicateRowsStepSchema(),
-            buildSortRowsStepSchema(),
-          ],
-        },
-      },
-    },
-    required: ['mode', 'msg', 'ass', 'steps'],
-  };
-}
-
-function buildCommentStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['comment'],
-      },
-      text: {
-        type: 'string',
-      },
-    },
-    required: ['type', 'text'],
-  };
-}
-
-function buildScopedRuleStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['scopedRule'],
-      },
-      columnIds: buildStringArraySchema(),
-      rowWhere: buildAuthoringBooleanExpressionSchema(),
-      cases: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            when: buildAuthoringBooleanExpressionSchema(),
-            then: buildAuthoringCellPatchSchema(),
-          },
-          required: ['when', 'then'],
-        },
-      },
-      defaultPatch: buildAuthoringCellPatchSchema(),
-    },
-    required: ['type', 'columnIds'],
-  };
-}
-
-function buildDropColumnsStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['dropColumns'],
-      },
-      columnIds: buildStringArraySchema(),
-    },
-    required: ['type', 'columnIds'],
-  };
-}
-
-function buildRenameColumnStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['renameColumn'],
-      },
-      columnId: {
-        type: 'string',
-      },
-      newDisplayName: {
-        type: 'string',
-      },
-    },
-    required: ['type', 'columnId', 'newDisplayName'],
-  };
-}
-
-function buildDeriveColumnStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['deriveColumn'],
-      },
-      newColumn: buildNewColumnSchema(),
-      derive: buildAuthoringValueInputSchema(),
-    },
-    required: ['type', 'newColumn', 'derive'],
-  };
-}
-
-function buildFilterRowsStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['filterRows'],
-      },
-      mode: {
-        type: 'string',
-        enum: ['keep', 'drop'],
-      },
-      where: buildAuthoringBooleanExpressionSchema(),
-    },
-    required: ['type', 'mode', 'where'],
-  };
-}
-
-function buildSplitColumnStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['splitColumn'],
-      },
-      columnId: {
-        type: 'string',
-      },
-      delimiter: {
-        type: 'string',
-      },
-      outputColumns: {
-        type: 'array',
-        items: buildNewColumnSchema(),
-      },
-    },
-    required: ['type', 'columnId', 'delimiter', 'outputColumns'],
-  };
-}
-
-function buildCombineColumnsStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['combineColumns'],
-      },
-      columnIds: buildStringArraySchema(),
-      separator: {
-        type: 'string',
-      },
-      newColumn: buildNewColumnSchema(),
-    },
-    required: ['type', 'columnIds', 'separator', 'newColumn'],
-  };
-}
-
-function buildDeduplicateRowsStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['deduplicateRows'],
-      },
-      columnIds: buildStringArraySchema(),
-    },
-    required: ['type', 'columnIds'],
-  };
-}
-
-function buildSortRowsStepSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      type: {
-        type: 'string',
-        enum: ['sortRows'],
-      },
-      sorts: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            columnId: {
-              type: 'string',
-            },
-            direction: {
-              type: 'string',
-              enum: ['asc', 'desc'],
-            },
-          },
-          required: ['columnId', 'direction'],
-        },
-      },
-    },
-    required: ['type', 'sorts'],
-  };
-}
-
-function buildNewColumnSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      columnId: {
-        type: 'string',
-      },
-      displayName: {
-        type: 'string',
-      },
-    },
-    required: ['columnId', 'displayName'],
-  };
-}
-
-function buildAuthoringCellPatchSchema() {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      value: buildAuthoringValueInputSchema(),
-      format: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          fillColor: {
-            type: 'string',
-          },
-        },
-      },
-    },
-  };
-}
-
-function buildAuthoringValueInputSchema() {
-  return {
-    type: 'object',
-    additionalProperties: true,
-    properties: {
-      source: {
-        type: 'string',
-        enum: ['column', 'value', 'caseValue', 'literal'],
-      },
-      kind: {
-        type: 'string',
-        enum: ['nullary', 'unary', 'binary', 'ternary', 'nary', 'match'],
-      },
-      op: {
-        type: 'string',
-        enum: [
-          'now',
-          'trim',
-          'lower',
-          'upper',
-          'toNumber',
-          'toString',
-          'toBoolean',
-          'collapseWhitespace',
-          'first',
-          'last',
-          'round',
-          'floor',
-          'ceil',
-          'abs',
-          'split',
-          'atIndex',
-          'extractRegex',
-          'add',
-          'subtract',
-          'multiply',
-          'divide',
-          'modulo',
-          'datePart',
-          'substring',
-          'replace',
-          'replaceRegex',
-          'dateDiff',
-          'dateAdd',
-          'concat',
-          'coalesce',
-        ],
-      },
-      columnId: {
-        type: 'string',
-      },
-      value: buildScalarSchema(),
-      input: buildLooseObjectSchema(),
-      left: buildLooseObjectSchema(),
-      right: buildLooseObjectSchema(),
-      first: buildLooseObjectSchema(),
-      second: buildLooseObjectSchema(),
-      third: buildLooseObjectSchema(),
-      items: buildLooseObjectArraySchema(),
-      subject: buildLooseObjectSchema(),
-      cases: buildLooseObjectArraySchema(),
-      then: buildLooseObjectSchema(),
-      when: buildLooseObjectSchema(),
-    },
-  };
-}
-
-function buildAuthoringBooleanExpressionSchema() {
-  return {
-    type: 'object',
-    additionalProperties: true,
-    properties: {
-      kind: {
-        type: 'string',
-        enum: ['predicate', 'compare', 'between', 'boolean'],
-      },
-      op: {
-        type: 'string',
-        enum: ['isEmpty', 'eq', 'gt', 'lt', 'gte', 'lte', 'contains', 'startsWith', 'endsWith', 'matchesRegex', 'and', 'or', 'not'],
-      },
-      input: buildLooseObjectSchema(),
-      left: buildLooseObjectSchema(),
-      right: buildLooseObjectSchema(),
-      min: buildLooseObjectSchema(),
-      max: buildLooseObjectSchema(),
-      inclusiveMin: {
-        type: 'boolean',
-      },
-      inclusiveMax: {
-        type: 'boolean',
-      },
-      items: buildLooseObjectArraySchema(),
-      item: buildLooseObjectSchema(),
-    },
-    required: ['kind'],
-  };
-}
-
-function buildLooseObjectSchema() {
-  return {
-    type: 'object',
-    additionalProperties: true,
-  };
-}
-
-function buildLooseObjectArraySchema() {
-  return {
-    type: 'array',
-    items: buildLooseObjectSchema(),
-  };
-}
-
-function buildStringArraySchema() {
-  return {
-    type: 'array',
-    items: {
-      type: 'string',
-    },
-  };
-}
-
-function buildScalarSchema() {
-  return {
-    type: ['string', 'number', 'boolean', 'null'],
-  };
 }
 
 function emitLogEvent(
