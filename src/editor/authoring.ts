@@ -120,7 +120,16 @@ export type AuthoringStep =
 
 export function authoringWorkflowToWorkflow(authoringWorkflow: AuthoringWorkflow): WorkspaceWorkflowResult {
   const usedStepIds = new Set<string>();
-  const steps: WorkflowStep[] = authoringWorkflow.steps.map((step, index) => compileStep(step, index, usedStepIds));
+  const stepBlockIdsByStepId: WorkspaceWorkflowResult['stepBlockIdsByStepId'] = {};
+  const steps: WorkflowStep[] = authoringWorkflow.steps.map((step, index) => {
+    const compiledStep = compileStep(step, index, usedStepIds);
+
+    if (step.sourceBlockId) {
+      stepBlockIdsByStepId[compiledStep.id] = step.sourceBlockId;
+    }
+
+    return compiledStep;
+  });
   const name = normalizeWorkflowName(authoringWorkflow.metadata.name);
   const workflowId = normalizeWorkflowId(authoringWorkflow.metadata.workflowId, name);
   const description = emptyToUndefined(normalizeDescription(authoringWorkflow.metadata.description));
@@ -134,6 +143,7 @@ export function authoringWorkflowToWorkflow(authoringWorkflow: AuthoringWorkflow
       steps,
     },
     issues: [],
+    stepBlockIdsByStepId,
   };
 }
 

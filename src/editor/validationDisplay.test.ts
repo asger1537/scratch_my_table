@@ -10,6 +10,7 @@ describe('editor validation display items', () => {
           {
             code: 'missingColumns',
             message: 'Pick at least one column.',
+            targetBlockId: 'block_columns',
           },
         ],
         'First parser problem.\nSecond parser problem.\n\nThird parser problem.',
@@ -30,6 +31,7 @@ describe('editor validation display items', () => {
       {
         code: 'missingColumns',
         message: 'Pick at least one column.',
+        targetBlockId: 'block_columns',
       },
     ]);
   });
@@ -41,6 +43,7 @@ describe('editor validation display items', () => {
           {
             code: 'invalidExpression',
             message: 'Expression must return a string.',
+            targetBlockId: 'block_expression',
           },
         ],
         null,
@@ -49,6 +52,7 @@ describe('editor validation display items', () => {
       {
         code: 'invalidExpression',
         message: 'Expression must return a string.',
+        targetBlockId: 'block_expression',
       },
     ]);
   });

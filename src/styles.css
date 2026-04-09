@@ -1655,6 +1655,38 @@ code {
   color: var(--muted);
 }
 
+.issue-item__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 0.55rem;
+}
+
+.issue-item__action {
+  border: 1px solid #d6b99a;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fffdf9 0%, #f8efe3 100%);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.28rem 0.68rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.issue-item__action:hover {
+  border-color: #bf5b20;
+}
+
+.issue-item__action:focus-visible {
+  outline: 2px solid rgba(191, 91, 32, 0.2);
+  outline-offset: 2px;
+}
+
+.issue-item__action:active {
+  transform: translateY(1px);
+}
+
 .json-viewer,
 .json-error-panel {
   width: 100%;

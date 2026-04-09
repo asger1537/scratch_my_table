@@ -4,12 +4,13 @@ import type { Table } from '../domain/model';
 import { executeWorkflow, validateWorkflowSemantics, validateWorkflowStructure, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from '../workflow';
 
 import { workspaceToWorkflow } from './mapping';
-import type { EditorIssue } from './types';
+import type { EditorIssue, StepBlockIdsByStepId } from './types';
 
 export interface EditorValidationResult {
   workflow: Workflow | null;
   editorIssues: EditorIssue[];
   validationIssues: WorkflowValidationIssue[];
+  stepBlockIdsByStepId: StepBlockIdsByStepId;
 }
 
 export function validateWorkspaceWorkflow(workspace: Blockly.Workspace, table: Table): EditorValidationResult {
@@ -20,6 +21,7 @@ export function validateWorkspaceWorkflow(workspace: Blockly.Workspace, table: T
       workflow: null,
       editorIssues: authored.issues,
       validationIssues: [],
+      stepBlockIdsByStepId: authored.stepBlockIdsByStepId,
     };
   }
 
@@ -30,6 +32,7 @@ export function validateWorkspaceWorkflow(workspace: Blockly.Workspace, table: T
       workflow: authored.workflow,
       editorIssues: authored.issues,
       validationIssues: structural.issues,
+      stepBlockIdsByStepId: authored.stepBlockIdsByStepId,
     };
   }
 
@@ -39,6 +42,7 @@ export function validateWorkspaceWorkflow(workspace: Blockly.Workspace, table: T
     workflow: structural.workflow,
     editorIssues: authored.issues,
     validationIssues: semantic.issues,
+    stepBlockIdsByStepId: authored.stepBlockIdsByStepId,
   };
 }
 

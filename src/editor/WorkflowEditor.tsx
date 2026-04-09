@@ -35,7 +35,7 @@ import {
   getWorkflowToolboxDefinition,
   registerWorkflowToolboxCategoryCallbacks,
 } from './toolbox';
-import type { EditorWorkspaceChange } from './types';
+import type { EditorWorkspaceChange, ValidationDisplayItem } from './types';
 import { buildValidationDisplayItems } from './validationDisplay';
 
 interface WorkflowEditorProps {
@@ -45,7 +45,7 @@ interface WorkflowEditorProps {
   loadMetadata: AuthoringWorkflowMetadata;
   loadVersion: number;
   extraColumnIds: string[];
-  issues: Array<{ code: string; message: string }>;
+  issues: ValidationDisplayItem[];
   jsonError: string | null;
   workflowTabs?: ReactNode;
   canExportWorkflows: boolean;
@@ -185,6 +185,16 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
       flushWorkspaceChangeRef.current(true);
     },
   }), []);
+
+  const handleGoToIssue = (targetBlockId: string) => {
+    const workspace = workspaceRef.current;
+
+    if (!workspace) {
+      return;
+    }
+
+    goToBlockInWorkspace(workspace, targetBlockId);
+  };
 
   useEffect(() => {
     registerWorkflowBlocks();
@@ -349,8 +359,16 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
 
     window.addEventListener('resize', handleResize);
 
-    loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), loadWorkflowState, loadMetadata, onWorkspaceChange, suppressChangesRef);
-    syncEditorSchema(workspace, table, extraColumnIds);
+    loadWorkspace(
+      workspace,
+      table,
+      loadWorkflow ?? createDefaultWorkflow(table),
+      extraColumnIds,
+      loadWorkflowState,
+      loadMetadata,
+      onWorkspaceChange,
+      suppressChangesRef,
+    );
     setMetadata(getWorkspaceMetadata(workspace));
     syncSelectionState();
     syncActiveToolboxCategory(getSelectedWorkflowToolboxCategoryId(workspace));
@@ -379,8 +397,16 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
       return;
     }
 
-    loadWorkspace(workspace, table, loadWorkflow ?? createDefaultWorkflow(table), loadWorkflowState, loadMetadata, onWorkspaceChange, suppressChangesRef);
-    syncEditorSchema(workspace, table, extraColumnIds);
+    loadWorkspace(
+      workspace,
+      table,
+      loadWorkflow ?? createDefaultWorkflow(table),
+      extraColumnIds,
+      loadWorkflowState,
+      loadMetadata,
+      onWorkspaceChange,
+      suppressChangesRef,
+    );
     setMetadata(getWorkspaceMetadata(workspace));
     syncSelectionState();
     resizeWorkspace(workspace, true);
@@ -695,10 +721,11 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
           <div className="panel-scroll-region workflow-editor-validation__body">
             <ul className="issue-list issue-list--compact">
               {validationItems.map((issue, index) => (
-                <li className="issue-item issue-item--compact" key={`${issue.code}-${index}`}>
-                  <strong>{issue.code}</strong>
-                  <p>{issue.message}</p>
-                </li>
+                <ValidationIssueListItem
+                  issue={issue}
+                  key={`${issue.code}-${index}`}
+                  onGoToIssue={handleGoToIssue}
+                />
               ))}
             </ul>
           </div>
@@ -712,13 +739,14 @@ function loadWorkspace(
   workspace: Blockly.Workspace,
   table: Table,
   workflow: Workflow,
+  extraColumnIds: string[],
   workspaceState: Record<string, unknown> | null,
   metadata: AuthoringWorkflowMetadata,
   onWorkspaceChange: (result: EditorWorkspaceChange) => void,
   suppressChangesRef: MutableRefObject<boolean>,
 ) {
   suppressChangesRef.current = true;
-  setEditorSchemaColumns(table.schema.columns, collectWorkflowColumnIds(workflow));
+  setEditorSchemaColumns(table.schema.columns, extraColumnIds);
   workspace.clear();
 
   if (workspaceState) {
@@ -728,6 +756,7 @@ function loadWorkspace(
     workflowToWorkspace(workspace, workflow);
   }
 
+  syncEditorSchema(workspace, table, extraColumnIds);
   suppressChangesRef.current = false;
   onWorkspaceChange(buildEditorWorkspaceChange(workspace));
 }
@@ -737,17 +766,13 @@ function syncEditorSchema(workspace: Blockly.Workspace, table: Table, extraColum
 }
 
 function focusPrimaryStep(workspace: Blockly.Workspace) {
-  if (!('centerOnBlock' in workspace)) {
-    return;
-  }
-
   const root = workspace.getTopBlocks(true).find((block) => isStepBlockType(block.type));
 
   if (!root) {
     return;
   }
 
-  (workspace as Blockly.WorkspaceSvg).centerOnBlock(root.id);
+  centerBlockInWorkspace(workspace, root.id);
 }
 
 function resizeWorkspace(workspace: Blockly.WorkspaceSvg, focusRoot = false) {
@@ -781,6 +806,60 @@ function buildEditorWorkspaceChange(workspace: Blockly.Workspace): EditorWorkspa
     workspaceState: Blockly.serialization.workspaces.save(workspace) as Record<string, unknown>,
     workspacePromptSnapshot: createWorkspacePromptSnapshot(workspace),
   };
+}
+
+function ValidationIssueListItem({
+  issue,
+  onGoToIssue,
+}: {
+  issue: ValidationDisplayItem;
+  onGoToIssue: (targetBlockId: string) => void;
+}) {
+  const targetBlockId = issue.targetBlockId;
+
+  return (
+    <li className="issue-item issue-item--compact">
+      <strong>{issue.code}</strong>
+      <p>{issue.message}</p>
+      {targetBlockId ? (
+        <div className="issue-item__actions">
+          <button
+            className="issue-item__action"
+            onClick={() => onGoToIssue(targetBlockId)}
+            type="button"
+          >
+            Go to error
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+function centerBlockInWorkspace(workspace: Blockly.Workspace, blockId: string) {
+  const block = workspace.getBlockById(blockId);
+
+  if (!block) {
+    return;
+  }
+
+  if ('centerOnBlock' in workspace) {
+    (workspace as Blockly.WorkspaceSvg).centerOnBlock(block.id);
+  }
+}
+
+function goToBlockInWorkspace(workspace: Blockly.Workspace, blockId: string) {
+  const block = workspace.getBlockById(blockId);
+
+  if (!block) {
+    return;
+  }
+
+  centerBlockInWorkspace(workspace, blockId);
+
+  if ('select' in block && typeof block.select === 'function') {
+    block.select();
+  }
 }
 
 function isStepBlockType(type: string) {

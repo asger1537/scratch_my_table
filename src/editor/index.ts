@@ -26,4 +26,10 @@ export {
 } from './mapping';
 export { collectWorkflowColumnIds, getSchemaColumnOptions, setEditorSchemaColumns } from './schemaOptions';
 export { formatColumnSelectionSummary, getSelectableColumnTypeGroups } from './FieldColumnMultiSelect';
-export type { EditorIssue, EditorWorkspaceChange, WorkspaceWorkflowResult } from './types';
+export type {
+  EditorIssue,
+  EditorWorkspaceChange,
+  StepBlockIdsByStepId,
+  ValidationDisplayItem,
+  WorkspaceWorkflowResult,
+} from './types';

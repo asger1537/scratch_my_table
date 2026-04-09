@@ -234,7 +234,9 @@ export function formatColumnSelectionSummary(
     return `All columns (${columnIds.length})`;
   }
 
-  const matchingGroup = typeGroups.find((group) => haveSameColumnIds(columnIds, group.columnIds));
+  const matchingGroup = columnIds.length > 1
+    ? typeGroups.find((group) => haveSameColumnIds(columnIds, group.columnIds))
+    : undefined;
 
   if (matchingGroup) {
     return `${matchingGroup.label} (${columnIds.length})`;

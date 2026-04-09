@@ -1,10 +1,7 @@
-export interface ValidationDisplayItem {
-  code: string;
-  message: string;
-}
+import type { ValidationDisplayItem } from './types';
 
 export function buildValidationDisplayItems(
-  issues: Array<{ code: string; message: string }>,
+  issues: ValidationDisplayItem[],
   jsonError: string | null,
 ): ValidationDisplayItem[] {
   const jsonErrorItems = (jsonError ?? '')

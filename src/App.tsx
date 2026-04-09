@@ -29,6 +29,8 @@ import {
   createDefaultWorkflow,
   type EditorWorkspaceChange,
   type EditorIssue,
+  type StepBlockIdsByStepId,
+  type ValidationDisplayItem,
 } from './editor';
 import { executeWorkflow, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
 import { createValidationWorkerTableSnapshot, validateWorkflowWithWorker } from './workflow/validationWorkerClient';
@@ -81,6 +83,7 @@ interface WorkflowAIState {
 interface WorkflowTabRuntimeState {
   editorIssues: EditorIssue[];
   validationIssues: WorkflowValidationIssue[];
+  stepBlockIdsByStepId: StepBlockIdsByStepId;
   workspacePromptSnapshot: string;
   workspaceState: Record<string, unknown> | null;
   aiState: WorkflowAIState;
@@ -110,6 +113,7 @@ function createWorkflowTabRuntimeState(): WorkflowTabRuntimeState {
   return {
     editorIssues: [],
     validationIssues: [],
+    stepBlockIdsByStepId: {},
     workspacePromptSnapshot: '',
     workspaceState: null,
     aiState: createEmptyAIState(),
@@ -210,7 +214,11 @@ export default function App() {
   const activeEditorIssues = activeTabState?.editorIssues ?? [];
   const activeValidationIssues = activeTabState?.validationIssues ?? [];
   const visibleActiveValidationIssues = activeEditorIssues.length > 0 ? [] : activeValidationIssues;
-  const activeWorkflowIssues = mergeWorkflowIssues(activeEditorIssues, visibleActiveValidationIssues);
+  const activeWorkflowIssues = buildWorkflowIssueDisplayItems(
+    activeEditorIssues,
+    visibleActiveValidationIssues,
+    activeTabState?.stepBlockIdsByStepId ?? {},
+  );
   const activeWorkspaceState = activeTabState?.workspaceState ?? null;
   const activeAIState = activeTabState?.aiState ?? createEmptyAIState();
   const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
@@ -497,6 +505,7 @@ export default function App() {
           [activeWorkflowId]: {
             ...currentState,
             editorIssues: result.issues,
+            stepBlockIdsByStepId: result.stepBlockIdsByStepId,
             workspacePromptSnapshot: result.workspacePromptSnapshot,
             workspaceState: result.workspaceState,
           },
@@ -1004,6 +1013,7 @@ export default function App() {
             ...currentState,
             editorIssues: [],
             validationIssues: [],
+            stepBlockIdsByStepId: {},
             workspacePromptSnapshot: '',
             workspaceState: null,
             aiState: {
@@ -2682,6 +2692,27 @@ function mergeWorkflowIssues(editorIssues: EditorIssue[], validationIssues: Work
     ...validationIssues.map((issue) => ({
       code: issue.code,
       message: issue.message,
+    })),
+  ];
+}
+
+function buildWorkflowIssueDisplayItems(
+  editorIssues: EditorIssue[],
+  validationIssues: WorkflowValidationIssue[],
+  stepBlockIdsByStepId: StepBlockIdsByStepId,
+): ValidationDisplayItem[] {
+  return [
+    ...editorIssues.map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+      ...(issue.blockId ? { targetBlockId: issue.blockId } : {}),
+    })),
+    ...validationIssues.map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+      ...(issue.stepId && stepBlockIdsByStepId[issue.stepId]
+        ? { targetBlockId: stepBlockIdsByStepId[issue.stepId] }
+        : {}),
     })),
   ];
 }

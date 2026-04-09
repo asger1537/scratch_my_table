@@ -981,9 +981,44 @@ describe('block-based workflow authoring', () => {
     }
 
     expect(stepChainTypes).toEqual([BLOCK_TYPES.deriveColumnStep, BLOCK_TYPES.sortRowsStep]);
-    expect(workspaceToWorkflow(workspace)).toEqual({
+    expect(workspaceToWorkflow(workspace)).toMatchObject({
       workflow,
       issues: [],
+    });
+  });
+
+  it('tracks source step blocks for compiled workflow validation issues', async () => {
+    const table = await readFixtureTable('messy-customers.csv');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_step_block_mapping',
+      name: 'Step block mapping',
+      steps: [
+        {
+          id: 'step_filter_status',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('equals', column('col_status'), literal('active')),
+        },
+        {
+          id: 'step_lower_status',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_status_lower',
+            displayName: 'Status Lower',
+          },
+          expression: call('lower', column('col_status')),
+        },
+      ],
+    };
+    const workspace = buildWorkspaceFromTable(table, workflow);
+    const result = workspaceToWorkflow(workspace);
+    const [firstTopBlock] = workspace.getTopBlocks(false);
+    const secondTopBlock = firstTopBlock?.getNextBlock() ?? undefined;
+
+    expect(result.stepBlockIdsByStepId).toEqual({
+      step_filter_status: firstTopBlock?.id,
+      step_lower_status: secondTopBlock?.id,
     });
   });
 
@@ -1100,6 +1135,58 @@ describe('block-based workflow authoring', () => {
         message: `Block '${BLOCK_TYPES.scopedRuleSingleStep}' references missing column 'col_missing_email' that does not exist in the current schema at this step.`,
         blockId: scopedRuleBlock.id,
         blockType: BLOCK_TYPES.scopedRuleSingleStep,
+      },
+    ]);
+  });
+
+  it('surfaces missing nested column expressions as editor issues', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const availableColumns = [
+      createColumn('col_balance', 'Balance', 'mixed'),
+      createColumn('col_status', 'Status', 'string'),
+    ];
+
+    setEditorSchemaColumns(availableColumns, ['col_customer_tier']);
+
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
+    const rowConditionBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
+    const rowColumnBlock = workspace.newBlock(BLOCK_TYPES.columnExpression);
+    const literalBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+    const highlightActionBlock = workspace.newBlock(BLOCK_TYPES.highlightActionItem);
+    const colorBlock = workspace.newBlock(BLOCK_TYPES.literalColor);
+
+    setEditorSchemaColumns(
+      availableColumns,
+      ['col_customer_tier'],
+      new Map([
+        [scopedRuleBlock.id, availableColumns],
+        [rowConditionBlock.id, availableColumns],
+        [rowColumnBlock.id, availableColumns],
+        [literalBlock.id, availableColumns],
+        [highlightActionBlock.id, availableColumns],
+        [colorBlock.id, availableColumns],
+      ]),
+    );
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_balance']), 'COLUMN_IDS');
+    rowColumnBlock.setFieldValue('col_customer_tier', 'COLUMN_ID');
+    literalBlock.setFieldValue('at-risk', 'VALUE');
+    colorBlock.setFieldValue('#FFEB9C', 'VALUE');
+
+    scopedRuleBlock.getInput('ROW_CONDITION')?.connection?.connect(rowConditionBlock.outputConnection!);
+    rowConditionBlock.getInput('FIRST')?.connection?.connect(rowColumnBlock.outputConnection!);
+    rowConditionBlock.getInput('SECOND')?.connection?.connect(literalBlock.outputConnection!);
+    scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.connect(highlightActionBlock.previousConnection!);
+    highlightActionBlock.getInput('COLOR')?.connection?.connect(colorBlock.outputConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingColumn',
+        message: `Block '${BLOCK_TYPES.columnExpression}' references missing column 'col_customer_tier' that does not exist in the current schema at this step.`,
+        blockId: rowColumnBlock.id,
+        blockType: BLOCK_TYPES.columnExpression,
       },
     ]);
   });
@@ -1565,6 +1652,7 @@ describe('block-based workflow authoring', () => {
       },
     ]);
     expect(formatColumnSelectionSummary(['col_email', 'col_city'])).toBe('All string columns (2)');
+    expect(formatColumnSelectionSummary(['col_order_total'])).toBe('order_total');
   });
 });
 

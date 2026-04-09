@@ -139,6 +139,7 @@ export function workspaceToWorkflow(workspace: Blockly.Workspace): WorkspaceWork
     return {
       workflow: null,
       issues: authored.issues,
+      stepBlockIdsByStepId: {},
     };
   }
 
@@ -215,6 +216,7 @@ export function parseWorkflowJson(text: string): WorkspaceWorkflowResult {
           message: error instanceof Error ? error.message : 'Workflow JSON could not be parsed.',
         },
       ],
+      stepBlockIdsByStepId: {},
     };
   }
 
@@ -227,12 +229,14 @@ export function parseWorkflowJson(text: string): WorkspaceWorkflowResult {
         code: issue.code,
         message: issue.message,
       })),
+      stepBlockIdsByStepId: {},
     };
   }
 
   return {
     workflow: validation.workflow,
     issues: [],
+    stepBlockIdsByStepId: {},
   };
 }
 
@@ -1016,8 +1020,15 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return { expression: { kind: 'literal', value: getFieldString(block, 'VALUE') === 'true' } };
     case BLOCK_TYPES.literalNull:
       return { expression: { kind: 'literal', value: null } };
-    case BLOCK_TYPES.columnExpression:
-      return { expression: { kind: 'column', columnId: getFieldString(block, 'COLUMN_ID') } };
+    case BLOCK_TYPES.columnExpression: {
+      const columnId = readRequiredColumnIdField(block, 'COLUMN_ID');
+
+      if ('issue' in columnId) {
+        return columnId;
+      }
+
+      return { expression: { kind: 'column', columnId: columnId.columnId } };
+    }
     case BLOCK_TYPES.matchExpression:
       return readMatchExpression(block);
     case BLOCK_TYPES.trimFunction:
