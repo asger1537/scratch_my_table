@@ -1105,24 +1105,21 @@ export default function App() {
   }
 
   function handleCreateWorkflowTab() {
-    editorRef.current?.flushWorkspaceChange();
-
-    let createdWorkflowId = '';
-
-    setWorkflowPackage((currentPackage) => {
-      if (!currentPackage) {
-        return currentPackage;
-      }
-
-      const newWorkflow = createNewPackageWorkflow(currentPackage.workflows);
-      createdWorkflowId = newWorkflow.workflowId;
-      return addWorkflowToPackage(currentPackage, newWorkflow, true);
-    });
-
-    if (createdWorkflowId === '') {
+    if (!workflowPackage) {
       return;
     }
 
+    editorRef.current?.flushWorkspaceChange();
+
+    const defaultWorkflow = createNewPackageWorkflow(workflowPackage.workflows);
+    const requestedName = window.prompt('Name the new workflow.', defaultWorkflow.name);
+    const createdWorkflow = createNewPackageWorkflow(workflowPackage.workflows, requestedName ?? undefined);
+    const createdWorkflowId = createdWorkflow.workflowId;
+
+    setWorkflowPackage((currentPackage) =>
+      currentPackage
+        ? addWorkflowToPackage(currentPackage, createdWorkflow, true, true)
+        : currentPackage);
     setWorkflowTabStates((current) => ({
       ...current,
       [createdWorkflowId]: createWorkflowTabRuntimeState(),
@@ -1474,7 +1471,7 @@ export default function App() {
   );
 }
 
-function WorkflowTabs({
+export function WorkflowTabs({
   activeWorkflowId,
   onCreateWorkflow,
   onDeleteWorkflow,
@@ -1494,6 +1491,7 @@ function WorkflowTabs({
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const [draftWorkflowName, setDraftWorkflowName] = useState('');
   const [openMenuWorkflowId, setOpenMenuWorkflowId] = useState<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!openMenuWorkflowId) {
@@ -1510,6 +1508,33 @@ function WorkflowTabs({
       window.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [openMenuWorkflowId]);
+
+  useEffect(() => {
+    if (!editingWorkflowId) {
+      return;
+    }
+
+    const focusRenameInput = () => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    };
+
+    const firstAnimationFrameId = window.requestAnimationFrame(() => {
+      focusRenameInput();
+    });
+    const secondAnimationFrameId = window.requestAnimationFrame(() => {
+      focusRenameInput();
+    });
+    const timeoutId = window.setTimeout(() => {
+      focusRenameInput();
+    }, 0);
+
+    return () => {
+      window.cancelAnimationFrame(firstAnimationFrameId);
+      window.cancelAnimationFrame(secondAnimationFrameId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [editingWorkflowId]);
 
   function beginRename(workflow: Workflow) {
     setOpenMenuWorkflowId(null);
@@ -1539,10 +1564,9 @@ function WorkflowTabs({
         const issueCount = tabState.editorIssues.length + tabState.validationIssues.length;
 
         return (
-          <div className={`workflow-tab${isActive ? ' workflow-tab--active' : ''}`} key={workflow.workflowId}>
+          <div className={`workflow-tab${isActive ? ' workflow-tab--active' : ''}${isEditing ? ' workflow-tab--editing' : ''}`} key={workflow.workflowId}>
             {isEditing ? (
               <input
-                autoFocus
                 className="workflow-tab__input"
                 onBlur={() => commitRename(workflow)}
                 onChange={(event) => setDraftWorkflowName(event.target.value)}
@@ -1557,6 +1581,7 @@ function WorkflowTabs({
                     setDraftWorkflowName('');
                   }
                 }}
+                ref={isEditing ? renameInputRef : null}
                 value={draftWorkflowName}
               />
             ) : (
@@ -1613,7 +1638,7 @@ function WorkflowTabs({
           </div>
         );
       })}
-      <button className="workflow-tab workflow-tab--create" onClick={onCreateWorkflow} type="button">
+      <button aria-label="Create workflow" className="workflow-tab workflow-tab--create" onClick={onCreateWorkflow} type="button">
         <PlusIcon />
       </button>
     </div>
@@ -1783,7 +1808,6 @@ function RunOrderDialog({
                   />
                   <div>
                     <strong>{workflow.name}</strong>
-                    <span>{workflow.workflowId}</span>
                   </div>
                 </label>
                 <div className="workflow-selection-item__actions">

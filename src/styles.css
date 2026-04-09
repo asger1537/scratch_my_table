@@ -948,6 +948,12 @@ code {
   background: #fffdf9;
 }
 
+.workflow-tab--editing {
+  border-color: #bf5b20;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(191, 91, 32, 0.12);
+}
+
 .workflow-tab__button,
 .workflow-tab__input {
   min-width: 0;
@@ -981,7 +987,13 @@ code {
 
 .workflow-tab__input {
   width: 12rem;
+  background: #ffffff;
   outline: none;
+}
+
+.workflow-tab__input:focus {
+  outline: 2px solid rgba(191, 91, 32, 0.22);
+  outline-offset: -2px;
 }
 
 .workflow-tab__menu-trigger {

@@ -84,13 +84,20 @@ describe('workflow packages', () => {
     expect(deletedPackage.workflows.map((workflow) => workflow.workflowId)).not.toContain(secondWorkflow.workflowId);
   });
 
-  it('does not add newly created workflows to the saved run order by default', () => {
+  it('creates a new workflow with an explicitly requested name when provided', () => {
+    const createdWorkflow = createNewPackageWorkflow([createWorkflowA()], 'Priority score');
+
+    expect(createdWorkflow.name).toBe('Priority score');
+    expect(createdWorkflow.workflowId).toMatch(/^wf_priority_score/);
+  });
+
+  it('adds newly created workflows to the saved run order by default', () => {
     const workflowPackage = createWorkflowPackage([createWorkflowA()], 'wf_clean', ['wf_clean']);
     const createdWorkflow = createNewPackageWorkflow(workflowPackage.workflows);
     const nextPackage = addWorkflowToPackage(workflowPackage, createdWorkflow, true);
 
     expect(nextPackage.activeWorkflowId).toBe(createdWorkflow.workflowId);
-    expect(nextPackage.runOrderWorkflowIds).toEqual(['wf_clean']);
+    expect(nextPackage.runOrderWorkflowIds).toEqual(['wf_clean', createdWorkflow.workflowId]);
   });
 
   it('builds subset exports with filtered run order and active workflow fallback', () => {

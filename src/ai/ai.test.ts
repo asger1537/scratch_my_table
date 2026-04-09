@@ -32,6 +32,8 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment.');
     expect(instruction).toContain('Operator input type requirements (critical):');
     expect(instruction).toContain('trim/lower/upper/collapseWhitespace require string-like input.');
+    expect(instruction).toContain('Default fill-color word map (use exact palette hex values):');
+    expect(instruction).toContain('- red -> #FFC7CE');
     expect(instruction).toContain('In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds.');
     expect(instruction).not.toContain('fill_empty_from_col');
     expect(instruction).not.toContain('normalize_text_col');

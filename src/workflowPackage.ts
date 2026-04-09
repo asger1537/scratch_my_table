@@ -56,10 +56,13 @@ export function createSingleWorkflowPackage(workflow: Workflow): WorkflowPackage
   return createWorkflowPackage([workflow], workflow.workflowId, [workflow.workflowId]);
 }
 
-export function createNewPackageWorkflow(existingWorkflows: Workflow[]): Workflow {
+export function createNewPackageWorkflow(existingWorkflows: Workflow[], requestedName?: string | null): Workflow {
   const existingNames = new Set(existingWorkflows.map((workflow) => workflow.name));
   const existingIds = new Set(existingWorkflows.map((workflow) => workflow.workflowId));
-  const name = getUniqueWorkflowName(existingNames, 'Workflow');
+  const normalizedRequestedName = requestedName?.trim() ?? '';
+  const name = normalizedRequestedName === ''
+    ? getUniqueWorkflowName(existingNames, 'Workflow')
+    : normalizedRequestedName;
   const workflowId = getUniqueWorkflowId(existingIds, `wf_${slugify(name) || 'workflow'}`);
 
   return {
@@ -104,7 +107,7 @@ export function addWorkflowToPackage(
   workflowPackage: WorkflowPackageV1,
   workflow: Workflow,
   activate = false,
-  includeInRunOrder = false,
+  includeInRunOrder = true,
 ): WorkflowPackageV1 {
   return createWorkflowPackage(
     [...workflowPackage.workflows, workflow],
