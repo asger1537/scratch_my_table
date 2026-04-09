@@ -26,6 +26,7 @@ import {
 } from './authoring';
 import { parseColumnSelectionValue, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
 import { BLOCK_TYPES, CREATE_COLUMN_MODES, type CreateColumnMode, registerWorkflowBlocks } from './blocks';
+import { getEditorSchemaColumns, hasEditorSchemaForBlock } from './schemaOptions';
 import type { EditorIssue, WorkspaceWorkflowResult } from './types';
 
 const workspaceMetadata = new WeakMap<Blockly.Workspace, AuthoringWorkflowMetadata>();
@@ -562,17 +563,25 @@ function readStepBlock(block: Blockly.Block): { step?: AuthoringStep; issues: Ed
       };
     }
     case BLOCK_TYPES.renameColumnStep:
-      return {
-        step: {
-          kind: 'renameColumn',
-          stepId: stepMetadata.stepId,
-          sourceBlockId: block.id,
-          sourceBlockType: block.type,
-          columnId: getFieldString(block, 'COLUMN_ID'),
-          newDisplayName: getFieldString(block, 'NEW_DISPLAY_NAME'),
-        },
-        issues: [],
-      };
+      {
+        const columnId = readRequiredColumnIdField(block, 'COLUMN_ID');
+
+        if ('issue' in columnId) {
+          return { issues: [columnId.issue] };
+        }
+
+        return {
+          step: {
+            kind: 'renameColumn',
+            stepId: stepMetadata.stepId,
+            sourceBlockId: block.id,
+            sourceBlockType: block.type,
+            columnId: columnId.columnId,
+            newDisplayName: getFieldString(block, 'NEW_DISPLAY_NAME'),
+          },
+          issues: [],
+        };
+      }
     case BLOCK_TYPES.dropColumnsStep: {
       const columnIds = readRequiredColumnIdsField(block, 'COLUMN_IDS');
 
@@ -630,7 +639,12 @@ function readStepBlock(block: Blockly.Block): { step?: AuthoringStep; issues: Ed
       };
     }
     case BLOCK_TYPES.splitColumnStep: {
+      const columnId = readRequiredColumnIdField(block, 'COLUMN_ID');
       const outputColumns = readRequiredOutputColumns(block, 'OUTPUT_COLUMNS');
+
+      if ('issue' in columnId) {
+        return { issues: [columnId.issue] };
+      }
 
       if ('issue' in outputColumns) {
         return { issues: [outputColumns.issue] };
@@ -642,7 +656,7 @@ function readStepBlock(block: Blockly.Block): { step?: AuthoringStep; issues: Ed
           stepId: stepMetadata.stepId,
           sourceBlockId: block.id,
           sourceBlockType: block.type,
-          columnId: getFieldString(block, 'COLUMN_ID'),
+          columnId: columnId.columnId,
           delimiter: getFieldString(block, 'DELIMITER'),
           outputColumns: outputColumns.outputColumns,
         },
@@ -733,7 +747,36 @@ function readRequiredColumnIdsField(block: Blockly.Block, fieldName: string): { 
     };
   }
 
+  const missingColumnIds = findMissingColumnIds(block, columnIds);
+
+  if (missingColumnIds.length > 0) {
+    return { issue: missingColumnIssue(block, missingColumnIds) };
+  }
+
   return { columnIds };
+}
+
+function readRequiredColumnIdField(block: Blockly.Block, fieldName: string): { columnId: string } | { issue: EditorIssue } {
+  const columnId = getFieldString(block, fieldName);
+
+  if (columnId === '') {
+    return {
+      issue: {
+        code: 'missingColumn',
+        message: `Block '${block.type}' must target a column.`,
+        blockId: block.id,
+        blockType: block.type,
+      },
+    };
+  }
+
+  const missingColumnIds = findMissingColumnIds(block, [columnId]);
+
+  if (missingColumnIds.length > 0) {
+    return { issue: missingColumnIssue(block, missingColumnIds) };
+  }
+
+  return { columnId };
 }
 
 function readRequiredOutputColumns(block: Blockly.Block, inputName: string) {
@@ -746,10 +789,18 @@ function readRequiredOutputColumns(block: Blockly.Block, inputName: string) {
 }
 
 function readRequiredSorts(block: Blockly.Block, inputName: string) {
-  const items = readStatementItems(block.getInputTargetBlock(inputName), BLOCK_TYPES.sortItem, 'missingSorts', (item) => ({
-    columnId: getFieldString(item, 'COLUMN_ID'),
-    direction: getFieldString(item, 'DIRECTION') as 'asc' | 'desc',
-  }));
+  const items = readStatementItems(block.getInputTargetBlock(inputName), BLOCK_TYPES.sortItem, 'missingSorts', (item) => {
+    const columnId = readRequiredColumnIdField(item, 'COLUMN_ID');
+
+    if ('issue' in columnId) {
+      throw columnId.issue;
+    }
+
+    return {
+      columnId: columnId.columnId,
+      direction: getFieldString(item, 'DIRECTION') as 'asc' | 'desc',
+    };
+  });
 
   return 'issue' in items ? items : { sorts: items.values };
 }
@@ -2195,12 +2246,20 @@ function readCreateColumnExpression(block: Blockly.Block): { expression: Workflo
         },
       };
     case CREATE_COLUMN_MODES.copy:
-      return {
-        expression: {
-          kind: 'column',
-          columnId: getFieldString(block, 'COPY_COLUMN_ID'),
-        },
-      };
+      {
+        const copyColumnId = readRequiredColumnIdField(block, 'COPY_COLUMN_ID');
+
+        if ('issue' in copyColumnId) {
+          return { issue: copyColumnId.issue };
+        }
+
+        return {
+          expression: {
+            kind: 'column',
+            columnId: copyColumnId.columnId,
+          },
+        };
+      }
     case CREATE_COLUMN_MODES.expression:
       return readRequiredExpression(block, 'EXPRESSION');
     default:
@@ -2251,6 +2310,31 @@ function inferCreateColumnMode(expression: WorkflowExpression): CreateColumnMode
   }
 
   return CREATE_COLUMN_MODES.expression;
+}
+
+function findMissingColumnIds(block: Blockly.Block, columnIds: string[]) {
+  if (!hasEditorSchemaForBlock(block.id)) {
+    return [];
+  }
+
+  const availableColumnIds = new Set(getEditorSchemaColumns(block.id).map((column) => column.columnId));
+
+  return columnIds
+    .filter((columnId) => columnId !== '' && !availableColumnIds.has(columnId))
+    .filter((columnId, index, values) => values.indexOf(columnId) === index);
+}
+
+function missingColumnIssue(block: Blockly.Block, columnIds: string[]): EditorIssue {
+  const quotedColumnIds = columnIds.map((columnId) => `'${columnId}'`).join(', ');
+  const label = columnIds.length === 1 ? 'column' : 'columns';
+  const verb = columnIds.length === 1 ? 'does' : 'do';
+
+  return {
+    code: 'missingColumn',
+    message: `Block '${block.type}' references missing ${label} ${quotedColumnIds} that ${verb} not exist in the current schema at this step.`,
+    blockId: block.id,
+    blockType: block.type,
+  };
 }
 
 function missingInputIssue(block: Blockly.Block, inputName: string): EditorIssue {

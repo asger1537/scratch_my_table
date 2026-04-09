@@ -58,6 +58,10 @@ export function getEditorSchemaColumns(blockId?: string): Column[] {
   return columns.map((column) => ({ ...column }));
 }
 
+export function hasEditorSchemaForBlock(blockId: string) {
+  return blockColumnsById.has(blockId);
+}
+
 export function collectWorkflowColumnIds(workflow: Workflow): string[] {
   const columnIds = new Set<string>();
 

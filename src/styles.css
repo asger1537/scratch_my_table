@@ -130,6 +130,49 @@ code {
 
 .summary-card--upload input {
   width: 100%;
+  color: var(--muted);
+}
+
+.summary-card--upload input::file-selector-button {
+  border: 1px solid var(--line);
+  border-radius: 0.62rem;
+  padding: 0.48rem 0.78rem;
+  margin-right: 0.68rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f7efe4 100%);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.summary-card--upload input::-webkit-file-upload-button {
+  border: 1px solid var(--line);
+  border-radius: 0.62rem;
+  padding: 0.48rem 0.78rem;
+  margin-right: 0.68rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f7efe4 100%);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease, background 120ms ease;
+}
+
+.summary-card--upload input:hover::file-selector-button,
+.summary-card--upload input:hover::-webkit-file-upload-button {
+  border-color: #c8a06d;
+  background: linear-gradient(180deg, #ffffff 0%, #f4e4d2 100%);
+}
+
+.summary-card--upload input:focus-visible::file-selector-button,
+.summary-card--upload input:focus-visible::-webkit-file-upload-button {
+  outline: none;
+  border-color: #bf5b20;
+  box-shadow: 0 0 0 3px rgba(191, 91, 32, 0.18);
+}
+
+.summary-card--upload input:active::file-selector-button,
+.summary-card--upload input:active::-webkit-file-upload-button {
+  transform: translateY(1px);
 }
 
 .summary-card--upload-drag-active {
@@ -1537,6 +1580,41 @@ code {
   display: flex;
   gap: 0.55rem;
   align-items: center;
+}
+
+.workflow-selection-item__actions button {
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  padding: 0.42rem 0.74rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f7efe4 100%);
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.workflow-selection-item__actions button:hover:not(:disabled) {
+  border-color: #c8a06d;
+  background: linear-gradient(180deg, #ffffff 0%, #f4e4d2 100%);
+}
+
+.workflow-selection-item__actions button:focus-visible {
+  outline: none;
+  border-color: #bf5b20;
+  box-shadow: 0 0 0 3px rgba(191, 91, 32, 0.18);
+}
+
+.workflow-selection-item__actions button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.workflow-selection-item__actions button:disabled {
+  cursor: not-allowed;
+  color: #a69b8f;
+  border-color: #ddd3c8;
+  background: #f4efe8;
+  box-shadow: none;
 }
 
 .empty-panel--compact {

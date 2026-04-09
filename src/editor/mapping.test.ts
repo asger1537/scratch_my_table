@@ -1072,8 +1072,44 @@ describe('block-based workflow authoring', () => {
     ]);
   });
 
+  it('surfaces missing selected columns as editor issues while keeping missing-column placeholders', () => {
+    const workspace = createHeadlessWorkflowWorkspace();
+    const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
+    const setValueActionBlock = workspace.newBlock(BLOCK_TYPES.setValueActionItem);
+    const literalBlock = workspace.newBlock(BLOCK_TYPES.literalString);
+
+    const availableColumns = [createColumn('col_email', 'Email', 'string')];
+
+    setEditorSchemaColumns(
+      availableColumns,
+      ['col_missing_email'],
+      new Map([[scopedRuleBlock.id, availableColumns]]),
+    );
+    scopedRuleBlock.setFieldValue(serializeColumnSelectionValue(['col_missing_email']), 'COLUMN_IDS');
+    literalBlock.setFieldValue('fallback', 'VALUE');
+
+    scopedRuleBlock.getInput('DEFAULT_ACTIONS')?.connection?.connect(setValueActionBlock.previousConnection!);
+    setValueActionBlock.getInput('VALUE')?.connection?.connect(literalBlock.outputConnection!);
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.workflow).toBeNull();
+    expect(result.issues).toEqual([
+      {
+        code: 'missingColumn',
+        message: `Block '${BLOCK_TYPES.scopedRuleSingleStep}' references missing column 'col_missing_email' that does not exist in the current schema at this step.`,
+        blockId: scopedRuleBlock.id,
+        blockType: BLOCK_TYPES.scopedRuleSingleStep,
+      },
+    ]);
+  });
+
   it('compiles single scoped-rule blocks with row conditions to canonical scopedRule steps', () => {
     const workspace = createHeadlessWorkflowWorkspace();
+    setEditorSchemaColumns([
+      createColumn('col_email', 'Email', 'string'),
+      createColumn('col_region', 'Region', 'string'),
+    ]);
     const scopedRuleBlock = workspace.newBlock(BLOCK_TYPES.scopedRuleSingleStep);
     const rowConditionBlock = workspace.newBlock(BLOCK_TYPES.comparisonFunction);
     const rowColumnBlock = workspace.newBlock(BLOCK_TYPES.columnExpression);
