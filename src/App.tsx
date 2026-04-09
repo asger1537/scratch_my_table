@@ -180,6 +180,7 @@ export default function App() {
   const [isUploadDragActive, setIsUploadDragActive] = useState(false);
   const [workflowPackage, setWorkflowPackage] = useState<WorkflowPackageV1 | null>(null);
   const [workflowTabStates, setWorkflowTabStates] = useState<Record<string, WorkflowTabRuntimeState>>({});
+  const [startRenameWorkflowId, setStartRenameWorkflowId] = useState<string | null>(null);
   const [workflowLoadVersion, setWorkflowLoadVersion] = useState(0);
   const [workflowJsonError, setWorkflowJsonError] = useState<string | null>(null);
   const [isWorkflowImportDialogOpen, setIsWorkflowImportDialogOpen] = useState(false);
@@ -1100,6 +1101,7 @@ export default function App() {
       currentPackage
         ? setActiveWorkflowInPackage(currentPackage, workflowId)
         : currentPackage);
+    setStartRenameWorkflowId(null);
     setWorkflowLoadVersion((version) => version + 1);
     setIsAIDialogOpen(false);
   }
@@ -1111,9 +1113,7 @@ export default function App() {
 
     editorRef.current?.flushWorkspaceChange();
 
-    const defaultWorkflow = createNewPackageWorkflow(workflowPackage.workflows);
-    const requestedName = window.prompt('Name the new workflow.', defaultWorkflow.name);
-    const createdWorkflow = createNewPackageWorkflow(workflowPackage.workflows, requestedName ?? undefined);
+    const createdWorkflow = createNewPackageWorkflow(workflowPackage.workflows);
     const createdWorkflowId = createdWorkflow.workflowId;
 
     setWorkflowPackage((currentPackage) =>
@@ -1124,6 +1124,7 @@ export default function App() {
       ...current,
       [createdWorkflowId]: createWorkflowTabRuntimeState(),
     }));
+    setStartRenameWorkflowId(createdWorkflowId);
     setWorkflowLoadVersion((version) => version + 1);
     setIsAIDialogOpen(false);
   }
@@ -1175,6 +1176,7 @@ export default function App() {
       currentPackage
         ? deleteWorkflowFromPackage(currentPackage, workflowId)
         : currentPackage);
+    setStartRenameWorkflowId((currentWorkflowId) => (currentWorkflowId === workflowId ? null : currentWorkflowId));
     setWorkflowTabStates((current) => {
       const nextStates = { ...current };
       delete nextStates[workflowId];
@@ -1284,6 +1286,8 @@ export default function App() {
                     onDeleteWorkflow={handleDeleteWorkflowTab}
                     onRenameWorkflow={handleRenameWorkflowTab}
                     onSelectWorkflow={handleSelectWorkflowTab}
+                    onStartRenameHandled={() => setStartRenameWorkflowId(null)}
+                    startRenameWorkflowId={startRenameWorkflowId}
                     workflowTabStates={workflowTabStates}
                     workflows={workflowPackage.workflows}
                   />
@@ -1477,6 +1481,8 @@ export function WorkflowTabs({
   onDeleteWorkflow,
   onRenameWorkflow,
   onSelectWorkflow,
+  onStartRenameHandled,
+  startRenameWorkflowId,
   workflowTabStates,
   workflows,
 }: {
@@ -1485,12 +1491,16 @@ export function WorkflowTabs({
   onDeleteWorkflow: (workflowId: string) => void;
   onRenameWorkflow: (workflowId: string, nextName: string) => void;
   onSelectWorkflow: (workflowId: string) => void;
+  onStartRenameHandled: () => void;
+  startRenameWorkflowId: string | null;
   workflowTabStates: Record<string, WorkflowTabRuntimeState>;
   workflows: Workflow[];
 }) {
   const [editingWorkflowId, setEditingWorkflowId] = useState<string | null>(null);
   const [draftWorkflowName, setDraftWorkflowName] = useState('');
   const [openMenuWorkflowId, setOpenMenuWorkflowId] = useState<string | null>(null);
+  const [blurGuardedWorkflowId, setBlurGuardedWorkflowId] = useState<string | null>(null);
+  const [blurGuardUntilMs, setBlurGuardUntilMs] = useState(0);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1536,10 +1546,53 @@ export function WorkflowTabs({
     };
   }, [editingWorkflowId]);
 
+  useEffect(() => {
+    if (!startRenameWorkflowId) {
+      return;
+    }
+
+    const workflow = workflows.find((currentWorkflow) => currentWorkflow.workflowId === startRenameWorkflowId);
+
+    if (!workflow) {
+      return;
+    }
+
+    setOpenMenuWorkflowId(null);
+    setEditingWorkflowId(workflow.workflowId);
+    setDraftWorkflowName(workflow.name);
+    setBlurGuardedWorkflowId(workflow.workflowId);
+    setBlurGuardUntilMs(performance.now() + 350);
+    onStartRenameHandled();
+  }, [onStartRenameHandled, startRenameWorkflowId, workflows]);
+
   function beginRename(workflow: Workflow) {
     setOpenMenuWorkflowId(null);
     setEditingWorkflowId(workflow.workflowId);
     setDraftWorkflowName(workflow.name);
+    setBlurGuardedWorkflowId(null);
+    setBlurGuardUntilMs(0);
+  }
+
+  function cancelRename() {
+    setEditingWorkflowId(null);
+    setDraftWorkflowName('');
+    setBlurGuardedWorkflowId(null);
+    setBlurGuardUntilMs(0);
+  }
+
+  function handleRenameBlur(workflow: Workflow) {
+    if (
+      blurGuardedWorkflowId === workflow.workflowId
+      && performance.now() < blurGuardUntilMs
+    ) {
+      window.requestAnimationFrame(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      });
+      return;
+    }
+
+    commitRename(workflow);
   }
 
   function commitRename(workflow: Workflow) {
@@ -1547,6 +1600,8 @@ export function WorkflowTabs({
 
     setEditingWorkflowId(null);
     setDraftWorkflowName('');
+    setBlurGuardedWorkflowId(null);
+    setBlurGuardUntilMs(0);
 
     if (normalizedName === '' || normalizedName === workflow.name) {
       return;
@@ -1568,8 +1623,12 @@ export function WorkflowTabs({
             {isEditing ? (
               <input
                 className="workflow-tab__input"
-                onBlur={() => commitRename(workflow)}
-                onChange={(event) => setDraftWorkflowName(event.target.value)}
+                onBlur={() => handleRenameBlur(workflow)}
+                onChange={(event) => {
+                  setDraftWorkflowName(event.target.value);
+                  setBlurGuardedWorkflowId(null);
+                  setBlurGuardUntilMs(0);
+                }}
                 onClick={(event) => {
                   event.stopPropagation();
                 }}
@@ -1577,8 +1636,7 @@ export function WorkflowTabs({
                   if (event.key === 'Enter') {
                     commitRename(workflow);
                   } else if (event.key === 'Escape') {
-                    setEditingWorkflowId(null);
-                    setDraftWorkflowName('');
+                    cancelRename();
                   }
                 }}
                 ref={isEditing ? renameInputRef : null}
@@ -1638,7 +1696,15 @@ export function WorkflowTabs({
           </div>
         );
       })}
-      <button aria-label="Create workflow" className="workflow-tab workflow-tab--create" onClick={onCreateWorkflow} type="button">
+      <button
+        aria-label="Create workflow"
+        className="workflow-tab workflow-tab--create"
+        onClick={onCreateWorkflow}
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
+        type="button"
+      >
         <PlusIcon />
       </button>
     </div>

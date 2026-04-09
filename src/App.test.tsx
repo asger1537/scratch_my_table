@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -20,15 +20,28 @@ function createWorkflow(workflowId: string, name: string): Workflow {
 }
 
 function WorkflowTabsHarness() {
+  const [workflows, setWorkflows] = useState([createWorkflow('wf_workflow', 'Workflow')]);
+  const [activeWorkflowId, setActiveWorkflowId] = useState('wf_workflow');
+  const [startRenameWorkflowId, setStartRenameWorkflowId] = useState<string | null>(null);
+
+  function handleCreateWorkflow() {
+    const createdWorkflowId = 'wf_workflow_2';
+    setWorkflows((current) => [...current, createWorkflow(createdWorkflowId, 'Workflow (2)')]);
+    setActiveWorkflowId(createdWorkflowId);
+    setStartRenameWorkflowId(createdWorkflowId);
+  }
+
   return (
     <WorkflowTabs
-      activeWorkflowId="wf_workflow"
-      onCreateWorkflow={() => {}}
+      activeWorkflowId={activeWorkflowId}
+      onCreateWorkflow={handleCreateWorkflow}
       onDeleteWorkflow={() => {}}
       onRenameWorkflow={() => {}}
-      onSelectWorkflow={() => {}}
+      onSelectWorkflow={setActiveWorkflowId}
+      onStartRenameHandled={() => setStartRenameWorkflowId(null)}
+      startRenameWorkflowId={startRenameWorkflowId}
       workflowTabStates={{}}
-      workflows={[createWorkflow('wf_workflow', 'Workflow')]}
+      workflows={workflows}
     />
   );
 }
@@ -50,7 +63,7 @@ describe('WorkflowTabs', () => {
     container.remove();
   });
 
-  it('enters inline rename mode and focuses the input on manual rename', async () => {
+  it('enters inline rename mode and focuses the input when creating a new workflow', async () => {
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -59,24 +72,24 @@ describe('WorkflowTabs', () => {
       root.render(<WorkflowTabsHarness />);
     });
 
-    const workflowButton = container.querySelector('.workflow-tab__button');
+    const createButton = container.querySelector('.workflow-tab--create');
 
-    if (!(workflowButton instanceof HTMLButtonElement)) {
-      throw new Error('Expected workflow tab button.');
+    if (!(createButton instanceof HTMLButtonElement)) {
+      throw new Error('Expected workflow create button.');
     }
 
     await act(async () => {
-      workflowButton.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      createButton.click();
     });
     await flushUi();
 
     const renameInput = container.querySelector('.workflow-tab__input');
 
     if (!(renameInput instanceof HTMLInputElement)) {
-      throw new Error('Expected inline rename input after starting rename.');
+      throw new Error('Expected inline rename input after creating a workflow.');
     }
 
-    expect(renameInput.value).toBe('Workflow');
+    expect(renameInput.value).toBe('Workflow (2)');
     expect(document.activeElement).toBe(renameInput);
     expect(renameInput.selectionStart).toBe(0);
     expect(renameInput.selectionEnd).toBe(renameInput.value.length);
