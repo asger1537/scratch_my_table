@@ -171,6 +171,8 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
   const isFullscreen = isFallbackFullscreen;
   const validationItems = buildValidationDisplayItems(issues, jsonError);
   const issueCount = validationItems.length;
+  const previousIssueCountRef = useRef(issueCount);
+  const [isValidationCollapsed, setIsValidationCollapsed] = useState(issueCount === 0);
 
   latestInputsRef.current = {
     table,
@@ -195,6 +197,18 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
 
     goToBlockInWorkspace(workspace, targetBlockId);
   };
+
+  useEffect(() => {
+    const previousIssueCount = previousIssueCountRef.current;
+
+    if (issueCount === 0) {
+      setIsValidationCollapsed(true);
+    } else if (previousIssueCount === 0) {
+      setIsValidationCollapsed(false);
+    }
+
+    previousIssueCountRef.current = issueCount;
+  }, [issueCount]);
 
   useEffect(() => {
     registerWorkflowBlocks();
@@ -691,7 +705,7 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
         <div className="workflow-editor-metadata">
           <label className="workflow-meta-field workflow-meta-field--wide">
             <span>Description</span>
-            <textarea onChange={handleMetadataChange('description')} rows={2} value={metadata.description ?? ''} />
+            <textarea onChange={handleMetadataChange('description')} rows={1} value={metadata.description ?? ''} />
           </label>
         </div>
       </div>
@@ -710,12 +724,30 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
         </div>
       ) : null}
       <div className="workflow-editor-canvas" ref={containerRef} />
-      <section className="workflow-editor-validation">
-        <div className="panel-header panel-header--compact">
-          <h2>Validation</h2>
-          <p>{issueCount === 0 ? 'No issues' : `${issueCount} issue${issueCount === 1 ? '' : 's'}`}</p>
-        </div>
-        {validationItems.length === 0 ? (
+      <section className={`workflow-editor-validation${isValidationCollapsed ? ' workflow-editor-validation--collapsed' : ''}`}>
+        <h2 className="workflow-editor-validation__heading">
+          <button
+            aria-expanded={!isValidationCollapsed}
+            className="workflow-editor-validation__toggle"
+            onClick={() => setIsValidationCollapsed((current) => !current)}
+            type="button"
+          >
+            <span className="workflow-editor-validation__title">
+              <span>Validation</span>
+              <span
+                className={`workflow-editor-validation__badge ${issueCount === 0
+                  ? 'workflow-editor-validation__badge--clear'
+                  : 'workflow-editor-validation__badge--warning'}`}
+              >
+                {issueCount === 0 ? 'No issues' : `${issueCount} issue${issueCount === 1 ? '' : 's'}`}
+              </span>
+            </span>
+            <span aria-hidden="true" className="workflow-editor-validation__toggle-icon">
+              <ChevronDownIcon />
+            </span>
+          </button>
+        </h2>
+        {isValidationCollapsed ? null : validationItems.length === 0 ? (
           <div className="empty-panel empty-panel--compact">No current workflow issues.</div>
         ) : (
           <div className="panel-scroll-region workflow-editor-validation__body">
@@ -1123,6 +1155,14 @@ function CollapseIcon() {
       <path d="M15 9h5V4" />
       <path d="M20 20h-5v-5" />
       <path d="M4 20h5v-5" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }
