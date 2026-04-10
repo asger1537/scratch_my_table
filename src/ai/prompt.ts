@@ -51,6 +51,10 @@ const CURATED_EXAMPLES = [
       ass: [],
       steps: [
         {
+          type: 'comment',
+          text: 'Consolidate Email and flag missing final values.',
+        },
+        {
           type: 'scopedRule',
           columnIds: ['col_email'],
           cases: [
@@ -93,6 +97,10 @@ const CURATED_EXAMPLES = [
       ass: [],
       steps: [
         {
+          type: 'comment',
+          text: 'Normalize Email before filtering rows.',
+        },
+        {
           type: 'scopedRule',
           columnIds: ['col_email'],
           cases: [
@@ -131,6 +139,138 @@ const CURATED_EXAMPLES = [
             op: 'contains',
             left: { source: 'column', columnId: 'col_email' },
             right: { source: 'literal', value: '@' },
+          },
+        },
+      ],
+    },
+  },
+  {
+    user: 'Normalize Email and Phone, derive Preferred Contact Method, then keep only contactable rows.',
+    assistant: {
+      mode: 'draft',
+      msg: 'Normalize contact fields, derive Preferred Contact Method, then keep only contactable rows.',
+      ass: [],
+      steps: [
+        {
+          type: 'comment',
+          text: 'Normalize contact fields.',
+        },
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'predicate',
+                op: 'isEmpty',
+                input: { source: 'value' },
+              },
+              then: {
+                value: { source: 'column', columnId: 'col_email_2' },
+              },
+            },
+          ],
+          defaultPatch: {
+            value: {
+              kind: 'unary',
+              op: 'lower',
+              input: {
+                kind: 'unary',
+                op: 'trim',
+                input: { source: 'value' },
+              },
+            },
+          },
+        },
+        {
+          type: 'scopedRule',
+          columnIds: ['col_phone'],
+          defaultPatch: {
+            value: {
+              kind: 'ternary',
+              op: 'replaceRegex',
+              first: {
+                kind: 'unary',
+                op: 'toString',
+                input: { source: 'value' },
+              },
+              second: { source: 'literal', value: '[^0-9]+' },
+              third: { source: 'literal', value: '' },
+            },
+          },
+        },
+        {
+          type: 'comment',
+          text: 'Derive contact method.',
+        },
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_preferred_contact_method',
+            displayName: 'Preferred Contact Method',
+          },
+          derive: {
+            kind: 'match',
+            subject: { source: 'column', columnId: 'col_email' },
+            cases: [
+              {
+                kind: 'when',
+                when: {
+                  kind: 'compare',
+                  op: 'contains',
+                  left: { source: 'caseValue' },
+                  right: { source: 'literal', value: '@' },
+                },
+                then: { source: 'literal', value: 'email' },
+              },
+              {
+                kind: 'when',
+                when: {
+                  kind: 'boolean',
+                  op: 'and',
+                  items: [
+                    {
+                      kind: 'predicate',
+                      op: 'isEmpty',
+                      input: { source: 'caseValue' },
+                    },
+                    {
+                      kind: 'compare',
+                      op: 'matchesRegex',
+                      left: { source: 'column', columnId: 'col_phone' },
+                      right: { source: 'literal', value: '^\\d{10}$' },
+                    },
+                  ],
+                },
+                then: { source: 'literal', value: 'sms' },
+              },
+              {
+                kind: 'otherwise',
+                then: { source: 'literal', value: 'none' },
+              },
+            ],
+          },
+        },
+        {
+          type: 'comment',
+          text: 'Drop helpers and filter rows.',
+        },
+        {
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+        {
+          type: 'filterRows',
+          mode: 'keep',
+          where: {
+            kind: 'boolean',
+            op: 'not',
+            item: {
+              kind: 'compare',
+              op: 'eq',
+              left: { source: 'column', columnId: 'col_preferred_contact_method' },
+              right: { source: 'literal', value: 'none' },
+            },
           },
         },
       ],
@@ -346,6 +486,14 @@ export function buildGeminiSystemInstruction(
     'Cell patch shape:',
     '- { "value"?: <value expression>, "format"?: { "fillColor": "#FFEB9C" } }',
     '',
+    'Comment guidance:',
+    '- Add concise comment steps to explain non-trivial implementations.',
+    '- For requests with 3 or more distinct goals or phases, include a short comment before each major phase.',
+    '- Typical phases are normalize/fill, derive/classify, format/highlight, cleanup/drop, and filter/sort.',
+    '- Longer workflows should usually have 2 to 5 comment steps, not just one comment at the start.',
+    '- Keep comment text action-oriented and brief, usually 3 to 8 words.',
+    '- Do not add comments for every single step, and skip comments for trivial one-step drafts.',
+    '',
     'Default fill-color word map (use exact palette hex values):',
     '- white -> #FFFFFF',
     '- green -> #C6EFCE',
@@ -406,6 +554,7 @@ export function buildGeminiSystemInstruction(
     '- Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment. Do not refuse mixed columns just because they are mixed.',
     '- In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds. If types differ, split into separate scopedRule steps per column group.',
     '- isEmpty(...) already treats whitespace-only strings as empty.',
+    '- For multi-step implementations, include concise comment steps so the workflow stays readable and the phase boundaries are obvious in the editor.',
     '- Use match for exclusive classification and bucketing. Match is ordered and first-match-wins.',
     '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
     '- scopedRule uses { "source": "value" }. match case conditions use { "source": "caseValue" }. Do not mix them up.',
@@ -475,6 +624,7 @@ export function buildRepairUserMessage(
     'Use authoring boolean kinds only: predicate, compare, between, boolean.',
     'Use this exact fill-color word map: white=#FFFFFF, green=#C6EFCE, yellow=#FFEB9C, orange=#F4B183, red=#FFC7CE, purple=#D9C2E9, blue=#BDD7EE.',
     'If the user asks for a named color, emit the mapped hex exactly.',
+    'Preserve or add concise comment steps when the implementation has multiple phases.',
     'Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
     'Use { "source": "caseValue" } only inside match.cases[*].when.',
     'Do not ask a clarification question in this repair turn. Return mode "draft".',

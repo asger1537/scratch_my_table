@@ -32,6 +32,16 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment.');
     expect(instruction).toContain('Operator input type requirements (critical):');
     expect(instruction).toContain('trim/lower/upper/collapseWhitespace require string-like input.');
+    expect(instruction).toContain('Comment guidance:');
+    expect(instruction).toContain('Add concise comment steps to explain non-trivial implementations.');
+    expect(instruction).toContain('For requests with 3 or more distinct goals or phases, include a short comment before each major phase.');
+    expect(instruction).toContain('Longer workflows should usually have 2 to 5 comment steps, not just one comment at the start.');
+    expect(instruction).toContain('Typical phases are normalize/fill, derive/classify, format/highlight, cleanup/drop, and filter/sort.');
+    expect(instruction).toContain('For multi-step implementations, include concise comment steps so the workflow stays readable and the phase boundaries are obvious in the editor.');
+    expect(instruction).toContain('"type":"comment"');
+    expect(instruction).toContain('Normalize contact fields.');
+    expect(instruction).toContain('Derive contact method.');
+    expect(instruction).toContain('Drop helpers and filter rows.');
     expect(instruction).toContain('Default fill-color word map (use exact palette hex values):');
     expect(instruction).toContain('- red -> #FFC7CE');
     expect(instruction).toContain('In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds.');
@@ -140,6 +150,7 @@ describe('AI workflow copilot helpers', () => {
     expect(repairMessage).toContain('Return authoring IR only.');
     expect(repairMessage).toContain('Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.');
     expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when.');
+    expect(repairMessage).toContain('Preserve or add concise comment steps when the implementation has multiple phases.');
     expect(repairMessage).not.toContain('fill_empty_from_col');
     expect(repairMessage).toContain('- col_email | Email | string');
   });
