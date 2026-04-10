@@ -117,6 +117,7 @@ const SEMANTIC_CHANGE_DELAY_MS = 1000;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 const WORKSPACE_ZOOM_SCALE_SPEED = 1.08;
+const GO_TO_BLOCK_PADDING_PX = 32;
 
 export interface WorkflowEditorHandle {
   flushWorkspaceChange: () => void;
@@ -858,8 +859,16 @@ function centerBlockInWorkspace(workspace: Blockly.Workspace, blockId: string) {
     return;
   }
 
+  if ('scrollBoundsIntoView' in workspace && 'getBoundingRectangle' in block) {
+    (workspace as Blockly.WorkspaceSvg).scrollBoundsIntoView(
+      (block as Blockly.BlockSvg).getBoundingRectangle(),
+      GO_TO_BLOCK_PADDING_PX,
+    );
+    return;
+  }
+
   if ('centerOnBlock' in workspace) {
-    (workspace as Blockly.WorkspaceSvg).centerOnBlock(block.id);
+    (workspace as Blockly.WorkspaceSvg).centerOnBlock(block.id, true);
   }
 }
 
