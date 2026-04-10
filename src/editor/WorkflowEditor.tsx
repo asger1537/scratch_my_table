@@ -35,6 +35,7 @@ import {
   getWorkflowToolboxDefinition,
   registerWorkflowToolboxCategoryCallbacks,
 } from './toolbox';
+import { refreshWorkspaceSchemaFields } from './schemaFieldRefresh';
 import type { EditorWorkspaceChange, ValidationDisplayItem } from './types';
 import { buildValidationDisplayItems } from './validationDisplay';
 
@@ -113,7 +114,6 @@ const ORDER_SENSITIVE_BLOCK_TYPES = new Set<string>([
 ]);
 const SCHEMA_AFFECTING_CHANGE_DELAY_MS = 150;
 const SEMANTIC_CHANGE_DELAY_MS = 1000;
-const SCHEMA_PROJECTION_DELAY_MS = 700;
 const TOOLBOX_ITEM_SELECT_EVENT = 'toolbox_item_select';
 const TOOLBOX_SEARCH_RESTORE_WINDOW_MS = 250;
 const WORKSPACE_ZOOM_SCALE_SPEED = 1.08;
@@ -150,8 +150,6 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
   const suppressChangesRef = useRef(false);
   const debounceTimerRef = useRef<number | null>(null);
   const idleCallbackRef = useRef<number | null>(null);
-  const schemaDebounceTimerRef = useRef<number | null>(null);
-  const schemaIdleCallbackRef = useRef<number | null>(null);
   const clearScheduledWorkRef = useRef<() => void>(() => {});
   const flushWorkspaceChangeRef = useRef<(shouldProjectSchema: boolean) => void>(() => {});
   const latestInputsRef = useRef<DeferredWorkspaceInputs>({
@@ -272,15 +270,6 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
         idleCallbackRef.current = null;
       }
 
-      if (schemaDebounceTimerRef.current !== null) {
-        window.clearTimeout(schemaDebounceTimerRef.current);
-        schemaDebounceTimerRef.current = null;
-      }
-
-      if (schemaIdleCallbackRef.current !== null) {
-        cancelDeferredIdleWork(schemaIdleCallbackRef.current);
-        schemaIdleCallbackRef.current = null;
-      }
     };
     clearScheduledWorkRef.current = clearScheduledWork;
 
@@ -290,24 +279,17 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
       }
 
       const { table: currentTable, extraColumnIds: currentExtraColumnIds, onWorkspaceChange: handleWorkspaceChange } = latestInputsRef.current;
-      const workflowResult = buildEditorWorkspaceChange(workspace);
+      let workflowResult = buildEditorWorkspaceChange(workspace);
       const nextExtraColumnIds = workflowResult.workflow
         ? collectWorkflowColumnIds(workflowResult.workflow)
         : currentExtraColumnIds;
 
-      handleWorkspaceChange(workflowResult);
-
-      if (!shouldProjectSchema) {
-        return;
+      if (shouldProjectSchema) {
+        syncEditorSchema(workspace, currentTable, nextExtraColumnIds);
+        workflowResult = buildEditorWorkspaceChange(workspace);
       }
 
-      schemaDebounceTimerRef.current = window.setTimeout(() => {
-        schemaDebounceTimerRef.current = null;
-        schemaIdleCallbackRef.current = scheduleDeferredIdleWork(() => {
-          schemaIdleCallbackRef.current = null;
-          syncEditorSchema(workspace, currentTable, nextExtraColumnIds);
-        });
-      }, SCHEMA_PROJECTION_DELAY_MS);
+      handleWorkspaceChange(workflowResult);
     };
     flushWorkspaceChangeRef.current = flushWorkspaceChange;
 
@@ -795,6 +777,7 @@ function loadWorkspace(
 
 function syncEditorSchema(workspace: Blockly.Workspace, table: Table, extraColumnIds: string[]) {
   setEditorSchemaColumns(table.schema.columns, extraColumnIds, projectWorkspaceStepSchemas(workspace, table));
+  refreshWorkspaceSchemaFields(workspace);
 }
 
 function focusPrimaryStep(workspace: Blockly.Workspace) {

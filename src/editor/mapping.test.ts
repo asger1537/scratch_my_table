@@ -13,6 +13,7 @@ import { wrapCommentDisplayLines } from './FieldCommentInput';
 import { formatColumnSelectionSummary, getSelectableColumnTypeGroups, getSelectableColumns, serializeColumnSelectionValue } from './FieldColumnMultiSelect';
 import { BLOCK_TYPES } from './blocks';
 import { runWorkspaceWorkflow, validateWorkspaceWorkflow } from './integration';
+import { refreshWorkspaceSchemaFields } from './schemaFieldRefresh';
 import {
   collectWorkflowColumnIds,
   createHeadlessWorkflowWorkspace,
@@ -1654,7 +1655,306 @@ describe('block-based workflow authoring', () => {
     expect(formatColumnSelectionSummary(['col_email', 'col_city'])).toBe('All string columns (2)');
     expect(formatColumnSelectionSummary(['col_order_total'])).toBe('order_total');
   });
+
+  it('keeps derived columns available to later steps for the 27-email-hard workflow shape', () => {
+    const table = loadInlineCsvTable([
+      'Customer ID,First Name,Last Name,Email,Email (2),Column,Status,Sign Up Date,Notes,Balance,VIP?,Phone',
+      'C-001,Alice,Ng,alice@example.com,alice.alt@example.com,north,active,02/01/2026,prefers email,120.5,TRUE,202-555-0141',
+      'C-002,Bob,Smith-Jones,,,west,,15/01/2026,,,FALSE,-695',
+    ].join('\r\n'));
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_contact_readiness_cleanup',
+      name: 'Contact readiness cleanup',
+      steps: [
+        {
+          id: 'step_clean_email',
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          defaultPatch: {
+            value: call(
+              'lower',
+              call(
+                'trim',
+                coalesce(
+                  call('trim', value()),
+                  call('trim', column('col_email_2')),
+                ),
+              ),
+            ),
+          },
+        },
+        {
+          id: 'step_clean_phone',
+          type: 'scopedRule',
+          columnIds: ['col_phone'],
+          defaultPatch: {
+            value: call(
+              'replaceRegex',
+              coalesce(call('toString', value()), literal('')),
+              literal('[^0-9]'),
+              literal(''),
+            ),
+          },
+        },
+        {
+          id: 'step_derive_preferred_contact_method',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_preferred_contact_method',
+            displayName: 'Preferred Contact Method',
+          },
+          expression: match(column('col_email'), [
+            matchWhen(call('contains', caseValue(), literal('@')), literal('email')),
+            matchWhen(
+              call(
+                'and',
+                call('isEmpty', caseValue()),
+                call('matchesRegex', column('col_phone'), literal('^\\d{10}$')),
+              ),
+              literal('sms'),
+            ),
+            matchOtherwise(literal('none')),
+          ]),
+        },
+        {
+          id: 'step_derive_customer_tier',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_customer_tier',
+            displayName: 'Customer Tier',
+          },
+          expression: match(call('toNumber', column('col_balance')), [
+            matchWhen(
+              call(
+                'and',
+                call('equals', column('col_vip'), literal(true)),
+                call('equals', call('lower', call('trim', column('col_status'))), literal('active')),
+              ),
+              literal('vip-active'),
+            ),
+            matchWhen(call('lessThan', caseValue(), literal(0)), literal('at-risk')),
+            matchOtherwise(literal('standard')),
+          ]),
+        },
+        {
+          id: 'step_highlight_and_normalize_status_for_at_risk',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          rowCondition: call('equals', column('col_customer_tier'), literal('at-risk')),
+          cases: [
+            {
+              when: call('isEmpty', value()),
+              then: {
+                format: {
+                  fillColor: '#ffeb9c',
+                },
+              },
+            },
+            {
+              when: call('not', call('isEmpty', value())),
+              then: {
+                value: call('lower', call('trim', value())),
+                format: {
+                  fillColor: '#ffeb9c',
+                },
+              },
+            },
+          ],
+        },
+        {
+          id: 'step_highlight_balance_for_at_risk',
+          type: 'scopedRule',
+          columnIds: ['col_balance'],
+          rowCondition: call('equals', column('col_customer_tier'), literal('at-risk')),
+          defaultPatch: {
+            format: {
+              fillColor: '#ffeb9c',
+            },
+          },
+        },
+        {
+          id: 'step_drop_email_2',
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+        {
+          id: 'step_keep_contactable_rows',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('not', call('equals', column('col_preferred_contact_method'), literal('none'))),
+        },
+      ],
+    };
+    const workspace = buildWorkspaceFromTable(table, workflow);
+
+    setEditorSchemaColumns(
+      table.schema.columns,
+      collectWorkflowColumnIds(workflow),
+      projectWorkspaceStepSchemas(workspace, table),
+    );
+
+    const result = workspaceToWorkflow(workspace);
+
+    expect(result.issues).toEqual([]);
+  });
+
+  it('refreshes projected schema dropdown labels after derived columns become available', () => {
+    const table = loadInlineCsvTable([
+      'Customer ID,First Name,Last Name,Email,Email (2),Column,Status,Sign Up Date,Notes,Balance,VIP?,Phone',
+      'C-001,Alice,Ng,alice@example.com,alice.alt@example.com,north,active,02/01/2026,prefers email,120.5,TRUE,202-555-0141',
+      'C-002,Bob,Smith-Jones,,,west,,15/01/2026,,,FALSE,-695',
+    ].join('\r\n'));
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_contact_readiness_cleanup',
+      name: 'Contact readiness cleanup',
+      steps: [
+        {
+          id: 'step_clean_email',
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          defaultPatch: {
+            value: call(
+              'lower',
+              call(
+                'trim',
+                coalesce(
+                  call('trim', value()),
+                  call('trim', column('col_email_2')),
+                ),
+              ),
+            ),
+          },
+        },
+        {
+          id: 'step_clean_phone',
+          type: 'scopedRule',
+          columnIds: ['col_phone'],
+          defaultPatch: {
+            value: call(
+              'replaceRegex',
+              coalesce(call('toString', value()), literal('')),
+              literal('[^0-9]'),
+              literal(''),
+            ),
+          },
+        },
+        {
+          id: 'step_derive_preferred_contact_method',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_preferred_contact_method',
+            displayName: 'Preferred Contact Method',
+          },
+          expression: match(column('col_email'), [
+            matchWhen(call('contains', caseValue(), literal('@')), literal('email')),
+            matchWhen(
+              call(
+                'and',
+                call('isEmpty', caseValue()),
+                call('matchesRegex', column('col_phone'), literal('^\\d{10}$')),
+              ),
+              literal('sms'),
+            ),
+            matchOtherwise(literal('none')),
+          ]),
+        },
+        {
+          id: 'step_derive_customer_tier',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_customer_tier',
+            displayName: 'Customer Tier',
+          },
+          expression: match(call('toNumber', column('col_balance')), [
+            matchWhen(
+              call(
+                'and',
+                call('equals', column('col_vip'), literal(true)),
+                call('equals', call('lower', call('trim', column('col_status'))), literal('active')),
+              ),
+              literal('vip-active'),
+            ),
+            matchWhen(call('lessThan', caseValue(), literal(0)), literal('at-risk')),
+            matchOtherwise(literal('standard')),
+          ]),
+        },
+        {
+          id: 'step_highlight_and_normalize_status_for_at_risk',
+          type: 'scopedRule',
+          columnIds: ['col_status'],
+          rowCondition: call('equals', column('col_customer_tier'), literal('at-risk')),
+          cases: [
+            {
+              when: call('isEmpty', value()),
+              then: {
+                format: {
+                  fillColor: '#ffeb9c',
+                },
+              },
+            },
+            {
+              when: call('not', call('isEmpty', value())),
+              then: {
+                value: call('lower', call('trim', value())),
+                format: {
+                  fillColor: '#ffeb9c',
+                },
+              },
+            },
+          ],
+        },
+        {
+          id: 'step_highlight_balance_for_at_risk',
+          type: 'scopedRule',
+          columnIds: ['col_balance'],
+          rowCondition: call('equals', column('col_customer_tier'), literal('at-risk')),
+          defaultPatch: {
+            format: {
+              fillColor: '#ffeb9c',
+            },
+          },
+        },
+        {
+          id: 'step_drop_email_2',
+          type: 'dropColumns',
+          columnIds: ['col_email_2'],
+        },
+        {
+          id: 'step_keep_contactable_rows',
+          type: 'filterRows',
+          mode: 'keep',
+          condition: call('not', call('equals', column('col_preferred_contact_method'), literal('none'))),
+        },
+      ],
+    };
+    const workspace = createHeadlessWorkflowWorkspace();
+    const extraColumnIds = collectWorkflowColumnIds(workflow);
+
+    setEditorSchemaColumns(table.schema.columns, extraColumnIds);
+    workflowToWorkspace(workspace, workflow);
+
+    expect(countMissingColumnFieldLabels(workspace)).toBeGreaterThanOrEqual(3);
+
+    setEditorSchemaColumns(
+      table.schema.columns,
+      extraColumnIds,
+      projectWorkspaceStepSchemas(workspace, table),
+    );
+    refreshWorkspaceSchemaFields(workspace);
+
+    expect(countMissingColumnFieldLabels(workspace)).toBe(0);
+  });
 });
+
+function countMissingColumnFieldLabels(workspace: ReturnType<typeof createHeadlessWorkflowWorkspace>) {
+  return workspace
+    .getAllBlocks(false)
+    .flatMap((block) => block.inputList.flatMap((input) => input.fieldRow))
+    .filter((field) => typeof field.getText === 'function' && field.getText().includes('Missing column'))
+    .length;
+}
 
 function buildWorkspaceFromTable(table: Table, workflow: Workflow) {
   return buildWorkspaceFromColumnIds(
@@ -1805,6 +2105,17 @@ async function readFixtureTable(fileName: string): Promise<Table> {
 
   if (!table) {
     throw new Error(`Expected active table for fixture '${fileName}'.`);
+  }
+
+  return table;
+}
+
+function loadInlineCsvTable(text: string): Table {
+  const workbook = importCsvWorkbook('inline.csv', text);
+  const table = getActiveTable(workbook);
+
+  if (!table) {
+    throw new Error('Expected active table for inline CSV.');
   }
 
   return table;

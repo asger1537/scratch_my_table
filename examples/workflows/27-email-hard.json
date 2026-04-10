@@ -67,7 +67,13 @@
                   "name": "coalesce",
                   "args": [
                     {
-                      "kind": "value"
+                      "kind": "call",
+                      "name": "toString",
+                      "args": [
+                        {
+                          "kind": "value"
+                        }
+                      ]
                     },
                     {
                       "kind": "literal",

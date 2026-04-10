@@ -599,6 +599,27 @@ describe('workflow validation and execution', () => {
     expect(validation.issues.some((issue) => issue.code === 'missingColumn' && issue.stepId === 'step_rename_missing')).toBe(true);
   });
 
+  it('validates the 27-email-hard example against mixed phone values', async () => {
+    const examplePath = path.resolve(process.cwd(), 'examples', 'workflows', '27-email-hard.json');
+    const parsed = parseWorkflowPackageJson(await readFile(examplePath, 'utf8'));
+    const table = loadCsvTable([
+      'Customer ID,First Name,Last Name,Email,Email (2),Column,Status,Sign Up Date,Notes,Balance,VIP?,Phone',
+      'C-001,Alice,Ng,alice@example.com,alice.alt@example.com,north,active,02/01/2026,prefers email,120.5,TRUE,202-555-0141',
+      'C-002,Bob,Smith-Jones,,,west,,15/01/2026,,,FALSE,-695',
+    ].join('\r\n'));
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.workflowPackage?.workflows).toHaveLength(1);
+
+    const workflow = parsed.workflowPackage!.workflows[0];
+    const validation = validateWorkflowSemantics(workflow, table);
+    const execution = executeWorkflow(workflow, table);
+
+    expect(validation.valid).toBe(true);
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable).not.toBeNull();
+  });
+
   it('executes scoped rules with row conditions, multi-column targets, and explicit coalesce emptiness semantics', () => {
     const table = loadCsvTable('first_name,last_name,status,region\r\nAlice,Ng,,west\r\nAmy,Adams,  ,west\r\nBen,Ortiz,,east\r\n');
     const workflow: Workflow = {

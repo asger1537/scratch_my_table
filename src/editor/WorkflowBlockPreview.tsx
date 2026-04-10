@@ -7,6 +7,7 @@ import type { Workflow } from '../workflow';
 
 import { registerWorkflowBlocks } from './blocks';
 import { projectWorkspaceStepSchemas, workflowToWorkspace } from './mapping';
+import { refreshWorkspaceSchemaFields } from './schemaFieldRefresh';
 import { captureEditorSchemaSnapshot, collectWorkflowColumnIds, restoreEditorSchemaSnapshot, setEditorSchemaColumns } from './schemaOptions';
 
 interface WorkflowBlockPreviewProps {
@@ -70,6 +71,7 @@ export function WorkflowBlockPreview({ table, workflow }: WorkflowBlockPreviewPr
       setEditorSchemaColumns(table.schema.columns, extraColumnIds);
       workflowToWorkspace(workspace, workflow);
       setEditorSchemaColumns(table.schema.columns, extraColumnIds, projectWorkspaceStepSchemas(workspace, table));
+      refreshWorkspaceSchemaFields(workspace);
       resizePreviewWorkspace(workspace, true);
       setLoadError(null);
     } catch (error) {
