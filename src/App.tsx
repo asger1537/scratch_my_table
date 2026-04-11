@@ -11,6 +11,7 @@ import {
   normalizeGeminiModelSelection,
   replaceWorkflowSteps,
   runGeminiDraftTurn,
+  applyWorkflowSetDraftToPackage,
   type AIDraftIssue,
   type AIDebugTrace,
   type AIDraft,
@@ -34,6 +35,7 @@ import {
 } from './editor';
 import { executeWorkflow, type Workflow, type WorkflowExecutionResult, type WorkflowValidationIssue } from './workflow';
 import { createValidationWorkerTableSnapshot, validateWorkflowWithWorker } from './workflow/validationWorkerClient';
+import { getWorkflowInputTableForRunOrder, validateWorkflowPackageWithWorker } from './workflowPackageValidation';
 import { getActiveTable, getCellStyle, getOrderedRows, getReadableTextColor, setActiveTable, type ImportWarning, type Table, type Workbook } from './domain/model';
 import {
   buildCsvExportFileName,
@@ -136,6 +138,58 @@ function getWorkflowById(workflowPackage: WorkflowPackageV1 | null, workflowId: 
   return workflowPackage.workflows.find((workflow) => workflow.workflowId === workflowId) ?? null;
 }
 
+function getWorkflowRunContextWorkflowIds(workflowPackage: WorkflowPackageV1 | null, workflowId: string | null) {
+  if (!workflowPackage || !workflowId) {
+    return [];
+  }
+
+  const workflowIds = new Set(workflowPackage.workflows.map((workflow) => workflow.workflowId));
+  const runOrderIndex = workflowPackage.runOrderWorkflowIds.indexOf(workflowId);
+
+  if (runOrderIndex <= 0) {
+    return workflowIds.has(workflowId) ? [workflowId] : [];
+  }
+
+  return workflowPackage.runOrderWorkflowIds
+    .slice(0, runOrderIndex + 1)
+    .filter((orderedWorkflowId, index, orderedWorkflowIds) =>
+      workflowIds.has(orderedWorkflowId) && orderedWorkflowIds.indexOf(orderedWorkflowId) === index);
+}
+
+function getAIDraftStepCount(draft: AIDraft) {
+  return draft.kind === 'workflowSet'
+    ? draft.workflows.reduce((count, workflow) => count + workflow.steps.length, 0)
+    : draft.steps.length;
+}
+
+function formatAIDraftSummary(draft: AIDraft) {
+  if (draft.kind === 'workflowSet') {
+    const stepCount = getAIDraftStepCount(draft);
+    return `${draft.workflows.length} workflow${draft.workflows.length === 1 ? '' : 's'} with ${stepCount} total draft step${stepCount === 1 ? '' : 's'}`;
+  }
+
+  return `${draft.steps.length} draft step${draft.steps.length === 1 ? '' : 's'}`;
+}
+
+function formatWorkflowSetApplyMode(applyMode: Extract<AIDraft, { kind: 'workflowSet' }>['applyMode']) {
+  switch (applyMode) {
+    case 'append':
+      return 'append generated workflows';
+    case 'replaceActive':
+      return 'replace active workflow';
+    case 'replacePackage':
+      return 'replace package';
+  }
+}
+
+function formatWorkflowSetRunOrder(draft: Extract<AIDraft, { kind: 'workflowSet' }>) {
+  const workflowNameById = new Map(draft.workflows.map((workflow) => [workflow.workflowId, workflow.name] as const));
+
+  return draft.runOrderWorkflowIds
+    .map((workflowId) => workflowNameById.get(workflowId) ?? workflowId)
+    .join(' -> ');
+}
+
 function getWorkflowMetadata(workflow: Workflow | null): AuthoringWorkflowMetadata {
   if (!workflow) {
     return {
@@ -210,6 +264,17 @@ export default function App() {
   const selectedAIModel = normalizeGeminiModelSelection(aiSettings.model);
   const activeWorkflowId = workflowPackage?.activeWorkflowId ?? null;
   const activeWorkflow = getWorkflowById(workflowPackage, activeWorkflowId);
+  const activeWorkflowRunContextWorkflowIds = useMemo(
+    () => getWorkflowRunContextWorkflowIds(workflowPackage, activeWorkflowId),
+    [activeWorkflowId, workflowPackage],
+  );
+  const activeWorkflowInputTable = useMemo(
+    () =>
+      activeTable && workflowPackage && activeWorkflowId
+        ? getWorkflowInputTableForRunOrder(workflowPackage, activeWorkflowId, activeTable)
+        : activeTable,
+    [activeTable, activeWorkflowId, workflowPackage],
+  );
   const activeTabState = activeWorkflowId ? getWorkflowTabState(workflowTabStates, activeWorkflowId) : null;
   const activeEditorIssues = activeTabState?.editorIssues ?? [];
   const activeValidationIssues = activeTabState?.validationIssues ?? [];
@@ -223,7 +288,15 @@ export default function App() {
   const activeAIState = activeTabState?.aiState ?? createEmptyAIState();
   const visibleWarnings = workbook && activeTable ? [...workbook.importWarnings, ...activeTable.importWarnings] : [];
   const workflowExtraColumnIds = activeWorkflow ? collectWorkflowColumnIds(activeWorkflow) : [];
-  const canRunWorkflow = Boolean(activeTable && activeWorkflow && activeEditorIssues.length === 0 && activeValidationIssues.length === 0);
+  const canRunWorkflow = Boolean(
+    activeTable
+      && activeWorkflow
+      && activeWorkflowRunContextWorkflowIds.length > 0
+      && activeWorkflowRunContextWorkflowIds.every((workflowId) => {
+        const tabState = getWorkflowTabState(workflowTabStates, workflowId);
+        return tabState.editorIssues.length === 0 && tabState.validationIssues.length === 0;
+      }),
+  );
   const canRunSequence = Boolean(
     activeTable
       && workflowPackage
@@ -242,6 +315,7 @@ export default function App() {
       ? 'The current block workspace has issues. AI will receive the live block snapshot and the issue list, and it will draft from the last valid workflow snapshot. Applying the draft will replace the broken workspace.'
       : 'The current workflow has issues. AI will receive the live block snapshot and the issue list when drafting.';
   const aiDraftPreviewWorkflow = buildDraftPreviewWorkflow(activeWorkflow, activeAIState.draft);
+  const aiDraftPreviewTable = activeAIState.draft?.kind === 'workflowSet' ? activeTable : activeWorkflowInputTable;
   const aiDraftDebugJson = formatDraftStepsForDebug(activeAIState.draft);
   const exportableWorkflowIds = useMemo(
     () =>
@@ -329,19 +403,13 @@ export default function App() {
 
     validationDebounceTimerRef.current = window.setTimeout(() => {
       validationDebounceTimerRef.current = null;
-      void Promise.all(
-        workflowPackage.workflows.map(async (workflow) => ({
-          workflowId: workflow.workflowId,
-          issues: await validateWorkflowWithWorker(workflow, tableSnapshot, abortController.signal),
-        })),
-      )
-        .then((results) => {
+      void validateWorkflowPackageWithWorker(workflowPackage, tableSnapshot, abortController.signal)
+        .then((issuesByWorkflowId) => {
           if (requestId !== validationRequestIdRef.current) {
             return;
           }
 
           startTransition(() => {
-            const issuesByWorkflowId = new Map(results.map((result) => [result.workflowId, result.issues] as const));
             setWorkflowTabStates((current) =>
               Object.fromEntries(
                 workflowPackage.workflows.map((workflow) => {
@@ -558,16 +626,24 @@ export default function App() {
   }
 
   function handleRunWorkflow() {
-    if (!activeTable || !activeWorkflow) {
+    if (!activeTable || !workflowPackage || !activeWorkflow) {
       return;
     }
 
+    const workflowsToRun = activeWorkflowRunContextWorkflowIds.length > 1
+      ? flattenWorkflowSequence(workflowPackage.workflows, activeWorkflowRunContextWorkflowIds)
+      : {
+          workflow: activeWorkflow,
+          workflowIds: [activeWorkflow.workflowId],
+          workflowNames: [activeWorkflow.name],
+        };
+
     pendingRunResultScrollRef.current = true;
-    setExecutionResult(executeWorkflow(activeWorkflow, activeTable));
+    setExecutionResult(executeWorkflow(workflowsToRun.workflow, activeTable));
     setLastRunContext({
-      kind: 'workflow',
-      workflowIds: [activeWorkflow.workflowId],
-      workflowNames: [activeWorkflow.name],
+      kind: workflowsToRun.workflowIds.length > 1 ? 'sequence' : 'workflow',
+      workflowIds: workflowsToRun.workflowIds,
+      workflowNames: workflowsToRun.workflowNames,
     });
   }
 
@@ -782,12 +858,23 @@ export default function App() {
   }
 
   async function validateCandidateWorkflow(candidateWorkflow: Workflow) {
-    if (!activeTable) {
+    if (!activeWorkflowInputTable) {
+      return [];
+    }
+
+    const tableSnapshot = createValidationWorkerTableSnapshot(activeWorkflowInputTable);
+    return validateWorkflowWithWorker(candidateWorkflow, tableSnapshot);
+  }
+
+  async function validateCandidateWorkflowSet(candidateWorkflows: Workflow[], runOrderWorkflowIds: string[]) {
+    if (!activeTable || candidateWorkflows.length === 0) {
       return [];
     }
 
     const tableSnapshot = createValidationWorkerTableSnapshot(activeTable);
-    return validateWorkflowWithWorker(candidateWorkflow, tableSnapshot);
+    const flattenedSequence = flattenWorkflowSequence(candidateWorkflows, runOrderWorkflowIds);
+
+    return validateWorkflowWithWorker(flattenedSequence.workflow, tableSnapshot);
   }
 
   async function handleSendAIPrompt() {
@@ -795,6 +882,7 @@ export default function App() {
       return;
     }
 
+    const workflowContextTable = activeWorkflowInputTable ?? activeTable;
     const currentTabState = getWorkflowTabState(workflowTabStates, activeWorkflowId);
     const currentAIState = currentTabState.aiState;
     const userText = currentAIState.promptValue.trim();
@@ -822,7 +910,7 @@ export default function App() {
         thinkingEnabled: aiSettings.thinkingEnabled,
       },
       context: {
-        table: activeTable,
+        table: workflowContextTable,
         workflow: activeWorkflow,
         draft: currentAIState.draft,
         messages: currentAIState.messages,
@@ -869,7 +957,7 @@ export default function App() {
           thinkingEnabled: aiSettings.thinkingEnabled,
         },
         context: {
-          table: activeTable,
+          table: workflowContextTable,
           workflow: activeWorkflow,
           draft: currentAIState.draft,
           messages: currentAIState.messages,
@@ -882,6 +970,7 @@ export default function App() {
         },
         userText,
         validateCandidateWorkflow,
+        validateCandidateWorkflowSet,
         onProgress: (event) => {
           updateWorkflowAIState(activeWorkflowId, (state) => ({
             ...state,
@@ -910,7 +999,7 @@ export default function App() {
         assistantMessage: outcome.assistantMessage.text,
         debugTrace: outcome.debugTrace,
         ...(outcome.kind === 'draft'
-          ? { draftStepCount: outcome.draft.steps.length }
+          ? { draftStepCount: getAIDraftStepCount(outcome.draft), draftKind: outcome.draft.kind }
           : outcome.kind === 'invalidDraft'
             ? { validationIssues: outcome.validationIssues }
             : {}),
@@ -971,7 +1060,7 @@ export default function App() {
   }
 
   async function handleApplyAIDraft() {
-    if (!activeWorkflowId || !activeWorkflow) {
+    if (!activeWorkflowId || !activeWorkflow || !workflowPackage) {
       return;
     }
 
@@ -988,6 +1077,62 @@ export default function App() {
     }));
 
     try {
+      if (currentAIState.draft.kind === 'workflowSet') {
+        const applied = applyWorkflowSetDraftToPackage(workflowPackage, activeWorkflowId, currentAIState.draft);
+
+        if (!activeTable) {
+          throw new Error('Load a table before applying an AI workflow-set draft.');
+        }
+
+        const tableSnapshot = createValidationWorkerTableSnapshot(activeTable);
+        const issuesByWorkflowId = await validateWorkflowPackageWithWorker(applied.workflowPackage, tableSnapshot);
+        const issues = applied.workflowPackage.runOrderWorkflowIds.flatMap((workflowId) => issuesByWorkflowId.get(workflowId) ?? []);
+
+        if (issues.length > 0) {
+          updateWorkflowAIState(activeWorkflowId, (state) => ({
+            ...state,
+            draftIssues: issues.map(mapWorkflowValidationIssueToAIDraftIssue),
+            error: 'The current workflow-set draft no longer validates against the latest workflow context.',
+            isLoading: false,
+          }));
+          return;
+        }
+
+        setWorkflowPackage(applied.workflowPackage);
+        setWorkflowTabStates((current) =>
+          Object.fromEntries(
+            applied.workflowPackage.workflows.map((workflow) => {
+              const currentState = getWorkflowTabState(current, workflow.workflowId);
+              return [
+                workflow.workflowId,
+                {
+                  ...currentState,
+                  ...(workflow.workflowId === applied.workflowPackage.activeWorkflowId || workflow.workflowId === activeWorkflowId
+                    ? {
+                        editorIssues: [],
+                        validationIssues: [],
+                        stepBlockIdsByStepId: {},
+                        workspacePromptSnapshot: '',
+                        workspaceState: null,
+                        aiState: {
+                          ...currentState.aiState,
+                          draft: null,
+                          draftIssues: [],
+                          error: null,
+                          isLoading: false,
+                          promptValue: '',
+                        },
+                      }
+                    : {}),
+                },
+              ];
+            }),
+          ));
+        setWorkflowLoadVersion((version) => version + 1);
+        setIsAIDialogOpen(false);
+        return;
+      }
+
       const candidateWorkflow = replaceWorkflowSteps(activeWorkflow, currentAIState.draft.steps);
       const issues = await validateCandidateWorkflow(candidateWorkflow);
 
@@ -1056,6 +1201,7 @@ export default function App() {
       return;
     }
 
+    const workflowContextTable = activeWorkflowInputTable ?? activeTable;
     const currentTabState = getWorkflowTabState(workflowTabStates, activeWorkflowId);
     const currentAIState = currentTabState.aiState;
     const userText = currentAIState.promptValue.trim();
@@ -1069,7 +1215,7 @@ export default function App() {
             thinkingEnabled: aiSettings.thinkingEnabled,
           },
           context: {
-            table: activeTable,
+            table: workflowContextTable,
             workflow: activeWorkflow,
             draft: currentAIState.draft,
             messages: currentAIState.messages,
@@ -1288,7 +1434,7 @@ export default function App() {
                 onRunSequence={handleRunSequence}
                 onRunWorkflow={handleRunWorkflow}
                 onWorkspaceChange={handleEditorWorkspaceChange}
-                table={activeTable}
+                table={activeWorkflowInputTable ?? activeTable}
                 workflowTabs={
                   <WorkflowTabs
                     activeWorkflowId={workflowPackage.activeWorkflowId}
@@ -1476,7 +1622,7 @@ export default function App() {
             void handleSendAIPrompt();
           }}
           onSettingsChange={setAISettings}
-          previewTable={activeTable}
+          previewTable={aiDraftPreviewTable}
           workflowReady={canUseAI}
           workflowIssueNotice={aiWorkflowIssueNotice}
         />
@@ -2296,8 +2442,14 @@ function AIAssistantModal({
 
             {aiDraft ? (
               <div className="ai-draft-summary">
-                <strong>{aiDraft.steps.length} draft step{aiDraft.steps.length === 1 ? '' : 's'}</strong>
+                <strong>{formatAIDraftSummary(aiDraft)}</strong>
                 <p>{aiDraft.assistantMessage}</p>
+                {aiDraft.kind === 'workflowSet' ? (
+                  <div className="ai-draft-preview-note">
+                    <p>Apply mode: {formatWorkflowSetApplyMode(aiDraft.applyMode)}</p>
+                    <p>Run order: {formatWorkflowSetRunOrder(aiDraft)}</p>
+                  </div>
+                ) : null}
                 <p className="ai-draft-preview-note">Open a fullscreen, read-only Blockly view to inspect the full workflow after applying this draft.</p>
                 {aiDraft.assumptions.length > 0 ? (
                   <ul className="issue-list">
@@ -2361,7 +2513,7 @@ function AIAssistantModal({
               <details className="ai-debug-trace ai-draft-debug">
                 <summary>Draft JSON</summary>
                 <div className="ai-debug-trace__section">
-                  <strong>Canonical replacement steps</strong>
+                  <strong>{aiDraft.kind === 'workflowSet' ? 'Canonical workflow-set draft' : 'Canonical replacement steps'}</strong>
                   <textarea className="json-viewer ai-draft-debug__viewer" readOnly value={aiDraftDebugJson} />
                 </div>
               </details>
@@ -2400,13 +2552,13 @@ function AIAssistantModal({
                   <strong>Initial raw response</strong>
                   <textarea className="json-viewer ai-debug-trace__viewer" readOnly value={aiDebugTrace.initialRawText} />
                 </div>
-                {aiDebugTrace.initialCompiledSteps ? (
+                {aiDebugTrace.initialCompiledDraft ? (
                   <div className="ai-debug-trace__section">
-                    <strong>Initial compiled canonical steps</strong>
+                    <strong>Initial compiled canonical draft</strong>
                     <textarea
                       className="json-viewer ai-debug-trace__viewer"
                       readOnly
-                      value={`${JSON.stringify(aiDebugTrace.initialCompiledSteps, null, 2)}\n`}
+                      value={`${JSON.stringify(aiDebugTrace.initialCompiledDraft, null, 2)}\n`}
                     />
                   </div>
                 ) : null}
@@ -2441,7 +2593,7 @@ function AIAssistantModal({
                           repairPromptIssues: attempt.repairPromptIssues,
                           response: attempt.response,
                           rawText: attempt.rawText,
-                          compiledSteps: attempt.compiledSteps ?? null,
+                          compiledDraft: attempt.compiledDraft ?? null,
                           compilationIssues: attempt.compilationIssues,
                           validationIssues: attempt.validationIssues,
                         },

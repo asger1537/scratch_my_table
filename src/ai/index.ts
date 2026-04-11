@@ -1,6 +1,6 @@
 export { assignWorkflowStepIds, buildDraftPreviewWorkflow, formatDraftStepsForDebug, replaceWorkflowSteps, stripWorkflowStepIds } from './draft';
 export { appendAIDevLog } from './devLog';
-export { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps, mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
+export { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps, compileAuthoringResponse, mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
 export {
   DEFAULT_GEMINI_MODEL,
   GEMINI_MAX_OUTPUT_TOKENS,
@@ -18,16 +18,20 @@ export {
   summarizeWorkflowForPrompt,
 } from './prompt';
 export { runGeminiDraftTurn } from './session';
+export { applyWorkflowSetDraftToPackage } from './workflowSetDraft';
 export type {
   AIProgressEvent,
   GeminiClientLogEvent,
   AIDebugRepairAttempt,
   AIDebugTrace,
   AIDraft,
+  AISingleWorkflowDraft,
+  AIWorkflowSetDraft,
   AIMessage,
   AIRepairIssueSummary,
   AISettings,
   AIPromptContext,
+  CompiledAuthoringDraft,
   GeminiDraftTurnInput,
   GeminiDraftTurnResult,
   WorkflowStepInput,
@@ -35,5 +39,6 @@ export type {
 export type {
   AIDraftIssue,
   AuthoringDraftResponse,
+  AuthoringWorkflowSetApplyMode,
   AuthoringStepInput,
 } from './authoringIr';

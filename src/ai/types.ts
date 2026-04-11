@@ -1,7 +1,7 @@
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowStep } from '../workflow';
 
-import type { AIDraftIssue, AuthoringDraftResponse } from './authoringIr';
+import type { AIDraftIssue, AuthoringDraftResponse, AuthoringWorkflowSetApplyMode } from './authoringIr';
 
 export type WorkflowStepInput =
   WorkflowStep extends infer Step
@@ -48,7 +48,7 @@ export interface GeminiClientLogEvent {
   requestExport?: Record<string, unknown>;
   statusCode?: number;
   responseBody?: string;
-  responseMode?: 'clarify' | 'draft';
+  responseMode?: AuthoringDraftResponse['mode'];
   timestamp: string;
 }
 
@@ -64,7 +64,7 @@ export interface AIDebugRepairAttempt {
   repairPromptIssues: AIRepairIssueSummary[];
   rawText: string;
   response: AuthoringDraftResponse;
-  compiledSteps?: WorkflowStepInput[];
+  compiledDraft?: CompiledAuthoringDraft;
   compilationIssues: AIDraftIssue[];
   validationIssues: AIDraftIssue[];
 }
@@ -74,18 +74,54 @@ export interface AIDebugTrace {
   repaired: boolean;
   initialRawText: string;
   initialResponse: AuthoringDraftResponse;
-  initialCompiledSteps?: WorkflowStepInput[];
+  initialCompiledDraft?: CompiledAuthoringDraft;
   initialCompilationIssues: AIDraftIssue[];
   initialValidationIssues: AIDraftIssue[];
   repairAttempts: AIDebugRepairAttempt[];
 }
 
-export interface AIDraft {
+export interface CompiledAuthoringSingleWorkflowDraft {
+  kind: 'singleWorkflow';
+  steps: WorkflowStepInput[];
+}
+
+export interface CompiledAuthoringWorkflowSetDraft {
+  kind: 'workflowSet';
+  applyMode: AuthoringWorkflowSetApplyMode;
+  workflows: Array<{
+    workflowId: string;
+    name: string;
+    description?: string;
+    steps: WorkflowStepInput[];
+  }>;
+  runOrderWorkflowIds: string[];
+}
+
+export type CompiledAuthoringDraft =
+  | CompiledAuthoringSingleWorkflowDraft
+  | CompiledAuthoringWorkflowSetDraft;
+
+export interface AISingleWorkflowDraft {
+  kind: 'singleWorkflow';
   steps: WorkflowStep[];
   assumptions: string[];
   assistantMessage: string;
   validationIssues: AIDraftIssue[];
 }
+
+export interface AIWorkflowSetDraft {
+  kind: 'workflowSet';
+  applyMode: AuthoringWorkflowSetApplyMode;
+  workflows: Workflow[];
+  runOrderWorkflowIds: string[];
+  assumptions: string[];
+  assistantMessage: string;
+  validationIssues: AIDraftIssue[];
+}
+
+export type AIDraft =
+  | AISingleWorkflowDraft
+  | AIWorkflowSetDraft;
 
 export interface AIPromptIssue {
   code: string;
@@ -113,6 +149,6 @@ export interface GeminiDraftTurnInput {
 export interface GeminiDraftTurnResult {
   response: AuthoringDraftResponse;
   rawText: string;
-  compiledSteps?: WorkflowStepInput[];
+  compiledDraft?: CompiledAuthoringDraft;
   compilationIssues: AIDraftIssue[];
 }

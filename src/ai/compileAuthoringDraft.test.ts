@@ -1,9 +1,122 @@
 import { describe, expect, it } from 'vitest';
 
-import { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps } from './index';
+import { compileAuthoringDraft, compileAuthoringDraftToWorkflowSteps, compileAuthoringResponse } from './index';
 import type { AuthoringStepInput } from './authoringIr';
 
 describe('compileAuthoringDraft', () => {
+  it('compiles workflowSetDraft responses into deterministic compiler input groups', () => {
+    const compiled = compileAuthoringResponse({
+      mode: 'workflowSetDraft',
+      msg: 'Split into two workflows.',
+      ass: [],
+      applyMode: 'append',
+      workflows: [
+        {
+          workflowId: 'wf_prepare',
+          name: 'Prepare data',
+          steps: [
+            {
+              type: 'deriveColumn',
+              newColumn: {
+                columnId: 'col_email_clean',
+                displayName: 'Email Clean',
+              },
+              derive: {
+                kind: 'unary',
+                op: 'lower',
+                input: {
+                  kind: 'unary',
+                  op: 'trim',
+                  input: { source: 'column', columnId: 'col_email' },
+                },
+              },
+            },
+          ],
+        },
+        {
+          workflowId: 'wf_filter',
+          name: 'Filter data',
+          steps: [
+            {
+              type: 'filterRows',
+              mode: 'keep',
+              where: {
+                kind: 'compare',
+                op: 'contains',
+                left: { source: 'column', columnId: 'col_email_clean' },
+                right: { source: 'literal', value: '@' },
+              },
+            },
+          ],
+        },
+      ],
+      runOrderWorkflowIds: ['wf_prepare', 'wf_filter'],
+    });
+
+    expect(compiled.issues).toEqual([]);
+    expect(compiled.value).toEqual({
+      kind: 'workflowSet',
+      applyMode: 'append',
+      workflows: [
+        expect.objectContaining({
+          workflowId: 'wf_prepare',
+          name: 'Prepare data',
+          steps: [
+            expect.objectContaining({
+              type: 'deriveColumn',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          workflowId: 'wf_filter',
+          name: 'Filter data',
+          steps: [
+            expect.objectContaining({
+              type: 'filterRows',
+            }),
+          ],
+        }),
+      ],
+      runOrderWorkflowIds: ['wf_prepare', 'wf_filter'],
+    });
+  });
+
+  it('rejects invalid workflowSetDraft structure before canonical validation', () => {
+    const compiled = compileAuthoringResponse({
+      mode: 'workflowSetDraft',
+      msg: 'Bad split.',
+      ass: [],
+      applyMode: 'append',
+      workflows: [
+        {
+          workflowId: 'wf_duplicate',
+          name: 'Duplicate A',
+          steps: [
+            {
+              type: 'comment',
+              text: 'One.',
+            },
+          ],
+        },
+        {
+          workflowId: 'wf_duplicate',
+          name: 'Duplicate B',
+          steps: [],
+        },
+      ],
+      runOrderWorkflowIds: ['wf_duplicate', 'wf_missing'],
+    });
+
+    expect(compiled.value).toBeNull();
+    expect(compiled.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'authoringDuplicateWorkflowId' }),
+        expect.objectContaining({ code: 'authoringEmptyWorkflowSteps' }),
+        expect.objectContaining({ code: 'authoringMissingRunOrderWorkflow' }),
+      ]),
+    );
+  });
+
   it('lowers unary, binary, ternary, nary, and nullary value expressions into canonical calls', () => {
     const steps: AuthoringStepInput[] = [
       {

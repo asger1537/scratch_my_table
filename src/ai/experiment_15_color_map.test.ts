@@ -73,7 +73,7 @@ describeExperiment('Gemini experiment 15', () => {
           continue;
         }
 
-        const fillColor = extractEmailFallbackFillColor(turn.compiledSteps ?? []);
+        const fillColor = extractEmailFallbackFillColor(turn.compiledDraft?.kind === 'singleWorkflow' ? turn.compiledDraft.steps : []);
         runs.push({
           iteration,
           mode: 'draft',
@@ -160,4 +160,3 @@ function extractEmailFallbackFillColor(steps: WorkflowStepInput[]) {
 function escapeTable(value: string) {
   return value.replace(/\|/g, '\\|').replace(/\n/g, '<br/>');
 }
-

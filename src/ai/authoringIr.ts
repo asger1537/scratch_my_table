@@ -277,9 +277,42 @@ export type AuthoringStepInput =
   | AuthoringDeduplicateRowsStepInput
   | AuthoringSortRowsStepInput;
 
-export interface AuthoringDraftResponse {
-  mode: 'clarify' | 'draft';
+export type AuthoringWorkflowSetApplyMode =
+  | 'append'
+  | 'replaceActive'
+  | 'replacePackage';
+
+export interface AuthoringClarifyResponse {
+  mode: 'clarify';
   msg: string;
   ass: string[];
   steps: AuthoringStepInput[];
 }
+
+export interface AuthoringSingleWorkflowDraftResponse {
+  mode: 'draft';
+  msg: string;
+  ass: string[];
+  steps: AuthoringStepInput[];
+}
+
+export interface AuthoringWorkflowDraftInput {
+  workflowId: string;
+  name: string;
+  description?: string;
+  steps: AuthoringStepInput[];
+}
+
+export interface AuthoringWorkflowSetDraftResponse {
+  mode: 'workflowSetDraft';
+  msg: string;
+  ass: string[];
+  applyMode: AuthoringWorkflowSetApplyMode;
+  workflows: AuthoringWorkflowDraftInput[];
+  runOrderWorkflowIds: string[];
+}
+
+export type AuthoringDraftResponse =
+  | AuthoringClarifyResponse
+  | AuthoringSingleWorkflowDraftResponse
+  | AuthoringWorkflowSetDraftResponse;

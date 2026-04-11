@@ -1,5 +1,6 @@
 import type { Column } from '../domain/model';
 import { validateWorkflowSemantics, type WorkflowExpression, type WorkflowStep } from '../workflow';
+import { flattenWorkflowSequence } from '../workflowPackage';
 
 import type { AIDraftIssue } from './authoringIr';
 import { replaceWorkflowSteps } from './draft';
@@ -185,10 +186,22 @@ function evaluateFallbackThenNormalizeCompression(steps: WorkflowStep[]) {
 }
 
 function getAvailableSchemaColumns(context: AIPromptContext) {
-  const workflowForSchema = context.draft ? replaceWorkflowSteps(context.workflow, context.draft.steps) : context.workflow;
+  const workflowForSchema = getWorkflowForSchema(context);
   const validation = validateWorkflowSemantics(workflowForSchema, context.table);
 
   return validation.valid ? validation.finalSchema.columns : context.table.schema.columns;
+}
+
+function getWorkflowForSchema(context: AIPromptContext) {
+  if (!context.draft) {
+    return context.workflow;
+  }
+
+  if (context.draft.kind === 'workflowSet') {
+    return flattenWorkflowSequence(context.draft.workflows, context.draft.runOrderWorkflowIds).workflow;
+  }
+
+  return replaceWorkflowSteps(context.workflow, context.draft.steps);
 }
 
 function normalizeForMatch(value: string) {

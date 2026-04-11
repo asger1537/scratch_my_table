@@ -176,9 +176,13 @@ export function filterWorkflowToolboxEntries(
   query: string,
 ): Blockly.utils.toolbox.FlyoutItemInfoArray {
   const normalizedQuery = normalizeSearchQuery(query);
+  const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean);
   const visibleEntries = normalizedQuery.length === 0
     ? entries
-    : entries.filter((entry) => normalizeSearchText(entry).includes(normalizedQuery));
+    : entries.filter((entry) => {
+        const searchText = normalizeSearchText(entry);
+        return queryTokens.every((token) => searchText.includes(token));
+      });
 
   if (visibleEntries.length === 0) {
     return [
@@ -242,5 +246,5 @@ function normalizeSearchQuery(query: string) {
 }
 
 function normalizeSearchText(entry: ToolboxEntrySource) {
-  return (entry.searchText ?? entry.type).toLocaleLowerCase();
+  return `${entry.type} ${entry.searchText ?? ''}`.toLocaleLowerCase();
 }

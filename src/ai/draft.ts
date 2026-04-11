@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowStep } from '../workflow';
+import { flattenWorkflowSequence } from '../workflowPackage';
 
 import type { AIDraft, WorkflowStepInput } from './types';
 
@@ -38,6 +39,10 @@ export function buildDraftPreviewWorkflow(workflow: Workflow | null, draft: AIDr
     return null;
   }
 
+  if (draft.kind === 'workflowSet') {
+    return flattenWorkflowSequence(draft.workflows, draft.runOrderWorkflowIds).workflow;
+  }
+
   return replaceWorkflowSteps(workflow, draft.steps);
 }
 
@@ -46,7 +51,28 @@ export function stripWorkflowStepIds(steps: WorkflowStep[]): WorkflowStepInput[]
 }
 
 export function formatDraftStepsForDebug(draft: AIDraft | null) {
-  if (!draft || draft.steps.length === 0) {
+  if (!draft) {
+    return 'No AI draft steps.';
+  }
+
+  if (draft.kind === 'workflowSet') {
+    return `${JSON.stringify(
+      {
+        applyMode: draft.applyMode,
+        workflows: draft.workflows.map((workflow) => ({
+          workflowId: workflow.workflowId,
+          name: workflow.name,
+          ...(workflow.description ? { description: workflow.description } : {}),
+          steps: stripWorkflowStepIds(workflow.steps),
+        })),
+        runOrderWorkflowIds: draft.runOrderWorkflowIds,
+      },
+      null,
+      2,
+    )}\n`;
+  }
+
+  if (draft.steps.length === 0) {
     return 'No AI draft steps.';
   }
 

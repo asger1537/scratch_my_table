@@ -1,13 +1,14 @@
 import { readFile, writeFile } from 'node:fs/promises';
 
 import type { Table } from '../domain/model';
-import { validateWorkflowSemantics, validateWorkflowStructure, type Workflow } from '../workflow';
+import { validateWorkflowSemantics, validateWorkflowStructure } from '../workflow';
+import { flattenWorkflowSequence } from '../workflowPackage';
 
 import type { GeminiRequestExport } from './gemini';
 import {
   assignWorkflowStepIds,
   buildGeminiRequestExport,
-  compileAuthoringDraft,
+  compileAuthoringResponse,
   parseGeminiAuthoringResponse,
   type AIPromptContext,
   type AISettings,
@@ -38,7 +39,7 @@ export interface BenchmarkOpsExperimentResult {
   benchmarkId: string;
   iteration: number;
   status: BenchmarkOpsStatus;
-  mode?: 'clarify' | 'draft';
+  mode?: 'clarify' | 'draft' | 'workflowSetDraft';
   issueSummary?: string;
   rawTextPreview?: string;
 }
@@ -147,7 +148,7 @@ async function runBenchmarkIteration(input: {
     try {
       const parsed = parseGeminiAuthoringResponse(rawText);
 
-      if (parsed.mode !== 'draft') {
+      if (parsed.mode === 'clarify') {
         return {
           benchmarkId: input.benchmarkId,
           iteration: input.iteration,
@@ -158,7 +159,7 @@ async function runBenchmarkIteration(input: {
         };
       }
 
-      const compiled = compileAuthoringDraft(parsed.steps);
+      const compiled = compileAuthoringResponse(parsed);
 
       if (!compiled.value || compiled.issues.length > 0) {
         return {
@@ -171,26 +172,43 @@ async function runBenchmarkIteration(input: {
         };
       }
 
-      const workflow: Workflow = {
-        version: 2,
-        workflowId: `wf_${input.benchmarkId}_authoring_ir_experiment`,
-        name: `Authoring IR ${input.benchmarkId}`,
-        steps: assignWorkflowStepIds(compiled.value),
-      };
-      const structural = validateWorkflowStructure(workflow);
+      const workflows = compiled.value.kind === 'singleWorkflow'
+        ? [
+            {
+              version: 2 as const,
+              workflowId: `wf_${input.benchmarkId}_authoring_ir_experiment`,
+              name: `Authoring IR ${input.benchmarkId}`,
+              steps: assignWorkflowStepIds(compiled.value.steps),
+            },
+          ]
+        : compiled.value.workflows.map((workflow) => ({
+            version: 2 as const,
+            workflowId: workflow.workflowId,
+            name: workflow.name,
+            ...(workflow.description ? { description: workflow.description } : {}),
+            steps: assignWorkflowStepIds(workflow.steps),
+          }));
+      const structuralIssues = workflows.flatMap((workflow, workflowIndex) =>
+        validateWorkflowStructure(workflow).issues.map((issue) => ({
+          ...issue,
+          path: workflows.length === 1 ? issue.path : `workflows[${workflowIndex}].${issue.path}`,
+        })));
 
-      if (!structural.valid) {
+      if (structuralIssues.length > 0) {
         return {
           benchmarkId: input.benchmarkId,
           iteration: input.iteration,
           status: 'structural_failed',
           mode: parsed.mode,
           rawTextPreview: compact(rawText),
-          issueSummary: structural.issues.map((issue) => `${issue.path}: ${issue.message}`).join(' | '),
+          issueSummary: structuralIssues.map((issue) => `${issue.path}: ${issue.message}`).join(' | '),
         };
       }
 
-      const semantic = validateWorkflowSemantics(workflow, input.table);
+      const workflowForSemanticValidation = compiled.value.kind === 'singleWorkflow'
+        ? workflows[0]
+        : flattenWorkflowSequence(workflows, compiled.value.runOrderWorkflowIds).workflow;
+      const semantic = validateWorkflowSemantics(workflowForSemanticValidation, input.table);
 
       if (!semantic.valid) {
         return {

@@ -1,4 +1,4 @@
-import { compileAuthoringDraft } from './compileAuthoringDraft';
+import { compileAuthoringResponse } from './compileAuthoringDraft';
 import { type AuthoringDraftResponse } from './authoringIr';
 import { buildGeminiContents, buildGeminiSystemInstruction, type GeminiPromptOptions } from './prompt';
 import type { GeminiClientLogEvent, GeminiDraftTurnInput, GeminiDraftTurnResult } from './types';
@@ -153,7 +153,7 @@ export async function generateGeminiDraftTurn(
       responseMode: parsed.mode,
     });
 
-    if (parsed.mode !== 'draft') {
+    if (parsed.mode === 'clarify') {
       return {
         response: parsed,
         rawText,
@@ -161,12 +161,12 @@ export async function generateGeminiDraftTurn(
       };
     }
 
-    const compiled = compileAuthoringDraft(parsed.steps);
+    const compiled = compileAuthoringResponse(parsed);
 
     return {
       response: parsed,
       rawText,
-      ...(compiled.value ? { compiledSteps: compiled.value } : {}),
+      ...(compiled.value ? { compiledDraft: compiled.value } : {}),
       compilationIssues: compiled.issues,
     };
   } catch (error) {
@@ -238,10 +238,9 @@ export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftRes
   const mode = parsed.mode;
   const msg = parsed.msg;
   const ass = parsed.ass;
-  const steps = parsed.steps;
 
-  if (mode !== 'clarify' && mode !== 'draft') {
-    throw new Error('Gemini response must include mode "clarify" or "draft".');
+  if (mode !== 'clarify' && mode !== 'draft' && mode !== 'workflowSetDraft') {
+    throw new Error('Gemini response must include mode "clarify", "draft", or "workflowSetDraft".');
   }
 
   if (typeof msg !== 'string' || msg.trim() === '') {
@@ -251,6 +250,35 @@ export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftRes
   if (!Array.isArray(ass) || ass.some((value) => typeof value !== 'string')) {
     throw new Error('Gemini response must include ass as a string array.');
   }
+
+  if (mode === 'workflowSetDraft') {
+    const applyMode = parsed.applyMode;
+    const workflows = parsed.workflows;
+    const runOrderWorkflowIds = parsed.runOrderWorkflowIds;
+
+    if (applyMode !== 'append' && applyMode !== 'replaceActive' && applyMode !== 'replacePackage') {
+      throw new Error('Gemini workflowSetDraft responses must include applyMode "append", "replaceActive", or "replacePackage".');
+    }
+
+    if (!Array.isArray(workflows) || workflows.length === 0 || workflows.some((workflow) => !workflow || typeof workflow !== 'object' || Array.isArray(workflow))) {
+      throw new Error('Gemini workflowSetDraft responses must include a non-empty workflows object array.');
+    }
+
+    if (!Array.isArray(runOrderWorkflowIds) || runOrderWorkflowIds.some((workflowId) => typeof workflowId !== 'string')) {
+      throw new Error('Gemini workflowSetDraft responses must include runOrderWorkflowIds as a string array.');
+    }
+
+    return {
+      mode,
+      msg,
+      ass,
+      applyMode,
+      workflows: workflows as Extract<AuthoringDraftResponse, { mode: 'workflowSetDraft' }>['workflows'],
+      runOrderWorkflowIds: runOrderWorkflowIds as string[],
+    };
+  }
+
+  const steps = parsed.steps;
 
   if (!Array.isArray(steps) || steps.some((step) => !step || typeof step !== 'object' || Array.isArray(step))) {
     throw new Error('Gemini response must include steps as an object array.');
@@ -264,7 +292,7 @@ export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftRes
     mode,
     msg,
     ass,
-    steps: steps as AuthoringDraftResponse['steps'],
+    steps: steps as Extract<AuthoringDraftResponse, { mode: 'draft' | 'clarify' }>['steps'],
   };
 }
 

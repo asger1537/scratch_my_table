@@ -7,14 +7,16 @@ import type { WorkflowCallExpression, WorkflowExpressionFunctionName, WorkflowMa
 
 import type {
   AIDraftIssue,
+  AuthoringDraftResponse,
   AuthoringBooleanExpression,
   AuthoringCompareOp,
   AuthoringOperand,
   AuthoringStepInput,
+  AuthoringWorkflowDraftInput,
   AuthoringValueExpression,
   AuthoringValueInput,
 } from './authoringIr';
-import type { WorkflowStepInput } from './types';
+import type { CompiledAuthoringDraft, WorkflowStepInput } from './types';
 
 interface CompileExpressionScope {
   allowValue: boolean;
@@ -102,6 +104,37 @@ export function compileAuthoringDraft(
   };
 }
 
+export function compileAuthoringResponse(response: AuthoringDraftResponse): CompileResult<CompiledAuthoringDraft> {
+  if (response.mode === 'clarify') {
+    return {
+      value: null,
+      issues: [
+        makeIssue(
+          'authoringInvalidMode',
+          'Clarification responses do not contain a draft to compile.',
+          'mode',
+        ),
+      ],
+    };
+  }
+
+  if (response.mode === 'draft') {
+    const compiled = compileAuthoringDraft(response.steps);
+
+    return {
+      value: compiled.value
+        ? {
+            kind: 'singleWorkflow',
+            steps: compiled.value,
+          }
+        : null,
+      issues: compiled.issues,
+    };
+  }
+
+  return compileAuthoringWorkflowSetDraft(response);
+}
+
 export function compileAuthoringDraftToWorkflowSteps(authoringSteps: AuthoringStepInput[]) {
   const compiled = compileAuthoringDraft(authoringSteps);
 
@@ -110,6 +143,149 @@ export function compileAuthoringDraftToWorkflowSteps(authoringSteps: AuthoringSt
   }
 
   return compiled.value;
+}
+
+function compileAuthoringWorkflowSetDraft(
+  response: Extract<AuthoringDraftResponse, { mode: 'workflowSetDraft' }>,
+): CompileResult<CompiledAuthoringDraft> {
+  const issues: AIDraftIssue[] = [];
+
+  if (response.applyMode !== 'append' && response.applyMode !== 'replaceActive' && response.applyMode !== 'replacePackage') {
+    issues.push(makeIssue('authoringInvalidApplyMode', 'Workflow-set drafts require applyMode to be append, replaceActive, or replacePackage.', 'applyMode'));
+  }
+
+  if (!Array.isArray(response.workflows) || response.workflows.length === 0) {
+    issues.push(makeIssue('authoringEmptyWorkflowSet', 'Workflow-set drafts require at least one workflow.', 'workflows'));
+  }
+
+  if (!Array.isArray(response.runOrderWorkflowIds) || response.runOrderWorkflowIds.length === 0) {
+    issues.push(makeIssue('authoringInvalidRunOrder', 'Workflow-set drafts require a non-empty runOrderWorkflowIds array.', 'runOrderWorkflowIds'));
+  }
+
+  const workflowIds = new Set<string>();
+  const rawWorkflowIds = new Set<string>();
+  const compiledWorkflows: Extract<CompiledAuthoringDraft, { kind: 'workflowSet' }>['workflows'] = [];
+
+  if (Array.isArray(response.workflows)) {
+    response.workflows.forEach((workflow, index) => {
+      if (isRecord(workflow) && typeof workflow.workflowId === 'string' && workflow.workflowId.trim() !== '') {
+        const rawWorkflowId = workflow.workflowId.trim();
+
+        if (rawWorkflowIds.has(rawWorkflowId)) {
+          issues.push(makeIssue('authoringDuplicateWorkflowId', `Workflow ID '${rawWorkflowId}' is used more than once in this workflow-set draft.`, `workflows[${index}].workflowId`));
+        }
+
+        rawWorkflowIds.add(rawWorkflowId);
+      }
+
+      const compiledWorkflow = compileAuthoringWorkflow(workflow, `workflows[${index}]`, issues);
+
+      if (!compiledWorkflow) {
+        return;
+      }
+
+      if (workflowIds.has(compiledWorkflow.workflowId)) {
+        return;
+      }
+
+      workflowIds.add(compiledWorkflow.workflowId);
+      compiledWorkflows.push(compiledWorkflow);
+    });
+  }
+
+  if (Array.isArray(response.runOrderWorkflowIds)) {
+    const seenRunOrderIds = new Set<string>();
+
+    response.runOrderWorkflowIds.forEach((workflowId, index) => {
+      if (typeof workflowId !== 'string' || workflowId.trim() === '') {
+        issues.push(makeIssue('authoringInvalidRunOrder', 'Run-order workflow IDs must be non-empty strings.', `runOrderWorkflowIds[${index}]`));
+        return;
+      }
+
+      if (seenRunOrderIds.has(workflowId)) {
+        issues.push(makeIssue('authoringDuplicateRunOrderWorkflowId', `Run-order workflow ID '${workflowId}' appears more than once.`, `runOrderWorkflowIds[${index}]`));
+      }
+
+      seenRunOrderIds.add(workflowId);
+
+      if (!workflowIds.has(workflowId)) {
+        issues.push(makeIssue('authoringMissingRunOrderWorkflow', `Run-order workflow '${workflowId}' does not exist in the workflow-set draft.`, `runOrderWorkflowIds[${index}]`));
+      }
+    });
+  }
+
+  if (issues.length > 0) {
+    return {
+      value: null,
+      issues,
+    };
+  }
+
+  return {
+    value: {
+      kind: 'workflowSet',
+      applyMode: response.applyMode,
+      workflows: compiledWorkflows,
+      runOrderWorkflowIds: response.runOrderWorkflowIds,
+    },
+    issues: [],
+  };
+}
+
+function compileAuthoringWorkflow(
+  workflow: unknown,
+  path: string,
+  issues: AIDraftIssue[],
+): Extract<CompiledAuthoringDraft, { kind: 'workflowSet' }>['workflows'][number] | null {
+  if (!isRecord(workflow)) {
+    issues.push(makeIssue('authoringType', 'Each workflow-set workflow must be an object.', path));
+    return null;
+  }
+
+  const workflowId = workflow.workflowId;
+  const name = workflow.name;
+  const description = workflow.description;
+  const steps = workflow.steps;
+
+  if (typeof workflowId !== 'string' || workflowId.trim() === '') {
+    issues.push(makeIssue('authoringMissingField', 'Workflow-set workflows require a non-empty workflowId.', `${path}.workflowId`));
+  }
+
+  if (typeof name !== 'string' || name.trim() === '') {
+    issues.push(makeIssue('authoringMissingField', 'Workflow-set workflows require a non-empty name.', `${path}.name`));
+  }
+
+  if (description !== undefined && typeof description !== 'string') {
+    issues.push(makeIssue('authoringType', 'Workflow-set workflow description must be a string when provided.', `${path}.description`));
+  }
+
+  if (!Array.isArray(steps) || steps.length === 0) {
+    issues.push(makeIssue('authoringEmptyWorkflowSteps', 'Workflow-set workflows require a non-empty steps array.', `${path}.steps`));
+    return null;
+  }
+
+  const compiled = compileAuthoringDraft(steps as AuthoringWorkflowDraftInput['steps']);
+
+  if (compiled.issues.length > 0 || !compiled.value) {
+    issues.push(
+      ...compiled.issues.map((issue) => ({
+        ...issue,
+        path: prefixPath(path, issue.path),
+      })),
+    );
+    return null;
+  }
+
+  if (typeof workflowId !== 'string' || workflowId.trim() === '' || typeof name !== 'string' || name.trim() === '') {
+    return null;
+  }
+
+  return {
+    workflowId: workflowId.trim(),
+    name: name.trim(),
+    ...(typeof description === 'string' && description.trim() !== '' ? { description: description.trim() } : {}),
+    steps: compiled.value,
+  };
 }
 
 export function mapWorkflowValidationIssueToAIDraftIssue(issue: WorkflowValidationIssue): AIDraftIssue {
@@ -876,4 +1052,16 @@ function makeIssue(code: string, message: string, path: string): AIDraftIssue {
     path,
     phase: 'authoring',
   };
+}
+
+function prefixPath(basePath: string, nestedPath: string) {
+  if (nestedPath === '$') {
+    return basePath;
+  }
+
+  if (nestedPath.startsWith('[')) {
+    return `${basePath}${nestedPath}`;
+  }
+
+  return `${basePath}.${nestedPath}`;
 }

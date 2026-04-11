@@ -1,4 +1,5 @@
 import { validateWorkflowSemantics, type Workflow } from '../workflow';
+import { flattenWorkflowSequence } from '../workflowPackage';
 
 import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
 import type { AIDraft, AIRepairIssueSummary, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
@@ -429,6 +430,112 @@ const CURATED_EXAMPLES = [
       steps: [],
     },
   },
+  {
+    user: 'Normalize contact fields, derive customer tiers, highlight risk, clean up helpers, filter contactable rows, and sort the final output.',
+    assistant: {
+      mode: 'clarify',
+      msg: 'This is a large multi-part task. I recommend splitting it into workflows named "Contact normalization", "Customer classification", and "Final cleanup and ordering", run in that order. Should I append these workflows or replace the active workflow/package?',
+      ass: [],
+      steps: [],
+    },
+  },
+  {
+    user: 'Yes, split it and append the workflows.',
+    assistant: {
+      mode: 'workflowSetDraft',
+      msg: 'Create a three-workflow sequence for contact cleanup, classification, and final presentation.',
+      ass: [],
+      applyMode: 'append',
+      workflows: [
+        {
+          workflowId: 'wf_contact_normalization',
+          name: 'Contact normalization',
+          description: 'Normalize contact columns and remove helper contact columns.',
+          steps: [
+            {
+              type: 'comment',
+              text: 'Normalize Email.',
+            },
+            {
+              type: 'scopedRule',
+              columnIds: ['col_email'],
+              defaultPatch: {
+                value: {
+                  kind: 'unary',
+                  op: 'lower',
+                  input: {
+                    kind: 'unary',
+                    op: 'trim',
+                    input: { source: 'value' },
+                  },
+                },
+              },
+            },
+          ],
+        },
+        {
+          workflowId: 'wf_customer_classification',
+          name: 'Customer classification',
+          description: 'Derive customer-facing classification columns.',
+          steps: [
+            {
+              type: 'deriveColumn',
+              newColumn: {
+                columnId: 'col_status_label',
+                displayName: 'Status Label',
+              },
+              derive: {
+                kind: 'match',
+                subject: {
+                  kind: 'unary',
+                  op: 'lower',
+                  input: {
+                    kind: 'unary',
+                    op: 'trim',
+                    input: { source: 'column', columnId: 'col_status' },
+                  },
+                },
+                cases: [
+                  {
+                    kind: 'when',
+                    when: {
+                      kind: 'compare',
+                      op: 'eq',
+                      left: { source: 'caseValue' },
+                      right: { source: 'literal', value: 'active' },
+                    },
+                    then: { source: 'literal', value: 'Active customer' },
+                  },
+                  {
+                    kind: 'otherwise',
+                    then: { source: 'literal', value: 'Other' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          workflowId: 'wf_final_cleanup_ordering',
+          name: 'Final cleanup and ordering',
+          description: 'Filter and sort the final table.',
+          steps: [
+            {
+              type: 'filterRows',
+              mode: 'keep',
+              where: {
+                kind: 'compare',
+                op: 'contains',
+                left: { source: 'column', columnId: 'col_email' },
+                right: { source: 'literal', value: '@' },
+              },
+            },
+          ],
+        },
+      ],
+      runOrderWorkflowIds: ['wf_contact_normalization', 'wf_customer_classification', 'wf_final_cleanup_ordering'],
+    },
+  },
 ] as const;
 
 export function buildGeminiSystemInstruction(
@@ -438,7 +545,7 @@ export function buildGeminiSystemInstruction(
   const availableSchemaLines = getAvailableSchemaPromptLines(context);
   const workflowSummary = summarizeWorkflowSteps(context.workflow);
   const workflowSteps = context.workflow.steps.length > 0 ? JSON.stringify(stripWorkflowStepIds(context.workflow.steps), null, 2) : '(no steps yet)';
-  const draftSummary = context.draft ? JSON.stringify(stripWorkflowStepIds(context.draft.steps), null, 2) : '(no draft yet)';
+  const draftSummary = context.draft ? JSON.stringify(formatDraftForPrompt(context.draft), null, 2) : '(no draft yet)';
   const currentIssues = context.currentIssues.length > 0
     ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
     : ['- (none)'];
@@ -446,27 +553,44 @@ export function buildGeminiSystemInstruction(
     ? 'The canonical workflow summary below is the last valid snapshot because the live block workspace currently has issues. Use the live workspace snapshot and issue list to infer the intended fix. Applying the draft will replace the broken workspace.'
     : 'The canonical workflow summary below reflects the current valid workflow context.';
   const draftSemanticsNote = context.draft
-    ? 'There is an existing AI draft. Return the FULL updated authoring step list that should replace that AI draft.'
-    : 'There is no AI draft yet. Return the FULL updated authoring step list that should replace the current workflow.';
+    ? context.draft.kind === 'workflowSet'
+      ? 'There is an existing AI workflow-set draft. Return the FULL updated workflow-set draft that should replace that AI draft.'
+      : 'There is an existing AI draft. Return the FULL updated authoring step list that should replace that AI draft.'
+    : 'There is no AI draft yet. Return the FULL updated authoring step list or workflow-set draft that should replace the current workflow context.';
   const includeCuratedExamples = options.includeCuratedExamples !== false;
   const promptSections = [
     'You are an expert Scratch My Table copilot.',
     'Translate the user request into the Scratch My Table AI authoring IR.',
     'Local code will compile your authoring IR into canonical Workflow IR v2 and then run structural and semantic validation.',
     'Return JSON only. Do not use markdown fences.',
-    'Do not return canonical Workflow IR v2, Blockly data, workflow envelopes, or step IDs.',
+    'Do not return canonical Workflow IR v2, Blockly data, workflow-package envelopes, or step IDs.',
     'Never emit canonical { "kind": "call" }, { "kind": "column" }, { "kind": "value" }, or { "kind": "caseValue" } nodes directly. Use the authoring shapes below.',
     workflowContextNote,
     draftSemanticsNote,
     '',
     'Response contract:',
-    '- mode: "clarify" or "draft"',
+    '- mode: "clarify", "draft", or "workflowSetDraft"',
     '- msg: short natural-language summary',
     '- ass: array of short strings',
-    '- steps: ordered authoring steps',
-    '- Always include all four fields.',
-    '- Use steps: [] only when mode is "clarify".',
+    '- For clarify and draft, include steps: ordered authoring steps. Use steps: [] only when mode is "clarify".',
+    '- For workflowSetDraft, include applyMode, workflows, and runOrderWorkflowIds instead of top-level steps.',
     '- Never return mode "draft" with an empty steps array.',
+    '- Never return mode "workflowSetDraft" with empty workflows, empty workflow steps, or empty runOrderWorkflowIds.',
+    '',
+    'Workflow-set draft shape:',
+    '- { "mode": "workflowSetDraft", "msg": "...", "ass": [], "applyMode": "append"|"replaceActive"|"replacePackage", "workflows": [<workflow draft>, ...], "runOrderWorkflowIds": ["wf_a", "wf_b"] }',
+    '- workflow draft: { "workflowId": "wf_short_slug", "name": "Readable name", "description"?: "...", "steps": [<authoring step>, ...] }',
+    '- runOrderWorkflowIds must contain workflow IDs from workflows in execution order.',
+    '- append keeps existing workflows and adds the generated workflows.',
+    '- replaceActive replaces the active workflow with the first generated workflow and adds the remaining generated workflows.',
+    '- replacePackage replaces the whole workflow package with the generated workflows.',
+    '',
+    'Multi-workflow split behavior:',
+    '- If a request is large, has several independent concerns, or has many phases such as normalize, derive/classify, format, cleanup, filter, dedupe, and sort, prefer proposing a workflow split first.',
+    '- When proposing a split, return mode "clarify" and name the proposed workflows, their run order, and ask whether to append them or replace existing workflow(s).',
+    '- If the user clearly approves a split and chooses append, replace active, or replace package, return mode "workflowSetDraft".',
+    '- If the user explicitly asks for one workflow, return mode "draft" even for large requests.',
+    '- Workflow-set drafts are validated as one run-order sequence, so later workflows may use columns created by earlier workflows.',
     '',
     'Authoring step shapes:',
     '- comment: { "type": "comment", "text": "..." }',
@@ -562,6 +686,7 @@ export function buildGeminiSystemInstruction(
     '- Use only columns that are listed in the current schema, plus new columns that you derive earlier in your own steps.',
     '- Use column ids exactly as provided.',
     '- Keep steps in execution order.',
+    '- Inside workflowSetDraft, keep each workflow focused and keep the generated run order in dependency order.',
     '- If a later step drops a column, any logic that depends on that column must happen before the drop or be folded into an earlier step.',
     '- Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment. Do not refuse mixed columns just because they are mixed.',
     '- In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds. If types differ, split into separate scopedRule steps per column group.',
@@ -633,8 +758,8 @@ export function buildRepairUserMessage(
 
   return [
     'Your previous draft did not validate locally.',
-    'Rewrite the FULL authoring step list so it satisfies these issues.',
-    'Return JSON only with keys: mode, msg, ass, steps.',
+    'Rewrite the FULL authoring draft so it satisfies these issues.',
+    'Return JSON only with the same mode shape as the previous invalid response: draft uses mode/msg/ass/steps; workflowSetDraft uses mode/msg/ass/applyMode/workflows/runOrderWorkflowIds.',
     'Return authoring IR only. Do not return canonical Workflow IR v2, canonical call nodes, or step IDs.',
     'Use authoring operands only: { "source": "column" }, { "source": "value" }, { "source": "caseValue" }, { "source": "literal" }.',
     'Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.',
@@ -657,8 +782,8 @@ export function buildRepairUserMessage(
     'If the user explicitly names a column like Phone or Email (2), use that exact provided column id.',
     'If the original request depends on a source column that is not listed in the current schema, do not substitute a different column just because it seems similar.',
     'If the user names match outputs like "email", "sms", and "none", include those named outputs explicitly.',
-    'Do not ask a clarification question in this repair turn. Return mode "draft".',
-    'Return at least one step.',
+    'Do not ask a clarification question in this repair turn. Return mode "draft" or "workflowSetDraft".',
+    'Return at least one step for every generated workflow.',
     '',
     'Previous invalid response:',
     previousRawText,
@@ -681,10 +806,22 @@ export function buildRepairUserMessage(
 }
 
 function getAvailableSchemaContextWorkflow(context: AIPromptContext) {
-  const workflowForSchema = context.draft ? replaceWorkflowSteps(context.workflow, context.draft.steps) : context.workflow;
+  const workflowForSchema = getWorkflowForPromptSchema(context);
   const validation = validateWorkflowSemantics(workflowForSchema, context.table);
 
   return validation.valid ? validation.finalSchema.columns : context.table.schema.columns;
+}
+
+function getWorkflowForPromptSchema(context: AIPromptContext) {
+  if (!context.draft) {
+    return context.workflow;
+  }
+
+  if (context.draft.kind === 'workflowSet') {
+    return flattenWorkflowSequence(context.draft.workflows, context.draft.runOrderWorkflowIds).workflow;
+  }
+
+  return replaceWorkflowSteps(context.workflow, context.draft.steps);
 }
 
 function getAvailableSchemaPromptLines(context: AIPromptContext) {
@@ -694,8 +831,26 @@ function getAvailableSchemaPromptLines(context: AIPromptContext) {
 export function summarizeWorkflowForPrompt(workflow: Workflow, draft: AIDraft | null) {
   return {
     workflow: summarizeWorkflowSteps(workflow),
-    draft: draft ? stripWorkflowStepIds(draft.steps) : [],
+    draft: draft ? formatDraftForPrompt(draft) : [],
   };
+}
+
+function formatDraftForPrompt(draft: AIDraft) {
+  if (draft.kind === 'workflowSet') {
+    return {
+      mode: 'workflowSetDraft',
+      applyMode: draft.applyMode,
+      workflows: draft.workflows.map((workflow) => ({
+        workflowId: workflow.workflowId,
+        name: workflow.name,
+        ...(workflow.description ? { description: workflow.description } : {}),
+        steps: stripWorkflowStepIds(workflow.steps),
+      })),
+      runOrderWorkflowIds: draft.runOrderWorkflowIds,
+    };
+  }
+
+  return stripWorkflowStepIds(draft.steps);
 }
 
 export function stripDraftStepIds(steps: WorkflowStepInput[] | Workflow['steps']) {

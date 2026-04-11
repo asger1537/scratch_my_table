@@ -164,7 +164,7 @@ describe('AI workflow copilot helpers', () => {
       context,
     );
 
-    expect(repairMessage).toContain('Return JSON only with keys: mode, msg, ass, steps.');
+    expect(repairMessage).toContain('Return JSON only with the same mode shape as the previous invalid response: draft uses mode/msg/ass/steps; workflowSetDraft uses mode/msg/ass/applyMode/workflows/runOrderWorkflowIds.');
     expect(repairMessage).toContain('Return authoring IR only.');
     expect(repairMessage).toContain('Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.');
     expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.');
@@ -366,8 +366,27 @@ describe('AI workflow copilot helpers', () => {
       steps: [{ type: 'dropColumns', columnIds: ['col_email_2'] }],
     });
 
+    expect(
+      parseGeminiAuthoringResponse(
+        '{"mode":"workflowSetDraft","msg":"Split it.","ass":[],"applyMode":"append","workflows":[{"workflowId":"wf_prepare","name":"Prepare","steps":[{"type":"comment","text":"Prepare data."}]}],"runOrderWorkflowIds":["wf_prepare"]}',
+      ),
+    ).toEqual({
+      mode: 'workflowSetDraft',
+      msg: 'Split it.',
+      ass: [],
+      applyMode: 'append',
+      workflows: [
+        {
+          workflowId: 'wf_prepare',
+          name: 'Prepare',
+          steps: [{ type: 'comment', text: 'Prepare data.' }],
+        },
+      ],
+      runOrderWorkflowIds: ['wf_prepare'],
+    });
+
     expect(() => parseGeminiAuthoringResponse('{"mode":"maybe","msg":"Done.","ass":[],"steps":[]}')).toThrow(
-      'Gemini response must include mode "clarify" or "draft".',
+      'Gemini response must include mode "clarify", "draft", or "workflowSetDraft".',
     );
     expect(() => parseGeminiAuthoringResponse('{"mode":"clarify","msg":"   ","ass":[],"steps":[]}')).toThrow(
       'Gemini response must include a non-empty msg string.',
@@ -490,11 +509,14 @@ describe('AI workflow copilot helpers', () => {
       }),
     );
     expect(result.compilationIssues).toEqual([]);
-    expect(result.compiledSteps).toEqual([
-      expect.objectContaining({
-        type: 'deriveColumn',
-      }),
-    ]);
+    expect(result.compiledDraft).toEqual({
+      kind: 'singleWorkflow',
+      steps: [
+        expect.objectContaining({
+          type: 'deriveColumn',
+        }),
+      ],
+    });
   });
 
   it('compiles authoring drafts with scopedRule normalization, dropColumns, and filterRows into canonical steps', async () => {
@@ -568,9 +590,11 @@ describe('AI workflow copilot helpers', () => {
     );
 
     expect(result.compilationIssues).toEqual([]);
-    expect(result.compiledSteps).toEqual([
-      {
-        type: 'scopedRule',
+    expect(result.compiledDraft).toEqual({
+      kind: 'singleWorkflow',
+      steps: [
+        {
+          type: 'scopedRule',
         columnIds: ['col_email'],
         cases: [
           {
@@ -616,8 +640,9 @@ describe('AI workflow copilot helpers', () => {
             { kind: 'literal', value: '@' },
           ],
         },
-      },
-    ]);
+        },
+      ],
+    });
   });
 
   it('logs request export and raw API error payload when Gemini rejects the request', async () => {
@@ -1192,6 +1217,109 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
+  it('validates workflowSetDraft responses through the sequence-aware workflow-set callback', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'workflowSetDraft',
+            msg: 'Split contact cleanup into prepare and filter workflows.',
+            ass: [],
+            applyMode: 'append',
+            workflows: [
+              {
+                workflowId: 'wf_prepare_contacts',
+                name: 'Prepare contacts',
+                steps: [
+                  {
+                    type: 'deriveColumn',
+                    newColumn: {
+                      columnId: 'col_email_clean',
+                      displayName: 'Email Clean',
+                    },
+                    derive: {
+                      kind: 'unary',
+                      op: 'lower',
+                      input: {
+                        kind: 'unary',
+                        op: 'trim',
+                        input: { source: 'column', columnId: 'col_email' },
+                      },
+                    },
+                  },
+                ],
+              },
+              {
+                workflowId: 'wf_filter_contacts',
+                name: 'Filter contacts',
+                steps: [
+                  {
+                    type: 'filterRows',
+                    mode: 'keep',
+                    where: {
+                      kind: 'compare',
+                      op: 'contains',
+                      left: { source: 'column', columnId: 'col_email_clean' },
+                      right: { source: 'literal', value: '@' },
+                    },
+                  },
+                ],
+              },
+            ],
+            runOrderWorkflowIds: ['wf_prepare_contacts', 'wf_filter_contacts'],
+          }),
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+    const validateCandidateWorkflowSet = vi.fn<(_workflows: Workflow[], _runOrderWorkflowIds: string[]) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Split this into contact preparation and contact filtering workflows, and append them.',
+      validateCandidateWorkflow,
+      validateCandidateWorkflowSet,
+      fetchFn,
+    });
+
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(validateCandidateWorkflowSet).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          workflowId: 'wf_prepare_contacts',
+          steps: [
+            expect.objectContaining({
+              id: 'step_derive_column_1',
+              type: 'deriveColumn',
+            }),
+          ],
+        }),
+        expect.objectContaining({
+          workflowId: 'wf_filter_contacts',
+          steps: [
+            expect.objectContaining({
+              id: 'step_filter_rows_1',
+              type: 'filterRows',
+            }),
+          ],
+        }),
+      ],
+      ['wf_prepare_contacts', 'wf_filter_contacts'],
+    );
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        draft: expect.objectContaining({
+          kind: 'workflowSet',
+          applyMode: 'append',
+          runOrderWorkflowIds: ['wf_prepare_contacts', 'wf_filter_contacts'],
+        }),
+      }),
+    );
+  });
+
   it('builds draft preview workflows from compiled canonical drafts and formats debug JSON', () => {
     const currentWorkflow: Workflow = {
       version: 2,
@@ -1220,6 +1348,7 @@ describe('AI workflow copilot helpers', () => {
       ],
     };
     const draft = {
+      kind: 'singleWorkflow' as const,
       assistantMessage: 'Replace the workflow with a filter.',
       assumptions: ['Using the known email column.'],
       validationIssues: [],
