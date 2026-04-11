@@ -6,17 +6,22 @@ import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
 import { evaluateDraftQuality } from './evaluateDraftQuality';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
+import { selectRelevantValidationIssues as selectRelevantRepairValidationIssues, selectRepairPromptIssues } from './repairIssues';
 import type { AIDraftIssue } from './authoringIr';
 import type {
+  AIDebugRepairAttempt,
   AIProgressEvent,
   AIDebugTrace,
   AIDraft,
   AIMessage,
   GeminiClientLogEvent,
+  GeminiDraftTurnResult,
   WorkflowStepInput,
   AISettings,
   AIPromptContext,
 } from './types';
+
+const MAX_REPAIR_ATTEMPTS = 2;
 
 export interface RunGeminiDraftTurnOptions {
   settings: AISettings;
@@ -89,8 +94,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         initialResponse: initialTurn.response,
         initialCompilationIssues: [],
         initialValidationIssues: [],
-        repairCompilationIssues: [],
-        repairValidationIssues: [],
+        repairAttempts: [],
       },
     };
   }
@@ -103,7 +107,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     initialTurn.compiledSteps,
     options.validateCandidateWorkflow,
   );
-  const initialRelevantIssues = selectRelevantValidationIssues(initialValidation.issues);
+  const initialRelevantIssues = selectRelevantRepairValidationIssues(initialValidation.issues);
 
   if (initialValidation.issues.length === 0) {
     emitProgress(options, 'complete', 'Initial AI draft validated successfully.');
@@ -121,8 +125,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
         ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
         initialCompilationIssues: initialTurn.compilationIssues,
         initialValidationIssues: [],
-        repairCompilationIssues: [],
-        repairValidationIssues: [],
+        repairAttempts: [],
       },
       draft: {
         steps: initialValidation.steps,
@@ -133,137 +136,183 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
     };
   }
 
-  emitProgress(
-    options,
-    'repair_requested',
-    `Initial draft failed validation with ${formatIssueSummary(initialValidation.issues.length, initialRelevantIssues.length)}. Requesting one repair.`,
-  );
-  const repairUserMessage = createMessage(
-    'user',
-    buildRepairUserMessage(
-      initialTurn.rawText,
-      initialRelevantIssues.map((issue) => ({
-        code: issue.code,
-        path: issue.path,
-        message: issue.message,
-        stepId: issue.stepId,
-      })),
-      options.context,
-    ),
-  );
-  emitProgress(options, 'request_repair', 'Sending repair request to Gemini.');
-  const repairTurn = await generateGeminiDraftTurn(
-    {
-      settings: options.settings,
-      context: {
-        ...options.context,
-        messages: [
-          ...options.context.messages,
-          userMessage,
-          createMessage('assistant', initialTurn.rawText),
-        ],
-      },
-      userMessage: repairUserMessage,
-      phase: 'repair',
-      onLogEvent: options.onGeminiLogEvent,
-    },
-    options.fetchFn,
-  );
-  emitProgress(options, 'response_repair', `Received repair response in mode "${repairTurn.response.mode}".`);
+  const repairAttempts: AIDebugRepairAttempt[] = [];
+  let previousRawText = initialTurn.rawText;
+  let previousResponse = initialTurn.response;
+  let previousValidation = initialValidation;
+  let previousRelevantIssues = initialRelevantIssues;
+  let repairMessages = [
+    ...options.context.messages,
+    userMessage,
+    createMessage('assistant', initialTurn.rawText),
+  ];
 
-  if (repairTurn.response.mode !== 'draft') {
-    emitProgress(options, 'complete', 'Repair response did not return a draft.');
-    return {
-      kind: 'invalidDraft',
-      userMessage,
-      assistantMessage: createMessage('assistant', repairTurn.response.msg),
-      response: repairTurn.response,
-      repaired: true,
-      validationIssues: initialRelevantIssues,
-      debugTrace: {
-        outcomeKind: 'invalidDraft',
-        repaired: true,
-        initialRawText: initialTurn.rawText,
-        initialResponse: initialTurn.response,
-        ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
-        initialCompilationIssues: initialTurn.compilationIssues,
-        initialValidationIssues: initialRelevantIssues,
-        repairRawText: repairTurn.rawText,
-        repairResponse: repairTurn.response,
-        ...(repairTurn.compiledSteps ? { repairCompiledSteps: repairTurn.compiledSteps } : {}),
-        repairCompilationIssues: repairTurn.compilationIssues,
-        repairValidationIssues: [],
-      },
-    };
-  }
+  for (let attempt = 1; attempt <= MAX_REPAIR_ATTEMPTS; attempt += 1) {
+    const repairPromptIssues = selectRepairPromptIssues(previousValidation.issues, previousValidation.steps);
 
-  emitProgress(options, 'validate_repair', 'Compiling and validating the repaired draft.');
-  const repairedValidation = await validateDraftResponse(
-    options.context,
-    options.userText,
-    repairTurn.compilationIssues,
-    repairTurn.compiledSteps,
-    options.validateCandidateWorkflow,
-  );
-  const repairRelevantIssues = selectRelevantValidationIssues(repairedValidation.issues);
-
-  if (repairedValidation.issues.length > 0) {
     emitProgress(
       options,
-      'complete',
-      `Repaired draft still failed validation with ${formatIssueSummary(repairedValidation.issues.length, repairRelevantIssues.length)}.`,
+      'repair_requested',
+      `${attempt === 1 ? 'Initial draft' : `Repair ${attempt - 1}`} failed validation with ${formatIssueSummary(previousValidation.issues.length, repairPromptIssues.length)}. Requesting repair ${attempt} of ${MAX_REPAIR_ATTEMPTS}.`,
+      attempt,
     );
-    return {
-      kind: 'invalidDraft',
-      userMessage,
-      assistantMessage: createMessage('assistant', repairTurn.response.msg),
-      response: repairTurn.response,
-      repaired: true,
-      validationIssues: repairRelevantIssues,
-      debugTrace: {
-        outcomeKind: 'invalidDraft',
-        repaired: true,
-        initialRawText: initialTurn.rawText,
-        initialResponse: initialTurn.response,
-        ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
-        initialCompilationIssues: initialTurn.compilationIssues,
-        initialValidationIssues: initialRelevantIssues,
-        repairRawText: repairTurn.rawText,
-        repairResponse: repairTurn.response,
-        ...(repairTurn.compiledSteps ? { repairCompiledSteps: repairTurn.compiledSteps } : {}),
-        repairCompilationIssues: repairTurn.compilationIssues,
-        repairValidationIssues: repairRelevantIssues,
+
+    const repairUserMessage = createMessage(
+      'user',
+      buildRepairUserMessage(previousRawText, repairPromptIssues, options.context),
+    );
+
+    emitProgress(options, 'request_repair', `Sending repair request ${attempt} of ${MAX_REPAIR_ATTEMPTS} to Gemini.`, attempt);
+    const repairTurn = await generateGeminiDraftTurn(
+      {
+        settings: options.settings,
+        context: {
+          ...options.context,
+          messages: repairMessages,
+        },
+        userMessage: repairUserMessage,
+        phase: 'repair',
+        onLogEvent: options.onGeminiLogEvent,
       },
-    };
+      options.fetchFn,
+    );
+    emitProgress(options, 'response_repair', `Received repair response ${attempt} of ${MAX_REPAIR_ATTEMPTS} in mode "${repairTurn.response.mode}".`, attempt);
+
+    if (repairTurn.response.mode !== 'draft') {
+      repairAttempts.push({
+        attempt,
+        repairPromptIssues,
+        rawText: repairTurn.rawText,
+        response: repairTurn.response,
+        ...(repairTurn.compiledSteps ? { compiledSteps: repairTurn.compiledSteps } : {}),
+        compilationIssues: repairTurn.compilationIssues,
+        validationIssues: [],
+      });
+
+      previousRawText = repairTurn.rawText;
+      previousResponse = repairTurn.response;
+      repairMessages = [
+        ...repairMessages,
+        repairUserMessage,
+        createMessage('assistant', repairTurn.rawText),
+      ];
+
+      if (attempt < MAX_REPAIR_ATTEMPTS) {
+        continue;
+      }
+
+      emitProgress(options, 'complete', 'Final repair response did not return a draft.');
+      return {
+        kind: 'invalidDraft',
+        userMessage,
+        assistantMessage: createMessage('assistant', previousResponse.msg),
+        response: previousResponse,
+        repaired: true,
+        validationIssues: previousRelevantIssues,
+        debugTrace: buildDebugTrace({
+          outcomeKind: 'invalidDraft',
+          repaired: true,
+          initialTurn,
+          initialValidationIssues: initialRelevantIssues,
+          repairAttempts,
+        }),
+      };
+    }
+
+    emitProgress(options, 'validate_repair', `Compiling and validating repaired draft ${attempt} of ${MAX_REPAIR_ATTEMPTS}.`, attempt);
+    const repairedValidation = await validateDraftResponse(
+      options.context,
+      options.userText,
+      repairTurn.compilationIssues,
+      repairTurn.compiledSteps,
+      options.validateCandidateWorkflow,
+    );
+    const repairRelevantIssues = selectRelevantRepairValidationIssues(repairedValidation.issues);
+
+    repairAttempts.push({
+      attempt,
+      repairPromptIssues,
+      rawText: repairTurn.rawText,
+      response: repairTurn.response,
+      ...(repairTurn.compiledSteps ? { compiledSteps: repairTurn.compiledSteps } : {}),
+      compilationIssues: repairTurn.compilationIssues,
+      validationIssues: repairRelevantIssues,
+    });
+
+    if (repairedValidation.issues.length === 0) {
+      emitProgress(options, 'complete', `Repair ${attempt} validated successfully.`);
+      return {
+        kind: 'draft',
+        userMessage,
+        assistantMessage: createMessage('assistant', repairTurn.response.msg),
+        response: repairTurn.response,
+        repaired: true,
+        debugTrace: buildDebugTrace({
+          outcomeKind: 'draft',
+          repaired: true,
+          initialTurn,
+          initialValidationIssues: initialRelevantIssues,
+          repairAttempts,
+        }),
+        draft: {
+          steps: repairedValidation.steps,
+          assumptions: repairTurn.response.ass,
+          assistantMessage: repairTurn.response.msg,
+          validationIssues: [],
+        },
+      };
+    }
+
+    previousRawText = repairTurn.rawText;
+    previousResponse = repairTurn.response;
+    previousValidation = repairedValidation;
+    previousRelevantIssues = repairRelevantIssues;
+    repairMessages = [
+      ...repairMessages,
+      repairUserMessage,
+      createMessage('assistant', repairTurn.rawText),
+    ];
   }
 
-  emitProgress(options, 'complete', 'Repaired draft validated successfully.');
+  emitProgress(
+    options,
+    'complete',
+    `Final repaired draft still failed validation with ${formatIssueSummary(previousValidation.issues.length, previousRelevantIssues.length)}.`,
+  );
+
   return {
-    kind: 'draft',
+    kind: 'invalidDraft',
     userMessage,
-    assistantMessage: createMessage('assistant', repairTurn.response.msg),
-    response: repairTurn.response,
+    assistantMessage: createMessage('assistant', previousResponse.msg),
+    response: previousResponse,
     repaired: true,
-    debugTrace: {
-      outcomeKind: 'draft',
+    validationIssues: previousRelevantIssues,
+    debugTrace: buildDebugTrace({
+      outcomeKind: 'invalidDraft',
       repaired: true,
-      initialRawText: initialTurn.rawText,
-      initialResponse: initialTurn.response,
-      ...(initialTurn.compiledSteps ? { initialCompiledSteps: initialTurn.compiledSteps } : {}),
-      initialCompilationIssues: initialTurn.compilationIssues,
+      initialTurn,
       initialValidationIssues: initialRelevantIssues,
-      repairRawText: repairTurn.rawText,
-      repairResponse: repairTurn.response,
-      ...(repairTurn.compiledSteps ? { repairCompiledSteps: repairTurn.compiledSteps } : {}),
-      repairCompilationIssues: repairTurn.compilationIssues,
-      repairValidationIssues: [],
-    },
-    draft: {
-      steps: repairedValidation.steps,
-      assumptions: repairTurn.response.ass,
-      assistantMessage: repairTurn.response.msg,
-      validationIssues: [],
-    },
+      repairAttempts,
+    }),
+  };
+}
+
+function buildDebugTrace(input: {
+  outcomeKind: AIDebugTrace['outcomeKind'];
+  repaired: boolean;
+  initialTurn: GeminiDraftTurnResult;
+  initialValidationIssues: AIDraftIssue[];
+  repairAttempts: AIDebugRepairAttempt[];
+}): AIDebugTrace {
+  return {
+    outcomeKind: input.outcomeKind,
+    repaired: input.repaired,
+    initialRawText: input.initialTurn.rawText,
+    initialResponse: input.initialTurn.response,
+    ...(input.initialTurn.compiledSteps ? { initialCompiledSteps: input.initialTurn.compiledSteps } : {}),
+    initialCompilationIssues: input.initialTurn.compilationIssues,
+    initialValidationIssues: input.initialValidationIssues,
+    repairAttempts: input.repairAttempts,
   };
 }
 
@@ -319,185 +368,6 @@ function createMessage(role: AIMessage['role'], text: string): AIMessage {
   };
 }
 
-function buildMissingPromptColumnsClarifyResponse(issues: AIDraftIssue[]): AuthoringDraftResponse {
-  const missingColumns = issues
-    .map((issue) => issue.details?.promptColumn)
-    .filter((value): value is string => typeof value === 'string');
-
-  const uniqueMissingColumns = [...new Set(missingColumns)];
-  const columnList = uniqueMissingColumns.map((column) => `"${column}"`);
-  const msg = uniqueMissingColumns.length === 1
-    ? `I can’t find a ${columnList[0]} column in the current table schema. Which existing column should I use instead?`
-    : `I can’t find the columns ${columnList.join(', ')} in the current table schema. Which existing columns should I use instead?`;
-
-  return {
-    mode: 'clarify',
-    msg,
-    ass: [],
-    steps: [],
-  };
-}
-
-function selectRelevantValidationIssues(issues: AIDraftIssue[], limit = 12) {
-  if (issues.length <= 1) {
-    return issues;
-  }
-
-  const authoringIssues = issues.filter((issue) => issue.phase === 'authoring');
-  const structuralIssues = issues.filter((issue) => issue.phase === 'structural');
-  const sourceIssues = authoringIssues.length > 0 ? authoringIssues : structuralIssues.length > 0 ? structuralIssues : issues;
-  const dedupedIssues = dedupeIssues(sourceIssues);
-  const rankedIssues = [...dedupedIssues].sort((left, right) =>
-    compareIssues(left, right, authoringIssues.length === 0 && structuralIssues.length > 0));
-  const selectedIssues: AIDraftIssue[] = [];
-
-  for (const issue of rankedIssues) {
-    if (
-      issue.phase === 'structural'
-      && issue.code === 'schema.oneOf'
-      && issue.path === '$'
-      && rankedIssues.some((candidate) => candidate.path !== '$')
-    ) {
-      continue;
-    }
-
-    if (
-      issue.phase === 'structural'
-      && issue.code === 'schema.oneOf'
-      && rankedIssues.some((candidate) => candidate !== issue && isSameOrDescendantPath(candidate.path, issue.path))
-    ) {
-      continue;
-    }
-
-    if (selectedIssues.some((selected) => isSameOrDescendantPath(issue.path, selected.path))) {
-      continue;
-    }
-
-    selectedIssues.push(issue);
-
-    if (selectedIssues.length >= limit) {
-      break;
-    }
-  }
-
-  return selectedIssues.length > 0 ? selectedIssues : dedupedIssues.slice(0, Math.min(limit, dedupedIssues.length));
-}
-
-function dedupeIssues(issues: AIDraftIssue[]) {
-  const seen = new Set<string>();
-
-  return issues.filter((issue) => {
-    const key = `${issue.phase}|${issue.code}|${issue.path}|${issue.message}`;
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
-}
-
-function compareIssues(left: AIDraftIssue, right: AIDraftIssue, structuralOnly: boolean) {
-  const leftPriority = getIssuePriority(left, structuralOnly);
-  const rightPriority = getIssuePriority(right, structuralOnly);
-
-  if (leftPriority !== rightPriority) {
-    return leftPriority - rightPriority;
-  }
-
-  if (left.path.length !== right.path.length) {
-    return left.path.length - right.path.length;
-  }
-
-  return left.path.localeCompare(right.path) || left.message.localeCompare(right.message);
-}
-
-function getIssuePriority(issue: AIDraftIssue, structuralOnly: boolean) {
-  if (issue.phase === 'authoring') {
-    switch (issue.code) {
-      case 'authoringMissingField':
-        return 0;
-      case 'authoringInvalidContext':
-        return 1;
-      case 'authoringUnsupportedOp':
-        return 2;
-      case 'authoringInvalidOperandSource':
-        return 3;
-      case 'authoringInvalidMatch':
-      case 'authoringInvalidBetween':
-        return 4;
-      case 'authoringEmptyGroup':
-        return 5;
-      case 'authoringType':
-        return 6;
-      default:
-        return 7;
-    }
-  }
-
-  if (structuralOnly) {
-    switch (issue.code) {
-      case 'schema.type':
-        return 0;
-      case 'schema.required':
-        return 1;
-      case 'schema.enum':
-        return 2;
-      case 'schema.additionalProperties':
-        return 3;
-      case 'schema.const':
-        return 4;
-      case 'schema.pattern':
-        return 5;
-      case 'schema.maxItems':
-      case 'schema.minItems':
-        return 6;
-      case 'schema.oneOf':
-        return 9;
-      default:
-        return 8;
-    }
-  }
-
-  switch (issue.code) {
-    case 'taskQualityFallbackThenNormalizeCompressed':
-      return 0;
-    case 'taskQualityPromptColumnMentionedButUnused':
-      return 1;
-    case 'taskQualityNamedBranchMissing':
-      return 2;
-    case 'taskQualityPhaseMissing':
-      return 3;
-    case 'emptyDraft':
-      return 4;
-    case 'missingColumn':
-      return 5;
-    case 'invalidExpression':
-      return 6;
-    case 'incompatibleType':
-      return 7;
-    case 'invalidRegex':
-      return 8;
-    case 'duplicateColumnReference':
-      return 9;
-    default:
-      return 10;
-  }
-}
-
-function isSameOrDescendantPath(path: string, ancestorPath: string) {
-  if (path === ancestorPath) {
-    return true;
-  }
-
-  if (ancestorPath === '$') {
-    return false;
-  }
-
-  return path.startsWith(`${ancestorPath}.`) || path.startsWith(`${ancestorPath}[`);
-}
-
 function formatIssueSummary(totalCount: number, relevantCount: number) {
   const totalLabel = `${totalCount} issue${totalCount === 1 ? '' : 's'}`;
 
@@ -508,10 +378,11 @@ function formatIssueSummary(totalCount: number, relevantCount: number) {
   return `${totalLabel}; using ${relevantCount} relevant issue${relevantCount === 1 ? '' : 's'}`;
 }
 
-function emitProgress(options: RunGeminiDraftTurnOptions, stage: AIProgressEvent['stage'], message: string) {
+function emitProgress(options: RunGeminiDraftTurnOptions, stage: AIProgressEvent['stage'], message: string, attempt?: number) {
   options.onProgress?.({
     stage,
     message,
     timestamp: new Date().toISOString(),
+    ...(typeof attempt === 'number' ? { attempt } : {}),
   });
 }

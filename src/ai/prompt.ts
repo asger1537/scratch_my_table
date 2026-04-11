@@ -1,7 +1,7 @@
 import { validateWorkflowSemantics, type Workflow } from '../workflow';
 
 import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
-import type { AIDraft, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
+import type { AIDraft, AIRepairIssueSummary, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
 
 export interface GeminiPromptOptions {
   includeCuratedExamples?: boolean;
@@ -507,7 +507,7 @@ export function buildGeminiSystemInstruction(
     '- current match subject operand: { "source": "caseValue" }',
     '- literal operand: { "source": "literal", "value": "text" | 123 | true | false | null }',
     '- Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
-    '- Use { "source": "caseValue" } only inside match.cases[*].when.',
+    '- Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.',
     '',
     'Value expression shapes:',
     '- nullary: { "kind": "nullary", "op": "now" }',
@@ -542,7 +542,7 @@ export function buildGeminiSystemInstruction(
     '- isEmpty requires scalar input. not requires boolean-like input. and/or require boolean-like inputs.',
     '- eq requires comparable scalar inputs. gt/lt/gte/lte/between require comparable ordered scalar inputs.',
     '- contains/startsWith/endsWith/matchesRegex require string-like inputs.',
-    '- concat requires at least two scalar inputs. coalesce requires exactly two scalar inputs of one compatible non-mixed type.',
+    '- concat requires at least two scalar inputs. coalesce requires one or more scalar items of one compatible non-mixed type.',
     '',
     'Operator literal and behavior specifics (critical):',
     '- datePart unit literals are singular: "year", "month", "day", "dayOfWeek", "hour", "minute", "second".',
@@ -553,7 +553,8 @@ export function buildGeminiSystemInstruction(
     '- atIndex(textOrList, index) uses a zero-based index.',
     '- replace uses exact literal text. replaceRegex, extractRegex, and matchesRegex use regex pattern strings.',
     '- concat joins values with no separator. Include literal separators like " " when needed.',
-    '- coalesce selects the first value that is not null and not "". Use trim/isEmpty logic when whitespace-only strings should count as missing.',
+    '- coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".',
+    '- coalesce selects the first value that is not null and not "". Use match/isEmpty on trimmed values when whitespace-only strings should count as missing.',
     '- contains, startsWith, endsWith, and matchesRegex are case-sensitive. Normalize with lower(...) when matching case-insensitively.',
     '',
     'Rules:',
@@ -573,7 +574,7 @@ export function buildGeminiSystemInstruction(
     '- For multi-step implementations, include concise comment steps so the workflow stays readable and the phase boundaries are obvious in the editor.',
     '- Use match for exclusive classification and bucketing. Match is ordered and first-match-wins.',
     '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
-    '- scopedRule uses { "source": "value" }. match case conditions use { "source": "caseValue" }. Do not mix them up.',
+    '- scopedRule uses { "source": "value" }. match case conditions and result expressions may use { "source": "caseValue" }. Do not mix them up.',
     '- For regex patterns in JSON string literals, double-escape backslashes for JSON serialization. Example: \\d+ must appear as "\\\\d+".',
     '',
     'Schema currently available to the returned steps:',
@@ -625,7 +626,7 @@ export function buildGeminiContents(messages: AIMessage[], userMessage: AIMessag
 
 export function buildRepairUserMessage(
   previousRawText: string,
-  issues: Array<{ code: string; path: string; message: string; stepId?: string }>,
+  issues: AIRepairIssueSummary[],
   context: AIPromptContext,
 ) {
   const availableSchemaLines = getAvailableSchemaPromptLines(context);
@@ -645,10 +646,12 @@ export function buildRepairUserMessage(
     'dateDiff(a, b, unit) returns a - b; put now() first and the past date second for elapsed age.',
     'substring uses zero-based start plus length. atIndex uses a zero-based index.',
     'replace uses literal exact text; replaceRegex, extractRegex, and matchesRegex use regex pattern strings.',
-    'concat has no separator unless you include a literal separator. coalesce checks null/empty-string, not whitespace-only strings.',
+    'concat has no separator unless you include a literal separator.',
+    'coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".',
+    'coalesce checks null/empty-string, not whitespace-only strings. Use match/isEmpty on trimmed values for whitespace fallback.',
     'Preserve or add concise comment steps when the implementation has multiple phases.',
     'Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
-    'Use { "source": "caseValue" } only inside match.cases[*].when.',
+    'Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.',
     'Check the listed schema columns before drafting. Use only listed schema columns plus columns derived earlier in the workflow.',
     'If a workflow must fill from a fallback column and then normalize the final result, use separate sequential steps. Do not rely on scopedRule.defaultPatch after a matched fallback case.',
     'If the user explicitly names a column like Phone or Email (2), use that exact provided column id.',
@@ -660,7 +663,7 @@ export function buildRepairUserMessage(
     'Previous invalid response:',
     previousRawText,
     '',
-    'Validation and task-quality issues:',
+    'Root-cause validation/task-quality issues and cascade notes:',
     JSON.stringify(
       issues.map((issue) => ({
         code: issue.code,

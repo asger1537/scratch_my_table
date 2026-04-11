@@ -41,6 +41,9 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('substring(text, start, length) uses a zero-based start and a length, not an end index.');
     expect(instruction).toContain('replace uses exact literal text. replaceRegex, extractRegex, and matchesRegex use regex pattern strings.');
     expect(instruction).toContain('concat joins values with no separator. Include literal separators like " " when needed.');
+    expect(instruction).toContain('coalesce requires one or more scalar items of one compatible non-mixed type.');
+    expect(instruction).toContain('coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".');
+    expect(instruction).toContain('Use match/isEmpty on trimmed values when whitespace-only strings should count as missing.');
     expect(instruction).toContain('contains, startsWith, endsWith, and matchesRegex are case-sensitive.');
     expect(instruction).toContain('Comment guidance:');
     expect(instruction).toContain('Add concise comment steps to explain non-trivial implementations.');
@@ -164,13 +167,15 @@ describe('AI workflow copilot helpers', () => {
     expect(repairMessage).toContain('Return JSON only with keys: mode, msg, ass, steps.');
     expect(repairMessage).toContain('Return authoring IR only.');
     expect(repairMessage).toContain('Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.');
-    expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when.');
+    expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.');
     expect(repairMessage).toContain('datePart units are singular: year, month, day, dayOfWeek, hour, minute, second.');
     expect(repairMessage).toContain('dateDiff/dateAdd units are plural: years, months, days, hours, minutes, seconds. For account age in days, use dateDiff(now(), <signup date>, "days").');
     expect(repairMessage).toContain('dateDiff(a, b, unit) returns a - b; put now() first and the past date second for elapsed age.');
     expect(repairMessage).toContain('substring uses zero-based start plus length. atIndex uses a zero-based index.');
     expect(repairMessage).toContain('replace uses literal exact text; replaceRegex, extractRegex, and matchesRegex use regex pattern strings.');
-    expect(repairMessage).toContain('concat has no separator unless you include a literal separator. coalesce checks null/empty-string, not whitespace-only strings.');
+    expect(repairMessage).toContain('concat has no separator unless you include a literal separator.');
+    expect(repairMessage).toContain('coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".');
+    expect(repairMessage).toContain('coalesce checks null/empty-string, not whitespace-only strings. Use match/isEmpty on trimmed values for whitespace fallback.');
     expect(repairMessage).toContain('Preserve or add concise comment steps when the implementation has multiple phases.');
     expect(repairMessage).toContain('Check the listed schema columns before drafting. Use only listed schema columns plus columns derived earlier in the workflow.');
     expect(repairMessage).toContain('If a workflow must fill from a fallback column and then normalize the final result, use separate sequential steps.');
@@ -268,6 +273,74 @@ describe('AI workflow copilot helpers', () => {
         expect.objectContaining({ code: 'taskQualityPromptColumnMentionedButUnused' }),
         expect.objectContaining({ code: 'taskQualityNamedBranchMissing' }),
         expect.objectContaining({ code: 'taskQualityPhaseMissing' }),
+      ]),
+    );
+  });
+
+  it('does not treat row-dropping language as a missing dropColumns phase', () => {
+    const qualityIssues = evaluateDraftQuality({
+      context: createPromptContext(),
+      userText: 'Drop rows where VIP is not true.',
+      steps: assignWorkflowStepIds([
+        {
+          type: 'filterRows',
+          mode: 'drop',
+          condition: {
+            kind: 'call',
+            name: 'not',
+            args: [
+              {
+                kind: 'call',
+                name: 'equals',
+                args: [
+                  { kind: 'column', columnId: 'col_vip' },
+                  { kind: 'literal', value: true },
+                ],
+              },
+            ],
+          },
+        },
+      ]),
+    });
+
+    expect(qualityIssues.filter((issue) => issue.code === 'taskQualityPhaseMissing')).toEqual([]);
+  });
+
+  it('still treats explicit known-column dropping as a missing dropColumns phase', () => {
+    const qualityIssues = evaluateDraftQuality({
+      context: createPromptContext(),
+      userText: 'After filling the main email, drop Email (2).',
+      steps: assignWorkflowStepIds([
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+              },
+            },
+          ],
+        },
+      ]),
+    });
+
+    expect(qualityIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'taskQualityPhaseMissing',
+          details: expect.objectContaining({
+            missingPhases: expect.arrayContaining(['drop columns']),
+          }),
+        }),
       ]),
     );
   });
@@ -707,7 +780,11 @@ describe('AI workflow copilot helpers', () => {
               code: 'authoringUnsupportedOp',
             }),
           ],
-          repairCompilationIssues: [],
+          repairAttempts: [
+            expect.objectContaining({
+              compilationIssues: [],
+            }),
+          ],
         }),
       }),
     );
@@ -814,6 +891,153 @@ describe('AI workflow copilot helpers', () => {
             expect.objectContaining({
               id: 'step_drop_columns_1',
               type: 'dropColumns',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('can recover after a second repair attempt and targets the first repair raw response', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Initial invalid fallback.', 'col_missing_initial')))
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair one is still invalid.', 'col_missing_repair_one')))
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair two fixed the fallback.', 'col_email_2')));
+    const validateCandidateWorkflow = vi
+      .fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([
+        {
+          code: 'missingColumn',
+          severity: 'error',
+          message: "Column 'col_missing_initial' does not exist.",
+          path: 'steps[0].cases[0].then.value.columnId',
+          phase: 'semantic',
+          stepId: 'step_scoped_rule_1',
+          details: { columnId: 'col_missing_initial' },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          code: 'missingColumn',
+          severity: 'error',
+          message: "Column 'col_missing_repair_one' does not exist.",
+          path: 'steps[0].cases[0].then.value.columnId',
+          phase: 'semantic',
+          stepId: 'step_scoped_rule_1',
+          details: { columnId: 'col_missing_repair_one' },
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Use Email (2) as fallback then drop it.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(validateCandidateWorkflow).toHaveBeenCalledTimes(3);
+    const repairTwoRequest = JSON.stringify(JSON.parse(fetchFn.mock.calls[2][1]?.body as string));
+    expect(repairTwoRequest).toContain('Repair one is still invalid.');
+    expect(repairTwoRequest).toContain('col_missing_repair_one');
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        repaired: true,
+        debugTrace: expect.objectContaining({
+          repairAttempts: [
+            expect.objectContaining({
+              attempt: 1,
+              validationIssues: [
+                expect.objectContaining({
+                  code: 'missingColumn',
+                }),
+              ],
+            }),
+            expect.objectContaining({
+              attempt: 2,
+              validationIssues: [],
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('returns the final repair issues after both repair attempts fail', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Initial invalid fallback.', 'col_missing_initial')))
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair one is invalid.', 'col_missing_repair_one')))
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair two is invalid.', 'col_missing_repair_two')));
+    const validateCandidateWorkflow = vi
+      .fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([
+        {
+          code: 'missingColumn',
+          severity: 'error',
+          message: "Column 'col_missing_initial' does not exist.",
+          path: 'steps[0].cases[0].then.value.columnId',
+          phase: 'semantic',
+          stepId: 'step_scoped_rule_1',
+          details: { columnId: 'col_missing_initial' },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          code: 'missingColumn',
+          severity: 'error',
+          message: "Column 'col_missing_repair_one' does not exist.",
+          path: 'steps[0].cases[0].then.value.columnId',
+          phase: 'semantic',
+          stepId: 'step_scoped_rule_1',
+          details: { columnId: 'col_missing_repair_one' },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          code: 'missingColumn',
+          severity: 'error',
+          message: "Column 'col_missing_repair_two' does not exist.",
+          path: 'steps[0].cases[0].then.value.columnId',
+          phase: 'semantic',
+          stepId: 'step_scoped_rule_1',
+          details: { columnId: 'col_missing_repair_two' },
+        },
+      ]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Use Email (2) as fallback then drop it.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(validateCandidateWorkflow).toHaveBeenCalledTimes(3);
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'invalidDraft',
+        repaired: true,
+        validationIssues: [
+          expect.objectContaining({
+            message: expect.stringContaining('col_missing_repair_two'),
+          }),
+        ],
+        debugTrace: expect.objectContaining({
+          repairAttempts: [
+            expect.objectContaining({ attempt: 1 }),
+            expect.objectContaining({
+              attempt: 2,
+              validationIssues: [
+                expect.objectContaining({
+                  message: expect.stringContaining('col_missing_repair_two'),
+                }),
+              ],
             }),
           ],
         }),
@@ -1244,6 +1468,36 @@ function createAISettings(): AISettings {
     model: 'gemini-2.5-flash',
     thinkingEnabled: false,
   };
+}
+
+function createEmailFallbackResponse(msg: string, fallbackColumnId: string) {
+  return JSON.stringify({
+    mode: 'draft',
+    msg,
+    ass: [],
+    steps: [
+      {
+        type: 'scopedRule',
+        columnIds: ['col_email'],
+        cases: [
+          {
+            when: {
+              kind: 'predicate',
+              op: 'isEmpty',
+              input: { source: 'value' },
+            },
+            then: {
+              value: { source: 'column', columnId: fallbackColumnId },
+            },
+          },
+        ],
+      },
+      {
+        type: 'dropColumns',
+        columnIds: ['col_email_2'],
+      },
+    ],
+  });
 }
 
 function createGeminiResponse(text: string): Response {

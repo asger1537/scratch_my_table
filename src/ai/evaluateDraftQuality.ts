@@ -22,7 +22,7 @@ export function evaluateDraftQuality(input: EvaluateDraftQualityInput): AIDraftI
 
   issues.push(...evaluatePromptColumnCoverage(input.userText, input.steps, availableColumns));
   issues.push(...evaluateNamedBranchCoverage(input.userText, input.steps));
-  issues.push(...evaluateRequestedPhases(input.userText, input.steps));
+  issues.push(...evaluateRequestedPhases(input.userText, input.steps, availableColumns));
   issues.push(...evaluateFallbackThenNormalizeCompression(input.steps));
 
   return dedupeIssues(issues);
@@ -85,7 +85,7 @@ function evaluateNamedBranchCoverage(userText: string, steps: WorkflowStep[]) {
   ] satisfies AIDraftIssue[];
 }
 
-function evaluateRequestedPhases(userText: string, steps: WorkflowStep[]) {
+function evaluateRequestedPhases(userText: string, steps: WorkflowStep[], availableColumns: Column[]) {
   const normalizedPrompt = normalizeForMatch(userText);
   const stepTypes = new Set(steps.map((step) => step.type));
   const hasFormattingPatch = steps.some(
@@ -95,17 +95,11 @@ function evaluateRequestedPhases(userText: string, steps: WorkflowStep[]) {
   );
   const missingPhases: string[] = [];
 
-  if ((normalizedPrompt.includes('drop ') || normalizedPrompt.includes('drop helper')) && !stepTypes.has('dropColumns')) {
+  if (hasDropColumnsRequest(normalizedPrompt, availableColumns) && !stepTypes.has('dropColumns')) {
     missingPhases.push('drop columns');
   }
 
-  if (
-    (normalizedPrompt.includes('filter ')
-      || normalizedPrompt.includes('keep only')
-      || normalizedPrompt.includes('drop any rows')
-      || normalizedPrompt.includes('remove rows'))
-    && !stepTypes.has('filterRows')
-  ) {
+  if (hasFilterRowsRequest(normalizedPrompt) && !stepTypes.has('filterRows')) {
     missingPhases.push('filter rows');
   }
 
@@ -139,6 +133,27 @@ function evaluateRequestedPhases(userText: string, steps: WorkflowStep[]) {
       },
     },
   ] satisfies AIDraftIssue[];
+}
+
+function hasDropColumnsRequest(normalizedPrompt: string, availableColumns: Column[]) {
+  if (
+    /\bdrop (?:the )?(?:helper |source |temporary |intermediate |secondary |original )?columns?\b/.test(normalizedPrompt)
+    || /\bremove (?:the )?(?:helper |source |temporary |intermediate |secondary |original )?columns?\b/.test(normalizedPrompt)
+    || /\bdrop (?:the )?originals?\b/.test(normalizedPrompt)
+  ) {
+    return true;
+  }
+
+  return availableColumns.some((column) =>
+    getNormalizedColumnAliases(column).some((alias) =>
+      alias !== '' && new RegExp(`\\b(?:drop|remove) (?:the )?${escapeRegex(alias)}(?: columns?)?\\b`).test(normalizedPrompt)));
+}
+
+function hasFilterRowsRequest(normalizedPrompt: string) {
+  return normalizedPrompt.includes('filter ')
+    || normalizedPrompt.includes('keep only')
+    || /\bdrop (?:any )?rows?\b/.test(normalizedPrompt)
+    || /\bremove rows?\b/.test(normalizedPrompt);
 }
 
 function evaluateFallbackThenNormalizeCompression(steps: WorkflowStep[]) {
@@ -178,6 +193,14 @@ function getAvailableSchemaColumns(context: AIPromptContext) {
 
 function normalizeForMatch(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function getNormalizedColumnAliases(column: Column) {
+  return [...new Set([normalizeForMatch(column.displayName), normalizeForMatch(column.columnId)])];
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function extractExplicitPromptColumnMentions(userText: string): PromptColumnMention[] {

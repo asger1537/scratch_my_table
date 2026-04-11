@@ -2384,8 +2384,8 @@ function AIAssistantModal({
                     <dd>{aiDebugTrace.initialResponse.mode}</dd>
                   </div>
                   <div>
-                    <dt>Repair mode</dt>
-                    <dd>{aiDebugTrace.repairResponse?.mode ?? 'none'}</dd>
+                    <dt>Repair attempts</dt>
+                    <dd>{aiDebugTrace.repairAttempts.length}</dd>
                   </div>
                 </dl>
                 <div className="ai-debug-trace__section">
@@ -2430,52 +2430,27 @@ function AIAssistantModal({
                     />
                   </div>
                 ) : null}
-                {aiDebugTrace.repairRawText ? (
-                  <div className="ai-debug-trace__section">
-                    <strong>Repair parsed authoring response</strong>
+                {aiDebugTrace.repairAttempts.map((attempt) => (
+                  <div className="ai-debug-trace__section" key={attempt.attempt}>
+                    <strong>{`Repair attempt ${attempt.attempt}`}</strong>
                     <textarea
                       className="json-viewer ai-debug-trace__viewer"
                       readOnly
-                      value={`${JSON.stringify(aiDebugTrace.repairResponse, null, 2)}\n`}
+                      value={`${JSON.stringify(
+                        {
+                          repairPromptIssues: attempt.repairPromptIssues,
+                          response: attempt.response,
+                          rawText: attempt.rawText,
+                          compiledSteps: attempt.compiledSteps ?? null,
+                          compilationIssues: attempt.compilationIssues,
+                          validationIssues: attempt.validationIssues,
+                        },
+                        null,
+                        2,
+                      )}\n`}
                     />
                   </div>
-                ) : null}
-                {aiDebugTrace.repairRawText ? (
-                  <div className="ai-debug-trace__section">
-                    <strong>Repair raw response</strong>
-                    <textarea className="json-viewer ai-debug-trace__viewer" readOnly value={aiDebugTrace.repairRawText} />
-                  </div>
-                ) : null}
-                {aiDebugTrace.repairCompiledSteps ? (
-                  <div className="ai-debug-trace__section">
-                    <strong>Repair compiled canonical steps</strong>
-                    <textarea
-                      className="json-viewer ai-debug-trace__viewer"
-                      readOnly
-                      value={`${JSON.stringify(aiDebugTrace.repairCompiledSteps, null, 2)}\n`}
-                    />
-                  </div>
-                ) : null}
-                {aiDebugTrace.repairCompilationIssues.length > 0 ? (
-                  <div className="ai-debug-trace__section">
-                    <strong>Repair compiler issues</strong>
-                    <textarea
-                      className="json-viewer ai-debug-trace__viewer"
-                      readOnly
-                      value={`${JSON.stringify(aiDebugTrace.repairCompilationIssues, null, 2)}\n`}
-                    />
-                  </div>
-                ) : null}
-                {aiDebugTrace.repairValidationIssues.length > 0 ? (
-                  <div className="ai-debug-trace__section">
-                    <strong>Repair validation issues</strong>
-                    <textarea
-                      className="json-viewer ai-debug-trace__viewer"
-                      readOnly
-                      value={`${JSON.stringify(aiDebugTrace.repairValidationIssues, null, 2)}\n`}
-                    />
-                  </div>
-                ) : null}
+                ))}
               </details>
             ) : null}
           </section>

@@ -91,7 +91,7 @@ Rules:
 - `value` means the current selected cell and is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`.
   During `scopedRule` case evaluation, `value` reflects the cell value after any earlier matching cases have already applied.
 - `value` is represented exactly as `{ "kind": "value" }`.
-- `caseValue` means the already-evaluated `match.subject` result and is valid only inside `match.cases[*].when`.
+- `caseValue` means the already-evaluated `match.subject` result and is valid only inside `match.cases[*].when` and `match.cases[*].then`.
 - `caseValue` is represented exactly as `{ "kind": "caseValue" }`.
 - `null` is represented as `{ "kind": "literal", "value": null }`.
 - `literal` returns a scalar value.

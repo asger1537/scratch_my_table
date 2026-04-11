@@ -425,7 +425,7 @@ function compileOperand(
 
     case 'caseValue':
       if (!scope.allowCaseValue) {
-        issues.push(makeIssue('authoringInvalidContext', 'Use { "source": "caseValue" } only inside match case conditions.', path));
+        issues.push(makeIssue('authoringInvalidContext', 'Use { "source": "caseValue" } only inside match cases.', path));
         return null;
       }
       return { kind: 'caseValue' };
@@ -575,7 +575,7 @@ function compileMatchCases(
           `${casePath}.then`,
           {
             allowValue: outerScope.allowValue,
-            allowCaseValue: false,
+            allowCaseValue: true,
           },
           issues,
         );
@@ -605,7 +605,7 @@ function compileMatchCases(
           `${casePath}.then`,
           {
             allowValue: outerScope.allowValue,
-            allowCaseValue: false,
+            allowCaseValue: true,
           },
           issues,
         );

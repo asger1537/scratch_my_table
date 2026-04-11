@@ -21,9 +21,11 @@ export { runGeminiDraftTurn } from './session';
 export type {
   AIProgressEvent,
   GeminiClientLogEvent,
+  AIDebugRepairAttempt,
   AIDebugTrace,
   AIDraft,
   AIMessage,
+  AIRepairIssueSummary,
   AISettings,
   AIPromptContext,
   GeminiDraftTurnInput,

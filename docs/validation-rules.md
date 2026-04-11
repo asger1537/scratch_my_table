@@ -91,7 +91,7 @@ Rules:
 
 - `value` is valid only inside `scopedRule.cases[*].when`, `scopedRule.cases[*].then.value`, and `scopedRule.defaultPatch.value`
 - `value` is represented exactly as `{ "kind": "value" }`
-- `caseValue` is valid only inside `match.cases[*].when`
+- `caseValue` is valid only inside `match.cases[*].when` and `match.cases[*].then`
 - `caseValue` is represented exactly as `{ "kind": "caseValue" }`
 - `null` must be represented as `{ "kind": "literal", "value": null }`
 - `column` is valid anywhere row-scoped expressions are evaluated

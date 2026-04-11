@@ -36,6 +36,7 @@ export interface AIProgressEvent {
     | 'error';
   message: string;
   timestamp: string;
+  attempt?: number;
 }
 
 export interface GeminiClientLogEvent {
@@ -51,6 +52,23 @@ export interface GeminiClientLogEvent {
   timestamp: string;
 }
 
+export interface AIRepairIssueSummary {
+  code: string;
+  path: string;
+  message: string;
+  stepId?: string;
+}
+
+export interface AIDebugRepairAttempt {
+  attempt: number;
+  repairPromptIssues: AIRepairIssueSummary[];
+  rawText: string;
+  response: AuthoringDraftResponse;
+  compiledSteps?: WorkflowStepInput[];
+  compilationIssues: AIDraftIssue[];
+  validationIssues: AIDraftIssue[];
+}
+
 export interface AIDebugTrace {
   outcomeKind: 'clarify' | 'draft' | 'invalidDraft';
   repaired: boolean;
@@ -59,11 +77,7 @@ export interface AIDebugTrace {
   initialCompiledSteps?: WorkflowStepInput[];
   initialCompilationIssues: AIDraftIssue[];
   initialValidationIssues: AIDraftIssue[];
-  repairRawText?: string;
-  repairResponse?: AuthoringDraftResponse;
-  repairCompiledSteps?: WorkflowStepInput[];
-  repairCompilationIssues: AIDraftIssue[];
-  repairValidationIssues: AIDraftIssue[];
+  repairAttempts: AIDebugRepairAttempt[];
 }
 
 export interface AIDraft {

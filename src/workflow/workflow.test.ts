@@ -1151,6 +1151,24 @@ describe('workflow validation and execution', () => {
             ],
           ),
         },
+        {
+          id: 'step_return_case_value',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_return_case_value',
+            displayName: 'return_case_value',
+          },
+          expression: match(
+            call('lower', call('trim', column('col_status'))),
+            [
+              matchWhen(
+                call('equals', caseValue(), literal('active')),
+                caseValue(),
+              ),
+              matchOtherwise(caseValue()),
+            ],
+          ),
+        },
       ],
     };
 
@@ -1166,6 +1184,9 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_priority_score).toBe(2);
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_priority_score).toBe(1);
     expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_unmatched_status).toBeNull();
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_return_case_value).toBe('active');
+    expect(execution.transformedTable?.rowsById.row_2.cellsByColumnId.col_return_case_value).toBe('inactive');
+    expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_return_case_value).toBe('pending');
   });
 
   it('rejects malformed or incompatible match expressions', () => {

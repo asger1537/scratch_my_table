@@ -552,7 +552,7 @@ function validateExpression(
         return {
           logicalType: 'unknown',
           valueKind: 'scalar',
-          issues: [makeIssue('invalidExpression', `caseValue is only valid inside match case conditions.`, path, stepId)],
+          issues: [makeIssue('invalidExpression', `caseValue is only valid inside match cases.`, path, stepId)],
         };
       }
 
@@ -752,7 +752,11 @@ function validateMatchExpression(
       }
     }
 
-    const thenResult = validateExpression(matchCase.then, table, `${casePath}.then`, stepId, context);
+    const thenResult = validateExpression(matchCase.then, table, `${casePath}.then`, stepId, {
+      ...context,
+      allowCaseValueReference: true,
+      caseValueLogicalType: subjectResult.logicalType,
+    });
     issues.push(...thenResult.issues);
 
     if (thenResult.valueKind !== 'scalar') {
@@ -1987,13 +1991,14 @@ function evaluateExpression(expression: WorkflowExpression, context: ExpressionE
 
 function evaluateMatchExpression(expression: WorkflowMatchExpression, context: ExpressionExecutionContext): ExpressionRuntimeValue {
   const subjectValue = evaluateExpression(expression.subject, context);
+  const matchContext = { ...context, caseValue: Array.isArray(subjectValue) ? null : subjectValue };
 
   for (const matchCase of expression.cases) {
-    if (matchCase.kind === 'when' && !Boolean(evaluateExpression(matchCase.when, { ...context, caseValue: Array.isArray(subjectValue) ? null : subjectValue }))) {
+    if (matchCase.kind === 'when' && !Boolean(evaluateExpression(matchCase.when, matchContext))) {
       continue;
     }
 
-    return evaluateExpression(matchCase.then, context);
+    return evaluateExpression(matchCase.then, matchContext);
   }
 
   return null;

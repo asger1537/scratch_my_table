@@ -195,11 +195,11 @@ describe('compileAuthoringDraft', () => {
                 left: { source: 'caseValue' },
                 right: { source: 'literal', value: 0 },
               },
-              then: { source: 'literal', value: 3 },
+              then: { source: 'caseValue' },
             },
             {
               kind: 'otherwise',
-              then: { source: 'literal', value: 1 },
+              then: { source: 'caseValue' },
             },
           ],
         },
@@ -220,11 +220,11 @@ describe('compileAuthoringDraft', () => {
             {
               kind: 'when',
               when: call('lessThan', caseValue(), literal(0)),
-              then: literal(3),
+              then: caseValue(),
             },
             {
               kind: 'otherwise',
-              then: literal(1),
+              then: caseValue(),
             },
           ],
         },
@@ -253,7 +253,7 @@ describe('compileAuthoringDraft', () => {
     ]);
   });
 
-  it('rejects caseValue operands outside match when conditions', () => {
+  it('rejects caseValue operands outside match cases', () => {
     const compiled = compileAuthoringDraft([
       {
         type: 'filterRows',
