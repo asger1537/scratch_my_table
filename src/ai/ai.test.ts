@@ -16,6 +16,7 @@ import {
 } from './index';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
+import { evaluateDraftQuality } from './evaluateDraftQuality';
 
 describe('AI workflow copilot helpers', () => {
   it('builds prompt context for authoring IR without leaking raw row values', () => {
@@ -32,6 +33,15 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment.');
     expect(instruction).toContain('Operator input type requirements (critical):');
     expect(instruction).toContain('trim/lower/upper/collapseWhitespace require string-like input.');
+    expect(instruction).toContain('Operator literal and behavior specifics (critical):');
+    expect(instruction).toContain('datePart unit literals are singular: "year", "month", "day", "dayOfWeek", "hour", "minute", "second".');
+    expect(instruction).toContain('dateDiff and dateAdd duration unit literals are plural: "years", "months", "days", "hours", "minutes", "seconds".');
+    expect(instruction).toContain('For account age in days, use dateDiff(now(), <signup date>, "days"). Do not use "day" for dateDiff.');
+    expect(instruction).toContain('dateDiff(a, b, unit) returns a - b. For elapsed age since a past date, put now() first and the past date second.');
+    expect(instruction).toContain('substring(text, start, length) uses a zero-based start and a length, not an end index.');
+    expect(instruction).toContain('replace uses exact literal text. replaceRegex, extractRegex, and matchesRegex use regex pattern strings.');
+    expect(instruction).toContain('concat joins values with no separator. Include literal separators like " " when needed.');
+    expect(instruction).toContain('contains, startsWith, endsWith, and matchesRegex are case-sensitive.');
     expect(instruction).toContain('Comment guidance:');
     expect(instruction).toContain('Add concise comment steps to explain non-trivial implementations.');
     expect(instruction).toContain('For requests with 3 or more distinct goals or phases, include a short comment before each major phase.');
@@ -45,6 +55,11 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Default fill-color word map (use exact palette hex values):');
     expect(instruction).toContain('- red -> #FFC7CE');
     expect(instruction).toContain('In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds.');
+    expect(instruction).toContain('If you must fill from a fallback column and then normalize or further transform the final result, use separate sequential steps.');
+    expect(instruction).toContain('If the user explicitly names a column like Phone or Email (2), use that exact provided column id');
+    expect(instruction).toContain('First, inspect "Schema currently available to the returned steps" and ground every referenced input/source column against that list before drafting.');
+    expect(instruction).toContain('If the request depends on an input/source column that is not listed in the current schema, return mode "clarify" and ask which listed column to use.');
+    expect(instruction).toContain('If the user names match outputs like return "email", return "sms", and return "none"');
     expect(instruction).not.toContain('fill_empty_from_col');
     expect(instruction).not.toContain('normalize_text_col');
     expect(instruction).not.toContain('alice@example.com');
@@ -85,7 +100,7 @@ describe('AI workflow copilot helpers', () => {
       phase: 'initial',
     });
 
-    expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(4096);
+    expect(requestExport.requestBody.generationConfig.maxOutputTokens).toBe(16_384);
     expect(requestExport.requestBody.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
     expect(requestExport.requestBody.generationConfig.temperature).toBe(0);
     expect(requestExport.requestBody.generationConfig.responseMimeType).toBeUndefined();
@@ -93,7 +108,7 @@ describe('AI workflow copilot helpers', () => {
     expect(requestExport.requestBody.generationConfig).toEqual(
       expect.objectContaining({
         temperature: 0,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 16_384,
       }),
     );
     expect(JSON.stringify(requestExport)).not.toContain(settings.apiKey);
@@ -150,9 +165,111 @@ describe('AI workflow copilot helpers', () => {
     expect(repairMessage).toContain('Return authoring IR only.');
     expect(repairMessage).toContain('Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.');
     expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when.');
+    expect(repairMessage).toContain('datePart units are singular: year, month, day, dayOfWeek, hour, minute, second.');
+    expect(repairMessage).toContain('dateDiff/dateAdd units are plural: years, months, days, hours, minutes, seconds. For account age in days, use dateDiff(now(), <signup date>, "days").');
+    expect(repairMessage).toContain('dateDiff(a, b, unit) returns a - b; put now() first and the past date second for elapsed age.');
+    expect(repairMessage).toContain('substring uses zero-based start plus length. atIndex uses a zero-based index.');
+    expect(repairMessage).toContain('replace uses literal exact text; replaceRegex, extractRegex, and matchesRegex use regex pattern strings.');
+    expect(repairMessage).toContain('concat has no separator unless you include a literal separator. coalesce checks null/empty-string, not whitespace-only strings.');
     expect(repairMessage).toContain('Preserve or add concise comment steps when the implementation has multiple phases.');
+    expect(repairMessage).toContain('Check the listed schema columns before drafting. Use only listed schema columns plus columns derived earlier in the workflow.');
+    expect(repairMessage).toContain('If a workflow must fill from a fallback column and then normalize the final result, use separate sequential steps.');
+    expect(repairMessage).toContain('If the user explicitly names a column like Phone or Email (2), use that exact provided column id.');
+    expect(repairMessage).toContain('If the original request depends on a source column that is not listed in the current schema, do not substitute a different column just because it seems similar.');
+    expect(repairMessage).toContain('If the user names match outputs like "email", "sms", and "none", include those named outputs explicitly.');
     expect(repairMessage).not.toContain('fill_empty_from_col');
     expect(repairMessage).toContain('- col_email | Email | string');
+  });
+
+  it('flags task-quality issues for missing phases, missing named branches, wrong column grounding, and compressed fallback normalization', () => {
+    const qualityIssues = evaluateDraftQuality({
+      context: createPromptContext(),
+      userText: [
+        'Goal 1: Normalize the primary Email column. If Email is empty or whitespace, fall back to Email (2). Then trim it and lowercase it.',
+        'Goal 2: Normalize the Phone column by removing spaces, dashes, parentheses, and other non-digit characters.',
+        'Goal 3: Derive a new column called Preferred Contact Method using a match:',
+        'return "email" if the final Email contains @',
+        'return "sms" if there is no usable email but Phone has 10 digits',
+        'return "none" otherwise',
+        'Goal 6: Drop helper columns like Email (2) once they are no longer needed.',
+        'Goal 7: Filter rows to keep only customers where Preferred Contact Method is not "none".',
+      ].join('\n'),
+      steps: assignWorkflowStepIds([
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
+          cases: [
+            {
+              when: {
+                kind: 'call',
+                name: 'isEmpty',
+                args: [{ kind: 'value' }],
+              },
+              then: {
+                value: {
+                  kind: 'column',
+                  columnId: 'col_email_2',
+                },
+              },
+            },
+          ],
+          defaultPatch: {
+            value: {
+              kind: 'call',
+              name: 'lower',
+              args: [
+                {
+                  kind: 'call',
+                  name: 'trim',
+                  args: [{ kind: 'value' }],
+                },
+              ],
+            },
+          },
+        },
+        {
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_preferred_contact_method',
+            displayName: 'Preferred Contact Method',
+          },
+          expression: {
+            kind: 'match',
+            subject: {
+              kind: 'column',
+              columnId: 'col_email',
+            },
+            cases: [
+              {
+                kind: 'when',
+                when: {
+                  kind: 'call',
+                  name: 'contains',
+                  args: [
+                    { kind: 'caseValue' },
+                    { kind: 'literal', value: '@' },
+                  ],
+                },
+                then: { kind: 'literal', value: 'email' },
+              },
+              {
+                kind: 'otherwise',
+                then: { kind: 'literal', value: 'none' },
+              },
+            ],
+          },
+        },
+      ]),
+    });
+
+    expect(qualityIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'taskQualityFallbackThenNormalizeCompressed' }),
+        expect.objectContaining({ code: 'taskQualityPromptColumnMentionedButUnused' }),
+        expect.objectContaining({ code: 'taskQualityNamedBranchMissing' }),
+        expect.objectContaining({ code: 'taskQualityPhaseMissing' }),
+      ]),
+    );
   });
 
   it('parses clarify and draft authoring responses and rejects malformed payloads', () => {
@@ -187,6 +304,48 @@ describe('AI workflow copilot helpers', () => {
     );
     expect(() => parseGeminiAuthoringResponse('{"mode":"draft","msg":"Missing steps","ass":[],"steps":[]}')).toThrow(
       'Gemini draft responses must include a non-empty steps array.',
+    );
+  });
+
+  it('lets Gemini decide whether to clarify when a named prompt column is absent from the schema', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'clarify',
+            msg: 'I can’t find a Phone column in the current schema. Which existing column should I use instead?',
+            ass: [],
+            steps: [],
+          }),
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContextWithoutPhone(),
+      userText: [
+        'Goal 1: Normalize the primary Email column. If Email is empty or whitespace, fall back to Email (2). Then trim it and lowercase it.',
+        'Goal 2: Normalize the Phone column by removing spaces, dashes, parentheses, and other non-digit characters.',
+      ].join('\n'),
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'clarify',
+        repaired: false,
+        assistantMessage: expect.objectContaining({
+          text: expect.stringContaining('Phone column'),
+        }),
+        debugTrace: expect.objectContaining({
+          initialValidationIssues: [],
+        }),
+      }),
     );
   });
 
@@ -662,6 +821,153 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
+  it('routes task-quality issues into repair even when canonical validation passes', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'First attempt.',
+            ass: [],
+            steps: [
+              {
+                type: 'scopedRule',
+                columnIds: ['col_email'],
+                cases: [
+                  {
+                    when: {
+                      kind: 'predicate',
+                      op: 'isEmpty',
+                      input: { source: 'value' },
+                    },
+                    then: {
+                      value: { source: 'column', columnId: 'col_email_2' },
+                    },
+                  },
+                ],
+                defaultPatch: {
+                  value: {
+                    kind: 'unary',
+                    op: 'lower',
+                    input: {
+                      kind: 'unary',
+                      op: 'trim',
+                      input: { source: 'value' },
+                    },
+                  },
+                },
+              },
+              {
+                type: 'dropColumns',
+                columnIds: ['col_email_2'],
+              },
+              {
+                type: 'filterRows',
+                mode: 'keep',
+                where: {
+                  kind: 'compare',
+                  op: 'contains',
+                  left: { source: 'column', columnId: 'col_email' },
+                  right: { source: 'literal', value: '@' },
+                },
+              },
+            ],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'draft',
+            msg: 'I split fallback and normalization into separate steps.',
+            ass: [],
+            steps: [
+              {
+                type: 'scopedRule',
+                columnIds: ['col_email'],
+                cases: [
+                  {
+                    when: {
+                      kind: 'predicate',
+                      op: 'isEmpty',
+                      input: { source: 'value' },
+                    },
+                    then: {
+                      value: { source: 'column', columnId: 'col_email_2' },
+                    },
+                  },
+                ],
+              },
+              {
+                type: 'scopedRule',
+                columnIds: ['col_email'],
+                defaultPatch: {
+                  value: {
+                    kind: 'unary',
+                    op: 'lower',
+                    input: {
+                      kind: 'unary',
+                      op: 'trim',
+                      input: { source: 'value' },
+                    },
+                  },
+                },
+              },
+              {
+                type: 'dropColumns',
+                columnIds: ['col_email_2'],
+              },
+              {
+                type: 'filterRows',
+                mode: 'keep',
+                where: {
+                  kind: 'compare',
+                  op: 'contains',
+                  left: { source: 'column', columnId: 'col_email' },
+                  right: { source: 'literal', value: '@' },
+                },
+              },
+            ],
+          }),
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Make Email use Email (2) when empty, then trim and lowercase the final Email, drop Email (2), then keep only rows where Email contains @.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(validateCandidateWorkflow).toHaveBeenCalledTimes(2);
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        repaired: true,
+        debugTrace: expect.objectContaining({
+          initialValidationIssues: [
+            expect.objectContaining({
+              code: 'taskQualityFallbackThenNormalizeCompressed',
+            }),
+          ],
+        }),
+        draft: expect.objectContaining({
+          steps: [
+            expect.objectContaining({ type: 'scopedRule' }),
+            expect.objectContaining({ type: 'scopedRule' }),
+            expect.objectContaining({ type: 'dropColumns' }),
+            expect.objectContaining({ type: 'filterRows' }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it('builds draft preview workflows from compiled canonical drafts and formats debug JSON', () => {
     const currentWorkflow: Workflow = {
       version: 2,
@@ -819,6 +1125,41 @@ function createPromptContext(): AIPromptContext {
       null,
       2,
     )}\n`,
+  };
+}
+
+function createPromptContextWithoutPhone(): AIPromptContext {
+  const context = createPromptContext();
+
+  return {
+    ...context,
+    table: {
+      ...context.table,
+      schema: {
+        columns: context.table.schema.columns
+          .filter((column) => column.columnId !== 'col_phone')
+          .concat([
+            {
+              columnId: 'col_column',
+              displayName: 'Column',
+              logicalType: 'string',
+              nullable: true,
+              sourceIndex: 6,
+              missingCount: 0,
+            },
+          ]),
+      },
+      rowsById: {
+        ...context.table.rowsById,
+        row_1: {
+          ...context.table.rowsById.row_1,
+          cellsByColumnId: {
+            ...context.table.rowsById.row_1.cellsByColumnId,
+            col_column: 'sample',
+          },
+        },
+      },
+    },
   };
 }
 

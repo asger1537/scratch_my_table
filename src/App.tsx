@@ -901,7 +901,7 @@ export default function App() {
         },
       });
 
-      void appendAIDevLog({
+      await appendAIDevLog({
         turnId,
         kind: 'turn_result',
         outcomeKind: outcome.kind,
@@ -948,7 +948,7 @@ export default function App() {
       });
     } catch (caughtError) {
       console.error('[AI] error', caughtError);
-      void appendAIDevLog({
+      await appendAIDevLog({
         turnId,
         kind: 'turn_error',
         durationMs: Date.now() - turnStartedAt,

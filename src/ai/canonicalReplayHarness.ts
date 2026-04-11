@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { validateWorkflowSemantics, validateWorkflowStructure, type Workflow } from '../workflow';
 
 import type { WorkflowStepInput } from './types';
-import { assignWorkflowStepIds } from './index';
+import { assignWorkflowStepIds, GEMINI_MAX_OUTPUT_TOKENS } from './index';
 import {
   compact,
   extractCandidateText,
@@ -434,7 +434,7 @@ ${curatedExamples}`;
         responseMimeType: 'application/json',
         responseJsonSchema: buildOldCanonicalEmailReplayResponseJsonSchema(),
         temperature: 0.2,
-        maxOutputTokens: 4096,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
         thinkingConfig: {
           thinkingLevel: 'minimal',
         },

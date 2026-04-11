@@ -3,6 +3,7 @@ import type { WorkflowValidationIssue } from '../workflow';
 import { mapWorkflowValidationIssueToAIDraftIssue } from './compileAuthoringDraft';
 import type { AuthoringDraftResponse } from './authoringIr';
 import { assignWorkflowStepIds, replaceWorkflowSteps } from './draft';
+import { evaluateDraftQuality } from './evaluateDraftQuality';
 import { generateGeminiDraftTurn } from './gemini';
 import { buildRepairUserMessage } from './prompt';
 import type { AIDraftIssue } from './authoringIr';
@@ -59,6 +60,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
   const userMessage = createMessage('user', options.userText);
 
   emitProgress(options, 'start', 'Starting AI draft turn.');
+
   emitProgress(options, 'request_initial', 'Sending initial Gemini request.');
   const initialTurn = await generateGeminiDraftTurn(
     {
@@ -96,6 +98,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
   emitProgress(options, 'validate_initial', 'Compiling and validating the initial AI draft.');
   const initialValidation = await validateDraftResponse(
     options.context,
+    options.userText,
     initialTurn.compilationIssues,
     initialTurn.compiledSteps,
     options.validateCandidateWorkflow,
@@ -197,6 +200,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
   emitProgress(options, 'validate_repair', 'Compiling and validating the repaired draft.');
   const repairedValidation = await validateDraftResponse(
     options.context,
+    options.userText,
     repairTurn.compilationIssues,
     repairTurn.compiledSteps,
     options.validateCandidateWorkflow,
@@ -265,6 +269,7 @@ export async function runGeminiDraftTurn(options: RunGeminiDraftTurnOptions): Pr
 
 async function validateDraftResponse(
   context: AIPromptContext,
+  userText: string,
   compilationIssues: AIDraftIssue[],
   compiledStepInputs: WorkflowStepInput[] | undefined,
   validateCandidateWorkflow: (workflow: AIPromptContext['workflow']) => Promise<WorkflowValidationIssue[]>,
@@ -294,10 +299,15 @@ async function validateDraftResponse(
   const steps = assignWorkflowStepIds(compiledStepInputs);
   const candidateWorkflow = replaceWorkflowSteps(context.workflow, steps);
   const issues = (await validateCandidateWorkflow(candidateWorkflow)).map(mapWorkflowValidationIssueToAIDraftIssue);
+  const qualityIssues = evaluateDraftQuality({
+    context,
+    userText,
+    steps,
+  });
 
   return {
     steps,
-    issues,
+    issues: [...issues, ...qualityIssues],
   };
 }
 
@@ -306,6 +316,25 @@ function createMessage(role: AIMessage['role'], text: string): AIMessage {
     role,
     text,
     timestamp: new Date().toISOString(),
+  };
+}
+
+function buildMissingPromptColumnsClarifyResponse(issues: AIDraftIssue[]): AuthoringDraftResponse {
+  const missingColumns = issues
+    .map((issue) => issue.details?.promptColumn)
+    .filter((value): value is string => typeof value === 'string');
+
+  const uniqueMissingColumns = [...new Set(missingColumns)];
+  const columnList = uniqueMissingColumns.map((column) => `"${column}"`);
+  const msg = uniqueMissingColumns.length === 1
+    ? `I can’t find a ${columnList[0]} column in the current table schema. Which existing column should I use instead?`
+    : `I can’t find the columns ${columnList.join(', ')} in the current table schema. Which existing columns should I use instead?`;
+
+  return {
+    mode: 'clarify',
+    msg,
+    ass: [],
+    steps: [],
   };
 }
 
@@ -432,20 +461,28 @@ function getIssuePriority(issue: AIDraftIssue, structuralOnly: boolean) {
   }
 
   switch (issue.code) {
-    case 'emptyDraft':
+    case 'taskQualityFallbackThenNormalizeCompressed':
       return 0;
-    case 'missingColumn':
+    case 'taskQualityPromptColumnMentionedButUnused':
       return 1;
-    case 'invalidExpression':
+    case 'taskQualityNamedBranchMissing':
       return 2;
-    case 'incompatibleType':
+    case 'taskQualityPhaseMissing':
       return 3;
-    case 'invalidRegex':
+    case 'emptyDraft':
       return 4;
-    case 'duplicateColumnReference':
+    case 'missingColumn':
       return 5;
-    default:
+    case 'invalidExpression':
       return 6;
+    case 'incompatibleType':
+      return 7;
+    case 'invalidRegex':
+      return 8;
+    case 'duplicateColumnReference':
+      return 9;
+    default:
+      return 10;
   }
 }
 

@@ -115,6 +115,10 @@ const CURATED_EXAMPLES = [
               },
             },
           ],
+        },
+        {
+          type: 'scopedRule',
+          columnIds: ['col_email'],
           defaultPatch: {
             value: {
               kind: 'unary',
@@ -158,18 +162,6 @@ const CURATED_EXAMPLES = [
         {
           type: 'scopedRule',
           columnIds: ['col_email'],
-          cases: [
-            {
-              when: {
-                kind: 'predicate',
-                op: 'isEmpty',
-                input: { source: 'value' },
-              },
-              then: {
-                value: { source: 'column', columnId: 'col_email_2' },
-              },
-            },
-          ],
           defaultPatch: {
             value: {
               kind: 'unary',
@@ -230,9 +222,14 @@ const CURATED_EXAMPLES = [
                   op: 'and',
                   items: [
                     {
-                      kind: 'predicate',
-                      op: 'isEmpty',
-                      input: { source: 'caseValue' },
+                      kind: 'boolean',
+                      op: 'not',
+                      item: {
+                        kind: 'compare',
+                        op: 'contains',
+                        left: { source: 'caseValue' },
+                        right: { source: 'literal', value: '@' },
+                      },
                     },
                     {
                       kind: 'compare',
@@ -547,12 +544,31 @@ export function buildGeminiSystemInstruction(
     '- contains/startsWith/endsWith/matchesRegex require string-like inputs.',
     '- concat requires at least two scalar inputs. coalesce requires exactly two scalar inputs of one compatible non-mixed type.',
     '',
+    'Operator literal and behavior specifics (critical):',
+    '- datePart unit literals are singular: "year", "month", "day", "dayOfWeek", "hour", "minute", "second".',
+    '- dateDiff and dateAdd duration unit literals are plural: "years", "months", "days", "hours", "minutes", "seconds".',
+    '- For account age in days, use dateDiff(now(), <signup date>, "days"). Do not use "day" for dateDiff.',
+    '- dateDiff(a, b, unit) returns a - b. For elapsed age since a past date, put now() first and the past date second.',
+    '- substring(text, start, length) uses a zero-based start and a length, not an end index.',
+    '- atIndex(textOrList, index) uses a zero-based index.',
+    '- replace uses exact literal text. replaceRegex, extractRegex, and matchesRegex use regex pattern strings.',
+    '- concat joins values with no separator. Include literal separators like " " when needed.',
+    '- coalesce selects the first value that is not null and not "". Use trim/isEmpty logic when whitespace-only strings should count as missing.',
+    '- contains, startsWith, endsWith, and matchesRegex are case-sensitive. Normalize with lower(...) when matching case-insensitively.',
+    '',
     'Rules:',
+    '- First, inspect "Schema currently available to the returned steps" and ground every referenced input/source column against that list before drafting.',
+    '- Use only columns that are listed in the current schema, plus new columns that you derive earlier in your own steps.',
     '- Use column ids exactly as provided.',
     '- Keep steps in execution order.',
     '- If a later step drops a column, any logic that depends on that column must happen before the drop or be folded into an earlier step.',
     '- Use explicit casts like toString(...) or toNumber(...) when mixed columns need text or numeric treatment. Do not refuse mixed columns just because they are mixed.',
     '- In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds. If types differ, split into separate scopedRule steps per column group.',
+    '- If you must fill from a fallback column and then normalize or further transform the final result, use separate sequential steps. Do not assume scopedRule.defaultPatch also runs after a matched fallback case.',
+    '- If the user explicitly names a column like Phone or Email (2), use that exact provided column id rather than substituting a different column.',
+    '- If the request depends on an input/source column that is not listed in the current schema, return mode "clarify" and ask which listed column to use. Do not guess, reinterpret, or substitute a different column just because it seems similar.',
+    '- Do not treat generic words like "column", "field", "region-like field", or free-form clause fragments as schema columns unless they exactly match a listed column name or id.',
+    '- If the user names match outputs like return "email", return "sms", and return "none", include those named outputs explicitly in the classification logic.',
     '- isEmpty(...) already treats whitespace-only strings as empty.',
     '- For multi-step implementations, include concise comment steps so the workflow stays readable and the phase boundaries are obvious in the editor.',
     '- Use match for exclusive classification and bucketing. Match is ordered and first-match-wins.',
@@ -624,16 +640,27 @@ export function buildRepairUserMessage(
     'Use authoring boolean kinds only: predicate, compare, between, boolean.',
     'Use this exact fill-color word map: white=#FFFFFF, green=#C6EFCE, yellow=#FFEB9C, orange=#F4B183, red=#FFC7CE, purple=#D9C2E9, blue=#BDD7EE.',
     'If the user asks for a named color, emit the mapped hex exactly.',
+    'datePart units are singular: year, month, day, dayOfWeek, hour, minute, second.',
+    'dateDiff/dateAdd units are plural: years, months, days, hours, minutes, seconds. For account age in days, use dateDiff(now(), <signup date>, "days").',
+    'dateDiff(a, b, unit) returns a - b; put now() first and the past date second for elapsed age.',
+    'substring uses zero-based start plus length. atIndex uses a zero-based index.',
+    'replace uses literal exact text; replaceRegex, extractRegex, and matchesRegex use regex pattern strings.',
+    'concat has no separator unless you include a literal separator. coalesce checks null/empty-string, not whitespace-only strings.',
     'Preserve or add concise comment steps when the implementation has multiple phases.',
     'Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
     'Use { "source": "caseValue" } only inside match.cases[*].when.',
+    'Check the listed schema columns before drafting. Use only listed schema columns plus columns derived earlier in the workflow.',
+    'If a workflow must fill from a fallback column and then normalize the final result, use separate sequential steps. Do not rely on scopedRule.defaultPatch after a matched fallback case.',
+    'If the user explicitly names a column like Phone or Email (2), use that exact provided column id.',
+    'If the original request depends on a source column that is not listed in the current schema, do not substitute a different column just because it seems similar.',
+    'If the user names match outputs like "email", "sms", and "none", include those named outputs explicitly.',
     'Do not ask a clarification question in this repair turn. Return mode "draft".',
     'Return at least one step.',
     '',
     'Previous invalid response:',
     previousRawText,
     '',
-    'Validation issues:',
+    'Validation and task-quality issues:',
     JSON.stringify(
       issues.map((issue) => ({
         code: issue.code,
