@@ -125,19 +125,12 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
     ],
   },
   {
-    id: 'category_math',
-    name: 'Math',
-    colour: WORKFLOW_TOOLBOX_COLOURS.math,
-    entries: [
-      { type: BLOCK_TYPES.arithmeticFunction, searchText: 'add subtract multiply divide modulo arithmetic plus minus times percent' },
-      { type: BLOCK_TYPES.mathRoundingFunction, searchText: 'round floor ceil abs absolute value math rounding' },
-    ],
-  },
-  {
-    id: 'category_logic',
-    name: 'Logic',
+    id: 'category_math_logic',
+    name: 'Math & Logic',
     colour: WORKFLOW_TOOLBOX_COLOURS.logic,
     entries: [
+      { type: BLOCK_TYPES.arithmeticFunction, searchText: 'add subtract multiply divide modulo arithmetic plus minus times percent math' },
+      { type: BLOCK_TYPES.mathRoundingFunction, searchText: 'round floor ceil abs absolute value math rounding' },
       { type: BLOCK_TYPES.comparisonFunction, searchText: 'equals compare match not equals less greater less than greater than' },
       { type: BLOCK_TYPES.predicateFunction, searchText: 'contains starts with ends with matches regex predicate text logic binary' },
       { type: BLOCK_TYPES.unaryPredicateFunction, searchText: 'is empty blank null missing predicate unary logic' },

@@ -9,23 +9,22 @@ import { getSchemaColumnOptions } from './schemaOptions';
 const TRANSFORM_COLOR = '#b04a1f';
 const TABLE_OPERATION_COLOR = '#8c3a18';
 const COMMENT_COLOR = '#7a6f62';
-const SUPPORT_COLOR = '#6b6a5c';
+const CELL_ACTION_COLOR = '#6b3a8c';
+const LIST_COLOR = '#5f7f3a';
 const VALUE_COLOR = '#2d6a4f';
 const FUNCTION_COLOR = '#457b9d';
 const DATE_COLOR = '#2a9d8f';
-const MATH_COLOR = '#6b3a8c';
 const LOGIC_COLOR = '#355070';
 const LOGICAL_GROUP_ACTION_ICON_SIZE = 18;
 export const WORKFLOW_TOOLBOX_COLOURS = {
   scopedRules: TRANSFORM_COLOR,
-  cellActions: SUPPORT_COLOR,
+  cellActions: CELL_ACTION_COLOR,
   tableOperations: TABLE_OPERATION_COLOR,
   comments: COMMENT_COLOR,
-  lists: SUPPORT_COLOR,
+  lists: LIST_COLOR,
   values: VALUE_COLOR,
   functions: FUNCTION_COLOR,
   dateTime: DATE_COLOR,
-  math: MATH_COLOR,
   logic: LOGIC_COLOR,
 } as const;
 const CREATE_COLUMN_INPUT_NAMES = {
@@ -194,7 +193,7 @@ export function registerWorkflowBlocks() {
       this.appendStatementInput(RULE_CASE_INPUT_NAMES.actions).setCheck('CELL_ACTION_ITEM').appendField('do');
       this.setPreviousStatement(true, 'RULE_CASE_ITEM');
       this.setNextStatement(true, 'RULE_CASE_ITEM');
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(TRANSFORM_COLOR);
       this.setInputsInline(false);
     },
   };
@@ -207,7 +206,7 @@ export function registerWorkflowBlocks() {
         .appendField('to');
       this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
       this.setNextStatement(true, 'CELL_ACTION_ITEM');
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(CELL_ACTION_COLOR);
     },
   };
 
@@ -219,7 +218,7 @@ export function registerWorkflowBlocks() {
         .appendField('with');
       this.setPreviousStatement(true, 'CELL_ACTION_ITEM');
       this.setNextStatement(true, 'CELL_ACTION_ITEM');
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(CELL_ACTION_COLOR);
     },
   };
 
@@ -309,7 +308,7 @@ export function registerWorkflowBlocks() {
         .appendField(new Blockly.FieldTextInput('new_column'), 'DISPLAY_NAME');
       this.setPreviousStatement(true, 'OUTPUT_COLUMN_ITEM');
       this.setNextStatement(true, 'OUTPUT_COLUMN_ITEM');
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(LIST_COLOR);
     },
   };
 
@@ -325,7 +324,7 @@ export function registerWorkflowBlocks() {
         ]), 'DIRECTION');
       this.setPreviousStatement(true, 'SORT_ITEM');
       this.setNextStatement(true, 'SORT_ITEM');
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(LIST_COLOR);
     },
   };
 
@@ -525,7 +524,7 @@ export function registerWorkflowBlocks() {
     BLOCK_TYPES.arithmeticFunction,
     [['+', 'add'], ['-', 'subtract'], ['×', 'multiply'], ['÷', 'divide'], ['%', 'modulo']],
     'OPERATOR',
-    MATH_COLOR,
+    LOGIC_COLOR,
   );
   Blockly.Blocks[BLOCK_TYPES.mathRoundingFunction] = {
     init() {
@@ -538,7 +537,7 @@ export function registerWorkflowBlocks() {
           ['abs', 'abs'],
         ]), 'OPERATOR');
       this.setOutput(true, 'EXPRESSION');
-      this.setColour(MATH_COLOR);
+      this.setColour(LOGIC_COLOR);
     },
   };
   createDropdownBinaryFunctionBlock(BLOCK_TYPES.comparisonFunction, COMPARATOR_OPTIONS, 'OPERATOR', LOGIC_COLOR);
@@ -598,7 +597,7 @@ export function registerWorkflowBlocks() {
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(LOGIC_COLOR);
     },
   };
   Blockly.Blocks[BLOCK_TYPES.matchOtherwiseCaseItem] = {
@@ -607,7 +606,7 @@ export function registerWorkflowBlocks() {
       this.setPreviousStatement(true, 'MATCH_CASE_ITEM');
       this.setNextStatement(true, 'MATCH_CASE_ITEM');
       this.setInputsInline(false);
-      this.setColour(SUPPORT_COLOR);
+      this.setColour(LOGIC_COLOR);
     },
   };
   createUnaryFunctionBlock(BLOCK_TYPES.notFunction, 'not', LOGIC_COLOR);

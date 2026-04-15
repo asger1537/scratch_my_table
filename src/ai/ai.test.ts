@@ -106,6 +106,10 @@ describe('AI workflow copilot helpers', () => {
     expect(verificationInstruction).toContain(AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES[0]);
     expect(verificationInstruction).toContain('In scopedRule, then.value assigns/replaces the target cell value. It is not merely a returned expression.');
     expect(verificationInstruction).toContain('if no case matches and there is no defaultPatch, the cell is preserved unchanged');
+    expect(verificationInstruction).toContain('scopedRule cases are cumulative, not exclusive: every matching case applies.');
+    expect(verificationInstruction).toContain('Do not review scopedRule cases as first-match-wins.');
+    expect(verificationInstruction).toContain('later cases see the evolved current cell value after earlier matching cases have applied');
+    expect(verificationInstruction).toContain('one scopedRule may first fill empty Email from Email (2), then use a later isEmpty(value) case to color the cell red if the fallback was also empty');
     expect(verificationInstruction).toContain('A later scopedRule targeting the same column sees the value assigned by an earlier scopedRule.');
     expect(verificationInstruction).toContain('isEmpty(...) treats null, empty strings, and whitespace-only strings as empty.');
     expect(verificationInstruction).toContain('A fallback-only scopedRule such as "if current Email is empty, set it to Email (2)" does not clear non-empty Email cells.');

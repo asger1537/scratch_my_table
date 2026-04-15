@@ -40,9 +40,9 @@ describe('workflow toolbox search', () => {
   });
 
   it('finds generic logic blocks through keyword search', () => {
-    const comparisonMatches = getWorkflowToolboxCategoryContents('category_logic', 'greater');
-    const predicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'regex');
-    const unaryPredicateMatches = getWorkflowToolboxCategoryContents('category_logic', 'empty');
+    const comparisonMatches = getWorkflowToolboxCategoryContents('category_math_logic', 'greater');
+    const predicateMatches = getWorkflowToolboxCategoryContents('category_math_logic', 'regex');
+    const unaryPredicateMatches = getWorkflowToolboxCategoryContents('category_math_logic', 'empty');
     const colorMatches = getWorkflowToolboxCategoryContents('category_values', 'highlight');
     const cellActionMatches = getWorkflowToolboxCategoryContents('category_cell_actions', 'highlight');
 
@@ -91,7 +91,7 @@ describe('workflow toolbox search', () => {
   });
 
   it('returns a no-match label when a category search is empty', () => {
-    expect(getWorkflowToolboxCategoryContents('category_math', 'definitely-not-a-math-block')).toEqual([
+    expect(getWorkflowToolboxCategoryContents('category_math_logic', 'definitely-not-a-math-block')).toEqual([
       {
         kind: 'label',
         text: 'No matching blocks',
@@ -143,5 +143,22 @@ describe('workflow toolbox search', () => {
       expect.objectContaining({ type: BLOCK_TYPES.setValueActionItem }),
       expect.objectContaining({ type: BLOCK_TYPES.highlightActionItem }),
     ]);
+  });
+
+  it('combines math and logic blocks into one toolbox category', () => {
+    const categoryIds = WORKFLOW_TOOLBOX_CATEGORIES.map((category) => category.id);
+    const mathLogicCategory = getWorkflowToolboxCategory('category_math_logic');
+
+    expect(categoryIds).not.toContain('category_math');
+    expect(categoryIds).not.toContain('category_logic');
+    expect(mathLogicCategory?.name).toBe('Math & Logic');
+    expect(mathLogicCategory?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: BLOCK_TYPES.arithmeticFunction }),
+        expect.objectContaining({ type: BLOCK_TYPES.mathRoundingFunction }),
+        expect.objectContaining({ type: BLOCK_TYPES.comparisonFunction }),
+        expect.objectContaining({ type: BLOCK_TYPES.logicalBinaryFunction }),
+      ]),
+    );
   });
 });
