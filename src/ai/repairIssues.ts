@@ -273,28 +273,30 @@ function getIssuePriority(issue: AIDraftIssue, structuralOnly: boolean) {
   }
 
   switch (issue.code) {
-    case 'taskQualityFallbackThenNormalizeCompressed':
+    case 'taskQualityChecklistNotSatisfied':
       return 0;
-    case 'taskQualityPromptColumnMentionedButUnused':
+    case 'taskQualityFallbackThenNormalizeCompressed':
       return 1;
-    case 'taskQualityNamedBranchMissing':
+    case 'taskQualityPromptColumnMentionedButUnused':
       return 2;
-    case 'taskQualityPhaseMissing':
+    case 'taskQualityNamedBranchMissing':
       return 3;
-    case 'emptyDraft':
+    case 'taskQualityPhaseMissing':
       return 4;
-    case 'incompatibleType':
+    case 'emptyDraft':
       return 5;
-    case 'invalidExpression':
+    case 'incompatibleType':
       return 6;
-    case 'invalidRegex':
+    case 'invalidExpression':
       return 7;
-    case 'missingColumn':
+    case 'invalidRegex':
       return 8;
-    case 'duplicateColumnReference':
+    case 'missingColumn':
       return 9;
-    default:
+    case 'duplicateColumnReference':
       return 10;
+    default:
+      return 11;
   }
 }
 

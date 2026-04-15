@@ -422,10 +422,19 @@ describe('block-based workflow authoring', () => {
             call('first', call('last', call('split', column('col_last_name'), literal(' ')))),
           ),
         },
+        {
+          id: 'step_derive_last_name_word_count',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_last_name_word_count',
+            displayName: 'last_name_word_count',
+          },
+          expression: call('length', call('split', column('col_last_name'), literal(' '))),
+        },
       ],
     };
 
-    const workspace = buildWorkspaceFromColumnIds(['col_first_name', 'col_last_name', 'col_initials'], workflow);
+    const workspace = buildWorkspaceFromColumnIds(['col_first_name', 'col_last_name', 'col_initials', 'col_last_name_word_count'], workflow);
     const roundtrip = workspaceToWorkflow(workspace);
 
     expect(roundtrip.issues).toEqual([]);
@@ -433,6 +442,7 @@ describe('block-based workflow authoring', () => {
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.splitFunction);
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.firstFunction);
     expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.lastFunction);
+    expect(workspace.getAllBlocks(false).map((block) => block.type)).toContain(BLOCK_TYPES.lengthFunction);
   });
 
   it('reconstructs atIndex function trees', () => {
@@ -2160,6 +2170,7 @@ function call(
     | 'replaceRegex'
     | 'split'
     | 'atIndex'
+    | 'length'
     | 'round'
     | 'floor'
     | 'ceil'

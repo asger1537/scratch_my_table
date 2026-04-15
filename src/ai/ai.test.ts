@@ -5,15 +5,23 @@ import {
   buildDraftPreviewWorkflow,
   buildGeminiRequestExport,
   buildGeminiSystemInstruction,
+  buildChecklistVerificationSystemInstruction,
   buildRepairUserMessage,
+  buildRequirementPlanSystemInstruction,
   formatDraftStepsForDebug,
   generateGeminiDraftTurn,
   parseGeminiAuthoringResponse,
+  parseGeminiChecklistVerificationResponse,
+  parseGeminiRequirementPlanResponse,
   replaceWorkflowSteps,
   runGeminiDraftTurn,
   type AISettings,
   type AIPromptContext,
 } from './index';
+import {
+  AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES,
+  AI_OPERATOR_DOCUMENTATION_LINES,
+} from './promptDocumentation';
 import type { Table } from '../domain/model';
 import type { Workflow, WorkflowValidationIssue } from '../workflow';
 import { evaluateDraftQuality } from './evaluateDraftQuality';
@@ -44,6 +52,7 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('coalesce requires one or more scalar items of one compatible non-mixed type.');
     expect(instruction).toContain('coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".');
     expect(instruction).toContain('Use match/isEmpty on trimmed values when whitespace-only strings should count as missing.');
+    expect(instruction).toContain('length(textOrList) returns the number of characters in a string or items in a list.');
     expect(instruction).toContain('contains, startsWith, endsWith, and matchesRegex are case-sensitive.');
     expect(instruction).toContain('Comment guidance:');
     expect(instruction).toContain('Add concise comment steps to explain non-trivial implementations.');
@@ -55,6 +64,8 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).toContain('Normalize contact fields.');
     expect(instruction).toContain('Derive contact method.');
     expect(instruction).toContain('Drop helpers and filter rows.');
+    expect(instruction).toContain(AI_OPERATOR_DOCUMENTATION_LINES[0]);
+    expect(instruction).toContain(AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES[0]);
     expect(instruction).toContain('Default fill-color word map (use exact palette hex values):');
     expect(instruction).toContain('- red -> #FFC7CE');
     expect(instruction).toContain('In scopedRule, every expression in cases/defaultPatch must be valid for every targeted column in columnIds.');
@@ -66,6 +77,39 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).not.toContain('fill_empty_from_col');
     expect(instruction).not.toContain('normalize_text_col');
     expect(instruction).not.toContain('alice@example.com');
+  });
+
+  it('builds requirement planning and checklist verification prompts', () => {
+    const context = createPromptContext();
+    const planningInstruction = buildRequirementPlanSystemInstruction(context);
+    const verificationInstruction = buildChecklistVerificationSystemInstruction(context);
+
+    expect(planningInstruction).toContain('Convert the user request and conversation into a concise acceptance checklist before implementation.');
+    expect(planningInstruction).toContain('For large multi-concern requests, return clarify proposing named workflows and run order');
+    expect(planningInstruction).toContain('Treat numbered requests with 5 or more goals/phases');
+    expect(planningInstruction).toContain('A large multi-concern request should not return a singleWorkflow plan unless the user explicitly says to keep it as one workflow.');
+    expect(planningInstruction).toContain('Split clarification must ask the user to choose append, replace active workflow, or replace package.');
+    expect(planningInstruction).toContain('"draftKind": "singleWorkflow"|"workflowSet"');
+    expect(planningInstruction).toContain('Checklist acceptance criteria must describe required observable outcomes, not preferred implementation primitives.');
+    expect(planningInstruction).toContain('Do not prescribe operators like coalesce, match, replaceRegex, or length unless the user explicitly requested that operator.');
+    expect(planningInstruction).toContain('Preserve exact named outputs, derived column names, sort/dedupe keys');
+    expect(planningInstruction).toContain(AI_OPERATOR_DOCUMENTATION_LINES[0]);
+    expect(planningInstruction).toContain(AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES[0]);
+    expect(planningInstruction).toContain('- col_email | Email | string');
+
+    expect(verificationInstruction).toContain('Verify whether the compiled canonical draft satisfies the approved checklist.');
+    expect(verificationInstruction).toContain('- { "status": "pass"|"fail", "issues": [<issue>, ...] }');
+    expect(verificationInstruction).toContain('Do fail when a requested derived column, label, filter, formatting rule, drop, dedupe key, sort key/direction, or normalization is missing or contradictory.');
+    expect(verificationInstruction).toContain(AI_OPERATOR_DOCUMENTATION_LINES[0]);
+    expect(verificationInstruction).toContain(AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES[0]);
+    expect(verificationInstruction).toContain('In scopedRule, then.value assigns/replaces the target cell value. It is not merely a returned expression.');
+    expect(verificationInstruction).toContain('A later scopedRule targeting the same column sees the value assigned by an earlier scopedRule.');
+    expect(verificationInstruction).toContain('isEmpty(...) treats null, empty strings, and whitespace-only strings as empty.');
+    expect(verificationInstruction).toContain('a scopedRule that fills Email from Email (2), followed by a scopedRule that trims/lowercases Email, satisfies "fall back, then normalize the final Email"');
+    expect(verificationInstruction).toContain('Compiled canonical drafts use call names such as equals, greaterThan, lessThan');
+    expect(verificationInstruction).toContain('do not fail it just because it uses canonical call names instead of authoring operator aliases');
+    expect(verificationInstruction).toContain('Use checklist IDs exactly as provided.');
+    expect(verificationInstruction).toContain('- col_email | Email | string');
   });
 
   it('includes live workspace issues when using the last valid workflow snapshot', () => {
@@ -166,16 +210,19 @@ describe('AI workflow copilot helpers', () => {
 
     expect(repairMessage).toContain('Return JSON only with the same mode shape as the previous invalid response: draft uses mode/msg/ass/steps; workflowSetDraft uses mode/msg/ass/applyMode/workflows/runOrderWorkflowIds.');
     expect(repairMessage).toContain('Return authoring IR only.');
-    expect(repairMessage).toContain('Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.');
+    expect(repairMessage).toContain('Value expression shapes:');
+    expect(repairMessage).toContain('- nullary: { "kind": "nullary", "op": "now" }');
     expect(repairMessage).toContain('Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.');
-    expect(repairMessage).toContain('datePart units are singular: year, month, day, dayOfWeek, hour, minute, second.');
-    expect(repairMessage).toContain('dateDiff/dateAdd units are plural: years, months, days, hours, minutes, seconds. For account age in days, use dateDiff(now(), <signup date>, "days").');
-    expect(repairMessage).toContain('dateDiff(a, b, unit) returns a - b; put now() first and the past date second for elapsed age.');
-    expect(repairMessage).toContain('substring uses zero-based start plus length. atIndex uses a zero-based index.');
-    expect(repairMessage).toContain('replace uses literal exact text; replaceRegex, extractRegex, and matchesRegex use regex pattern strings.');
-    expect(repairMessage).toContain('concat has no separator unless you include a literal separator.');
-    expect(repairMessage).toContain('coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".');
-    expect(repairMessage).toContain('coalesce checks null/empty-string, not whitespace-only strings. Use match/isEmpty on trimmed values for whitespace fallback.');
+    expect(repairMessage).toContain(AI_OPERATOR_DOCUMENTATION_LINES[0]);
+    expect(repairMessage).toContain(AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES[0]);
+    expect(repairMessage).toContain('- datePart unit literals are singular: "year", "month", "day", "dayOfWeek", "hour", "minute", "second".');
+    expect(repairMessage).toContain('- dateDiff and dateAdd duration unit literals are plural: "years", "months", "days", "hours", "minutes", "seconds".');
+    expect(repairMessage).toContain('- dateDiff(a, b, unit) returns a - b. For elapsed age since a past date, put now() first and the past date second.');
+    expect(repairMessage).toContain('- substring(text, start, length) uses a zero-based start and a length, not an end index.');
+    expect(repairMessage).toContain('- replace uses exact literal text. replaceRegex, extractRegex, and matchesRegex use regex pattern strings.');
+    expect(repairMessage).toContain('- concat joins values with no separator. Include literal separators like " " when needed.');
+    expect(repairMessage).toContain('- coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".');
+    expect(repairMessage).toContain('- coalesce selects the first value that is not null and not "".');
     expect(repairMessage).toContain('Preserve or add concise comment steps when the implementation has multiple phases.');
     expect(repairMessage).toContain('Check the listed schema columns before drafting. Use only listed schema columns plus columns derived earlier in the workflow.');
     expect(repairMessage).toContain('If a workflow must fill from a fallback column and then normalize the final result, use separate sequential steps.');
@@ -399,6 +446,45 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
+  it('parses requirement plans and checklist verification responses', () => {
+    expect(parseGeminiRequirementPlanResponse(createRequirementPlanResponse())).toEqual(
+      expect.objectContaining({
+        mode: 'plan',
+        draftKind: 'singleWorkflow',
+        checklist: [
+          expect.objectContaining({
+            id: 'req_implement_request',
+          }),
+        ],
+      }),
+    );
+    expect(
+      parseGeminiRequirementPlanResponse(
+        JSON.stringify({
+          mode: 'clarify',
+          msg: 'Should I split this into two workflows?',
+          ass: [],
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        mode: 'clarify',
+      }),
+    );
+    expect(parseGeminiChecklistVerificationResponse(createChecklistPassResponse())).toEqual({
+      status: 'pass',
+      issues: [],
+    });
+    expect(parseGeminiChecklistVerificationResponse(createChecklistFailResponse())).toEqual({
+      status: 'fail',
+      issues: [
+        expect.objectContaining({
+          checklistId: 'req_implement_request',
+        }),
+      ],
+    });
+  });
+
   it('lets Gemini decide whether to clarify when a named prompt column is absent from the schema', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
@@ -408,7 +494,6 @@ describe('AI workflow copilot helpers', () => {
             mode: 'clarify',
             msg: 'I can’t find a Phone column in the current schema. Which existing column should I use instead?',
             ass: [],
-            steps: [],
           }),
         ),
       );
@@ -436,6 +521,163 @@ describe('AI workflow copilot helpers', () => {
         }),
         debugTrace: expect.objectContaining({
           initialValidationIssues: [],
+        }),
+      }),
+    );
+  });
+
+  it('forces workflow split clarification locally for large numbered single-workflow plans', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()));
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: [
+        'Goal 1: Normalize email.',
+        'Goal 2: Normalize phone.',
+        'Goal 3: Derive contact method.',
+        'Goal 4: Derive customer tier.',
+        'Goal 5: Highlight at-risk rows.',
+      ].join('\n'),
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'clarify',
+        repaired: false,
+        assistantMessage: expect.objectContaining({
+          text: expect.stringContaining('multiple workflows run in sequence'),
+        }),
+        debugTrace: expect.objectContaining({
+          requirementPlan: expect.objectContaining({
+            mode: 'plan',
+            draftKind: 'singleWorkflow',
+          }),
+          initialRawText: '',
+          initialResponse: expect.objectContaining({
+            mode: 'clarify',
+          }),
+        }),
+      }),
+    );
+    expect(outcome.assistantMessage.text).toContain('append');
+    expect(outcome.assistantMessage.text).toContain('replace the active workflow');
+    expect(outcome.assistantMessage.text).toContain('replace the full workflow package');
+  });
+
+  it('forces workflow-set apply-mode clarification when Gemini infers append or replace without user approval', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createRequirementPlanResponse({
+            draftKind: 'workflowSet',
+            workflowPlan: {
+              applyMode: 'replacePackage',
+              workflows: [
+                { workflowId: 'wf_normalize', name: 'Normalize source fields' },
+                { workflowId: 'wf_finalize', name: 'Finalize rows' },
+              ],
+              runOrderWorkflowIds: ['wf_normalize', 'wf_finalize'],
+            },
+          }),
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: [
+        'Goal 1: Normalize email.',
+        'Goal 2: Normalize phone.',
+        'Goal 3: Derive contact method.',
+        'Goal 4: Derive customer tier.',
+        'Goal 5: Highlight at-risk rows.',
+      ].join('\n'),
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'clarify',
+        assistantMessage: expect.objectContaining({
+          text: expect.stringContaining('"Normalize source fields" -> "Finalize rows"'),
+        }),
+        debugTrace: expect.objectContaining({
+          requirementPlan: expect.objectContaining({
+            mode: 'plan',
+            draftKind: 'workflowSet',
+          }),
+          initialRawText: '',
+        }),
+      }),
+    );
+    expect(outcome.assistantMessage.text).toContain('append');
+    expect(outcome.assistantMessage.text).toContain('replace the active workflow');
+    expect(outcome.assistantMessage.text).toContain('replace the full workflow package');
+  });
+
+  it('does not treat assistant-proposed apply-mode options as a user apply-mode choice', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createRequirementPlanResponse({
+            draftKind: 'workflowSet',
+            workflowPlan: {
+              applyMode: 'replacePackage',
+              workflows: [
+                { workflowId: 'wf_normalize', name: 'Normalize source fields' },
+                { workflowId: 'wf_finalize', name: 'Finalize rows' },
+              ],
+              runOrderWorkflowIds: ['wf_normalize', 'wf_finalize'],
+            },
+          }),
+        ),
+      );
+    const context = createPromptContext();
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: {
+        ...context,
+        messages: [
+          {
+            role: 'user',
+            text: 'Goal 1: Normalize email.\nGoal 2: Derive contact method.\nGoal 3: Filter rows.\nGoal 4: Drop helpers.\nGoal 5: Sort output.',
+            timestamp: '2026-04-15T12:48:27.000Z',
+          },
+          {
+            role: 'assistant',
+            text: 'Should I append it, replace the active workflow, or replace the full workflow package?',
+            timestamp: '2026-04-15T12:48:31.000Z',
+          },
+        ],
+      },
+      userText: 'Replace',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'clarify',
+        assistantMessage: expect.objectContaining({
+          text: expect.stringContaining('append it, replace the active workflow, or replace the full workflow package'),
         }),
       }),
     );
@@ -692,6 +934,7 @@ describe('AI workflow copilot helpers', () => {
   it('routes authoring compile errors into repair before canonical workflow validation', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
       .mockResolvedValueOnce(
         createGeminiResponse(
           JSON.stringify({
@@ -783,7 +1026,8 @@ describe('AI workflow copilot helpers', () => {
             ],
           }),
         ),
-      );
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
     const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>().mockResolvedValueOnce([]);
 
     const outcome = await runGeminiDraftTurn({
@@ -818,6 +1062,7 @@ describe('AI workflow copilot helpers', () => {
   it('validates compiled drafts as full workflow replacements and repairs semantic validation failures', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
       .mockResolvedValueOnce(
         createGeminiResponse(
           JSON.stringify({
@@ -879,7 +1124,8 @@ describe('AI workflow copilot helpers', () => {
             ],
           }),
         ),
-      );
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
     const validateCandidateWorkflow = vi
       .fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
       .mockResolvedValueOnce([
@@ -926,9 +1172,11 @@ describe('AI workflow copilot helpers', () => {
   it('can recover after a second repair attempt and targets the first repair raw response', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
       .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Initial invalid fallback.', 'col_missing_initial')))
       .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair one is still invalid.', 'col_missing_repair_one')))
-      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair two fixed the fallback.', 'col_email_2')));
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair two fixed the fallback.', 'col_email_2')))
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
     const validateCandidateWorkflow = vi
       .fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
       .mockResolvedValueOnce([
@@ -963,9 +1211,9 @@ describe('AI workflow copilot helpers', () => {
       fetchFn,
     });
 
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
     expect(validateCandidateWorkflow).toHaveBeenCalledTimes(3);
-    const repairTwoRequest = JSON.stringify(JSON.parse(fetchFn.mock.calls[2][1]?.body as string));
+    const repairTwoRequest = JSON.stringify(JSON.parse(fetchFn.mock.calls[3][1]?.body as string));
     expect(repairTwoRequest).toContain('Repair one is still invalid.');
     expect(repairTwoRequest).toContain('col_missing_repair_one');
     expect(outcome).toEqual(
@@ -995,6 +1243,7 @@ describe('AI workflow copilot helpers', () => {
   it('returns the final repair issues after both repair attempts fail', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
       .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Initial invalid fallback.', 'col_missing_initial')))
       .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair one is invalid.', 'col_missing_repair_one')))
       .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair two is invalid.', 'col_missing_repair_two')));
@@ -1042,7 +1291,7 @@ describe('AI workflow copilot helpers', () => {
       fetchFn,
     });
 
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
     expect(validateCandidateWorkflow).toHaveBeenCalledTimes(3);
     expect(outcome).toEqual(
       expect.objectContaining({
@@ -1073,6 +1322,7 @@ describe('AI workflow copilot helpers', () => {
   it('routes task-quality issues into repair even when canonical validation passes', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
       .mockResolvedValueOnce(
         createGeminiResponse(
           JSON.stringify({
@@ -1180,7 +1430,8 @@ describe('AI workflow copilot helpers', () => {
             ],
           }),
         ),
-      );
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
     const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
@@ -1217,9 +1468,186 @@ describe('AI workflow copilot helpers', () => {
     );
   });
 
+  it('routes checklist verification failures into the repair loop after canonical validation passes', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Initial valid-by-schema draft.', 'col_email_2')))
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createChecklistFailResponse({
+            checklistId: 'req_implement_request',
+            code: 'missing_cleanup',
+            message: 'The draft does not fully satisfy the checklist.',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair satisfies the checklist.', 'col_email_2')))
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
+    const validateCandidateWorkflow = vi
+      .fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Use Email (2) as fallback then drop it.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(5);
+    expect(validateCandidateWorkflow).toHaveBeenCalledTimes(2);
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        repaired: true,
+        debugTrace: expect.objectContaining({
+          initialValidationIssues: [
+            expect.objectContaining({
+              code: 'taskQualityChecklistNotSatisfied',
+              path: 'checklist.req_implement_request',
+            }),
+          ],
+          verificationAttempts: [
+            expect.objectContaining({
+              issues: [
+                expect.objectContaining({
+                  code: 'taskQualityChecklistNotSatisfied',
+                }),
+              ],
+            }),
+            expect.objectContaining({
+              issues: [],
+            }),
+          ],
+          repairAttempts: [
+            expect.objectContaining({
+              attempt: 1,
+              validationIssues: [],
+              verificationIssues: [],
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('returns final checklist verification issues when both repairs fail task fulfillment', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(createGeminiResponse(createRequirementPlanResponse()))
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Initial valid-by-schema draft.', 'col_email_2')))
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createChecklistFailResponse({
+            checklistId: 'req_implement_request',
+            code: 'wrong_sort',
+            message: 'The draft sorts account_age_days descending instead of ascending.',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair one still misses the checklist.', 'col_email_2')))
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createChecklistFailResponse({
+            checklistId: 'req_implement_request',
+            code: 'wrong_sort',
+            message: 'The first repair still sorts account_age_days descending instead of ascending.',
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createEmailFallbackResponse('Repair two still misses the checklist.', 'col_email_2')))
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createChecklistFailResponse({
+            checklistId: 'req_implement_request',
+            code: 'wrong_sort',
+            message: 'The final repair still sorts account_age_days descending instead of ascending.',
+          }),
+        ),
+      );
+    const validateCandidateWorkflow = vi
+      .fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Use Email (2) as fallback then drop it.',
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(7);
+    expect(validateCandidateWorkflow).toHaveBeenCalledTimes(3);
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'invalidDraft',
+        repaired: true,
+        validationIssues: [
+          expect.objectContaining({
+            code: 'taskQualityChecklistNotSatisfied',
+            message: expect.stringContaining('final repair'),
+          }),
+        ],
+        debugTrace: expect.objectContaining({
+          verificationAttempts: [
+            expect.objectContaining({ issues: [expect.objectContaining({ code: 'taskQualityChecklistNotSatisfied' })] }),
+            expect.objectContaining({ issues: [expect.objectContaining({ code: 'taskQualityChecklistNotSatisfied' })] }),
+            expect.objectContaining({ issues: [expect.objectContaining({ code: 'taskQualityChecklistNotSatisfied' })] }),
+          ],
+          repairAttempts: [
+            expect.objectContaining({
+              attempt: 1,
+              verificationIssues: [
+                expect.objectContaining({
+                  code: 'taskQualityChecklistNotSatisfied',
+                }),
+              ],
+            }),
+            expect.objectContaining({
+              attempt: 2,
+              verificationIssues: [
+                expect.objectContaining({
+                  message: expect.stringContaining('final repair'),
+                }),
+              ],
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it('validates workflowSetDraft responses through the sequence-aware workflow-set callback', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createRequirementPlanResponse({
+            draftKind: 'workflowSet',
+            checklist: [
+              {
+                id: 'req_split_contacts',
+                requirement: 'Split contact preparation and filtering into sequenced workflows.',
+                acceptanceCriteria: ['The generated run order prepares contacts before filtering them.'],
+              },
+            ],
+            workflowPlan: {
+              applyMode: 'append',
+              workflows: [
+                { workflowId: 'wf_prepare_contacts', name: 'Prepare contacts' },
+                { workflowId: 'wf_filter_contacts', name: 'Filter contacts' },
+              ],
+              runOrderWorkflowIds: ['wf_prepare_contacts', 'wf_filter_contacts'],
+            },
+          }),
+        ),
+      )
       .mockResolvedValueOnce(
         createGeminiResponse(
           JSON.stringify({
@@ -1270,7 +1698,8 @@ describe('AI workflow copilot helpers', () => {
             runOrderWorkflowIds: ['wf_prepare_contacts', 'wf_filter_contacts'],
           }),
         ),
-      );
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
     const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
     const validateCandidateWorkflowSet = vi.fn<(_workflows: Workflow[], _runOrderWorkflowIds: string[]) => Promise<WorkflowValidationIssue[]>>()
       .mockResolvedValueOnce([]);
@@ -1597,6 +2026,63 @@ function createAISettings(): AISettings {
     model: 'gemini-2.5-flash',
     thinkingEnabled: false,
   };
+}
+
+function createRequirementPlanResponse(
+  overrides: Partial<{
+    msg: string;
+    ass: string[];
+    draftKind: 'singleWorkflow' | 'workflowSet';
+    checklist: Array<{
+      id: string;
+      requirement: string;
+      acceptanceCriteria: string[];
+    }>;
+    workflowPlan: {
+      applyMode: 'append' | 'replaceActive' | 'replacePackage';
+      workflows: Array<{
+        workflowId: string;
+        name: string;
+        description?: string;
+      }>;
+      runOrderWorkflowIds: string[];
+    };
+  }> = {},
+) {
+  return JSON.stringify({
+    mode: 'plan',
+    msg: 'I will implement the requested changes.',
+    ass: [],
+    draftKind: 'singleWorkflow',
+    checklist: [
+      {
+        id: 'req_implement_request',
+        requirement: 'Implement the requested workflow changes.',
+        acceptanceCriteria: ['The compiled draft satisfies the user request.'],
+      },
+    ],
+    ...overrides,
+  });
+}
+
+function createChecklistPassResponse() {
+  return JSON.stringify({
+    status: 'pass',
+    issues: [],
+  });
+}
+
+function createChecklistFailResponse(
+  issue = {
+    checklistId: 'req_implement_request',
+    code: 'missing_requirement',
+    message: 'The draft does not satisfy the requested workflow change.',
+  },
+) {
+  return JSON.stringify({
+    status: 'fail',
+    issues: [issue],
+  });
 }
 
 function createEmailFallbackResponse(msg: string, fallbackColumnId: string) {

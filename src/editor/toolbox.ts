@@ -107,6 +107,7 @@ export const WORKFLOW_TOOLBOX_CATEGORIES: ToolboxCategorySource[] = [
       { type: BLOCK_TYPES.splitFunction, searchText: 'split delimiter tokenize list parts words' },
       { type: BLOCK_TYPES.firstFunction, searchText: 'first first item first character list string' },
       { type: BLOCK_TYPES.lastFunction, searchText: 'last last item last character list string' },
+      { type: BLOCK_TYPES.lengthFunction, searchText: 'length count characters items size list string' },
       { type: BLOCK_TYPES.atIndexFunction, searchText: 'at index item by index nth element list string' },
       { type: BLOCK_TYPES.coalesceFunction, searchText: 'coalesce fallback default null empty first non empty' },
       { type: BLOCK_TYPES.concatFunction, searchText: 'concat concatenate join combine strings text' },

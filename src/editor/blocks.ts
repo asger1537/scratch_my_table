@@ -129,6 +129,7 @@ export const BLOCK_TYPES = {
   atIndexFunction: 'at_index_function',
   firstFunction: 'first_function',
   lastFunction: 'last_function',
+  lengthFunction: 'length_function',
   nowFunction: 'now_function',
   datePartFunction: 'date_part_function',
   dateDiffFunction: 'date_diff_function',
@@ -414,6 +415,7 @@ export function registerWorkflowBlocks() {
   createUnaryFunctionBlock(BLOCK_TYPES.collapseWhitespaceFunction, 'collapse whitespace', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.firstFunction, 'first', FUNCTION_COLOR);
   createUnaryFunctionBlock(BLOCK_TYPES.lastFunction, 'last', FUNCTION_COLOR);
+  createUnaryFunctionBlock(BLOCK_TYPES.lengthFunction, 'length', FUNCTION_COLOR);
   Blockly.Blocks[BLOCK_TYPES.nowFunction] = {
     init() {
       this.appendDummyInput().appendField('current date and time');

@@ -2541,6 +2541,31 @@ function AIAssistantModal({
                   </div>
                 </dl>
                 <div className="ai-debug-trace__section">
+                  <strong>Requirement plan</strong>
+                  <textarea
+                    className="json-viewer ai-debug-trace__viewer"
+                    readOnly
+                    value={`${JSON.stringify(
+                      {
+                        rawText: aiDebugTrace.requirementPlanRawText ?? null,
+                        response: aiDebugTrace.requirementPlan ?? null,
+                      },
+                      null,
+                      2,
+                    )}\n`}
+                  />
+                </div>
+                {aiDebugTrace.verificationAttempts.length > 0 ? (
+                  <div className="ai-debug-trace__section">
+                    <strong>Checklist verification attempts</strong>
+                    <textarea
+                      className="json-viewer ai-debug-trace__viewer"
+                      readOnly
+                      value={`${JSON.stringify(aiDebugTrace.verificationAttempts, null, 2)}\n`}
+                    />
+                  </div>
+                ) : null}
+                <div className="ai-debug-trace__section">
                   <strong>Initial parsed authoring response</strong>
                   <textarea
                     className="json-viewer ai-debug-trace__viewer"
@@ -2596,6 +2621,7 @@ function AIAssistantModal({
                           compiledDraft: attempt.compiledDraft ?? null,
                           compilationIssues: attempt.compilationIssues,
                           validationIssues: attempt.validationIssues,
+                          verificationIssues: attempt.verificationIssues,
                         },
                         null,
                         2,

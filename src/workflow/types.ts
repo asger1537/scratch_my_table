@@ -57,6 +57,7 @@ export type WorkflowExpressionFunctionName =
   | 'atIndex'
   | 'first'
   | 'last'
+  | 'length'
   | 'coalesce'
   | 'concat'
   | 'equals'

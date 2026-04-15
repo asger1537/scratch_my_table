@@ -957,6 +957,41 @@ describe('workflow validation and execution', () => {
     expect(execution.transformedTable?.rowsById.row_3.cellsByColumnId.col_initials).toBe('DL');
   });
 
+  it('derives length over strings and split lists', () => {
+    const table = loadCsvTable('phrase\r\nabc def\r\n');
+    const workflow: Workflow = {
+      version: 2,
+      workflowId: 'wf_derive_lengths',
+      name: 'Derive lengths',
+      steps: [
+        {
+          id: 'step_derive_phrase_length',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_phrase_length',
+            displayName: 'phrase_length',
+          },
+          expression: call('length', column('col_phrase')),
+        },
+        {
+          id: 'step_derive_word_count',
+          type: 'deriveColumn',
+          newColumn: {
+            columnId: 'col_word_count',
+            displayName: 'word_count',
+          },
+          expression: call('length', call('split', column('col_phrase'), literal(' '))),
+        },
+      ],
+    };
+
+    const execution = executeWorkflow(workflow, table);
+
+    expect(execution.validationErrors).toEqual([]);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_phrase_length).toBe(7);
+    expect(execution.transformedTable?.rowsById.row_1.cellsByColumnId.col_word_count).toBe(2);
+  });
+
   it('evaluates atIndex on strings and split lists deterministically', () => {
     const table = loadCsvTable('full_name\r\nFirst Middle Last\r\nSolo\r\n');
     const workflow: Workflow = {
@@ -2030,6 +2065,7 @@ function call(
     | 'replaceRegex'
     | 'split'
     | 'atIndex'
+    | 'length'
     | 'round'
     | 'floor'
     | 'ceil'

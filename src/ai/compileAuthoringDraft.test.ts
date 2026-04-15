@@ -159,6 +159,18 @@ describe('compileAuthoringDraft', () => {
       {
         type: 'deriveColumn',
         newColumn: {
+          columnId: 'col_last_name_length',
+          displayName: 'Last Name Length',
+        },
+        derive: {
+          kind: 'unary',
+          op: 'length',
+          input: { source: 'column', columnId: 'col_last_name' },
+        },
+      },
+      {
+        type: 'deriveColumn',
+        newColumn: {
           columnId: 'col_year',
           displayName: 'Year',
         },
@@ -192,6 +204,14 @@ describe('compileAuthoringDraft', () => {
           displayName: 'Created At',
         },
         expression: call('now'),
+      },
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_last_name_length',
+          displayName: 'Last Name Length',
+        },
+        expression: call('length', column('col_last_name')),
       },
       {
         type: 'deriveColumn',

@@ -43,6 +43,7 @@ export type AuthoringUnaryValueOp =
   | 'collapseWhitespace'
   | 'first'
   | 'last'
+  | 'length'
   | 'round'
   | 'floor'
   | 'ceil'

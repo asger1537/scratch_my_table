@@ -1162,6 +1162,32 @@ function validateCallExpression(
         issues,
       };
     }
+    case 'length': {
+      if (results.length !== 1) {
+        issues.push(makeIssue('invalidExpression', `Function 'length' requires exactly one argument.`, path, stepId));
+        return { logicalType: 'unknown', valueKind: 'scalar', issues };
+      }
+
+      const [input] = results;
+
+      if (input.valueKind !== 'list' && (input.valueKind !== 'scalar' || !isStringLikeType(input.logicalType))) {
+        issues.push(
+          makeIssue(
+            'incompatibleType',
+            `Function 'length' requires a string or list input but received '${input.logicalType}'.`,
+            `${path}.args[0]`,
+            stepId,
+            { logicalType: input.logicalType, valueKind: input.valueKind, functionName: expression.name },
+          ),
+        );
+      }
+
+      return {
+        logicalType: 'number',
+        valueKind: 'scalar',
+        issues,
+      };
+    }
     case 'first':
     case 'last': {
       if (results.length !== 1) {
@@ -2277,6 +2303,15 @@ function evaluateCallExpression(expression: WorkflowCallExpression, context: Exp
       }
 
       return value;
+    }
+    case 'length': {
+      const value = evaluateExpression(expression.args[0], context);
+
+      if (Array.isArray(value) || typeof value === 'string') {
+        return value.length;
+      }
+
+      return null;
     }
     case 'coalesce': {
       const first = evaluateExpression(expression.args[0], context);

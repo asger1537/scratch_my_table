@@ -1049,6 +1049,8 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
       return readUnaryCall(block, 'first');
     case BLOCK_TYPES.lastFunction:
       return readUnaryCall(block, 'last');
+    case BLOCK_TYPES.lengthFunction:
+      return readUnaryCall(block, 'length');
     case BLOCK_TYPES.nowFunction:
       return {
         expression: {
@@ -1173,7 +1175,7 @@ function readExpression(block: Blockly.Block): { expression: WorkflowExpression 
 
 function readUnaryCall(
   block: Blockly.Block,
-  name: 'trim' | 'lower' | 'upper' | 'toNumber' | 'toString' | 'toBoolean' | 'collapseWhitespace' | 'first' | 'last' | 'not',
+  name: 'trim' | 'lower' | 'upper' | 'toNumber' | 'toString' | 'toBoolean' | 'collapseWhitespace' | 'first' | 'last' | 'length' | 'not',
 ): { expression: WorkflowExpression } | { issue: EditorIssue } {
   return readFixedArityCall(block, name, ['INPUT']);
 }
@@ -1211,6 +1213,7 @@ function readFixedArityCall(
     | 'collapseWhitespace'
     | 'first'
     | 'last'
+    | 'length'
     | 'isEmpty'
     | 'not'
     | 'equals'
@@ -2011,6 +2014,7 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
     case 'collapseWhitespace':
     case 'first':
     case 'last':
+    case 'length':
     case 'not': {
       const blockType = {
         trim: BLOCK_TYPES.trimFunction,
@@ -2022,6 +2026,7 @@ function createCallBlock(workspace: Blockly.Workspace, expression: Extract<Workf
         collapseWhitespace: BLOCK_TYPES.collapseWhitespaceFunction,
         first: BLOCK_TYPES.firstFunction,
         last: BLOCK_TYPES.lastFunction,
+        length: BLOCK_TYPES.lengthFunction,
         not: BLOCK_TYPES.notFunction,
       }[expression.name];
       const block = createBlock(workspace, blockType);

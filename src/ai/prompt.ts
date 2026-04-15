@@ -2,10 +2,26 @@ import { validateWorkflowSemantics, type Workflow } from '../workflow';
 import { flattenWorkflowSequence } from '../workflowPackage';
 
 import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
-import type { AIDraft, AIRepairIssueSummary, AIPromptContext, AIMessage, WorkflowStepInput } from './types';
+import {
+  AI_AUTHORING_IR_DOCUMENTATION_LINES,
+  AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES,
+  AI_COLOR_DOCUMENTATION_LINES,
+  AI_OPERATOR_DOCUMENTATION_LINES,
+  buildSharedImplementationDocumentation,
+} from './promptDocumentation';
+import type {
+  AIChecklistVerificationIssue,
+  AIRequirementPlanResponse,
+  AIDraft,
+  AIRepairIssueSummary,
+  AIPromptContext,
+  AIMessage,
+  WorkflowStepInput,
+} from './types';
 
 export interface GeminiPromptOptions {
   includeCuratedExamples?: boolean;
+  requirementPlan?: Extract<AIRequirementPlanResponse, { mode: 'plan' }>;
 }
 
 export interface GeminiContent {
@@ -558,6 +574,24 @@ export function buildGeminiSystemInstruction(
       : 'There is an existing AI draft. Return the FULL updated authoring step list that should replace that AI draft.'
     : 'There is no AI draft yet. Return the FULL updated authoring step list or workflow-set draft that should replace the current workflow context.';
   const includeCuratedExamples = options.includeCuratedExamples !== false;
+  const requirementPlanSections = options.requirementPlan
+    ? [
+        '',
+        'Approved requirement checklist:',
+        `- Planned draft kind: ${options.requirementPlan.draftKind}`,
+        ...options.requirementPlan.checklist.flatMap((item) => [
+          `- ${item.id}: ${item.requirement}`,
+          ...item.acceptanceCriteria.map((criterion) => `  - acceptance: ${criterion}`),
+        ]),
+        ...(options.requirementPlan.workflowPlan
+          ? [
+              'Approved workflow split plan:',
+              JSON.stringify(options.requirementPlan.workflowPlan, null, 2),
+            ]
+          : []),
+        'Implement every checklist item. Do not ask to split again when the checklist already plans a workflowSet draft.',
+      ]
+    : [];
   const promptSections = [
     'You are an expert Scratch My Table copilot.',
     'Translate the user request into the Scratch My Table AI authoring IR.',
@@ -615,71 +649,13 @@ export function buildGeminiSystemInstruction(
     '- Keep comment text action-oriented and brief, usually 3 to 8 words.',
     '- Do not add comments for every single step, and skip comments for trivial one-step drafts.',
     '',
-    'Default fill-color word map (use exact palette hex values):',
-    '- white -> #FFFFFF',
-    '- green -> #C6EFCE',
-    '- yellow -> #FFEB9C',
-    '- orange -> #F4B183',
-    '- red -> #FFC7CE',
-    '- purple -> #D9C2E9',
-    '- blue -> #BDD7EE',
-    '- If the user asks for a named color, emit the mapped hex exactly. Do not substitute another color.',
+    ...AI_COLOR_DOCUMENTATION_LINES,
     '',
-    'Authoring operands:',
-    '- column operand: { "source": "column", "columnId": "col_x" }',
-    '- scoped current-cell operand: { "source": "value" }',
-    '- current match subject operand: { "source": "caseValue" }',
-    '- literal operand: { "source": "literal", "value": "text" | 123 | true | false | null }',
-    '- Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
-    '- Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.',
+    ...AI_AUTHORING_IR_DOCUMENTATION_LINES,
     '',
-    'Value expression shapes:',
-    '- nullary: { "kind": "nullary", "op": "now" }',
-    '- unary: { "kind": "unary", "op": "trim"|"lower"|"upper"|"toNumber"|"toString"|"toBoolean"|"collapseWhitespace"|"first"|"last"|"round"|"floor"|"ceil"|"abs", "input": <value expression> }',
-    '- binary: { "kind": "binary", "op": "split"|"atIndex"|"extractRegex"|"add"|"subtract"|"multiply"|"divide"|"modulo"|"datePart", "left": <value expression>, "right": <value expression> }',
-    '- ternary: { "kind": "ternary", "op": "substring"|"replace"|"replaceRegex"|"dateDiff"|"dateAdd", "first": <value expression>, "second": <value expression>, "third": <value expression> }',
-    '- nary: { "kind": "nary", "op": "concat"|"coalesce", "items": [<value expression>, ...] }',
-    '- match: { "kind": "match", "subject": <value expression>, "cases": [{ "kind": "when", "when": <boolean expression>, "then": <value expression> }, { "kind": "otherwise", "then": <value expression> }] }',
+    ...AI_OPERATOR_DOCUMENTATION_LINES,
     '',
-    'Boolean expression shapes:',
-    '- predicate: { "kind": "predicate", "op": "isEmpty", "input": <value expression> }',
-    '- compare: { "kind": "compare", "op": "eq"|"gt"|"lt"|"gte"|"lte"|"contains"|"startsWith"|"endsWith"|"matchesRegex", "left": <value expression>, "right": <value expression> }',
-    '- between: { "kind": "between", "input": <value expression>, "min": <value expression>, "max": <value expression>, "inclusiveMin": true|false, "inclusiveMax": true|false }',
-    '- boolean group: { "kind": "boolean", "op": "and"|"or", "items": [<boolean expression>, ...] }',
-    '- boolean not: { "kind": "boolean", "op": "not", "item": <boolean expression> }',
-    '',
-    'Operator input type requirements (critical):',
-    '- String-like means logical type string or unknown. Number-like means logical type number or unknown.',
-    '- trim/lower/upper/collapseWhitespace require string-like input.',
-    '- toNumber/toString/toBoolean require scalar input.',
-    '- first/last require a string-like input or a list input.',
-    '- split requires (string-like text, string-like delimiter).',
-    '- atIndex requires (string-like or list input, number-like index).',
-    '- extractRegex requires (string-like text, string-like pattern).',
-    '- substring requires (string-like text, number-like start, number-like length).',
-    '- replace and replaceRegex require three string-like inputs.',
-    '- add/subtract/multiply/divide/modulo require number-like left and right inputs.',
-    '- round/floor/ceil/abs require a number-like input.',
-    '- datePart requires (date/datetime/string-like value, string-like unit literal).',
-    '- dateDiff requires (date/datetime/string-like left, date/datetime/string-like right, string-like unit literal).',
-    '- dateAdd requires (date/datetime/string-like value, number-like amount, string-like unit literal).',
-    '- isEmpty requires scalar input. not requires boolean-like input. and/or require boolean-like inputs.',
-    '- eq requires comparable scalar inputs. gt/lt/gte/lte/between require comparable ordered scalar inputs.',
-    '- contains/startsWith/endsWith/matchesRegex require string-like inputs.',
-    '- concat requires at least two scalar inputs. coalesce requires one or more scalar items of one compatible non-mixed type.',
-    '',
-    'Operator literal and behavior specifics (critical):',
-    '- datePart unit literals are singular: "year", "month", "day", "dayOfWeek", "hour", "minute", "second".',
-    '- dateDiff and dateAdd duration unit literals are plural: "years", "months", "days", "hours", "minutes", "seconds".',
-    '- For account age in days, use dateDiff(now(), <signup date>, "days"). Do not use "day" for dateDiff.',
-    '- dateDiff(a, b, unit) returns a - b. For elapsed age since a past date, put now() first and the past date second.',
-    '- substring(text, start, length) uses a zero-based start and a length, not an end index.',
-    '- atIndex(textOrList, index) uses a zero-based index.',
-    '- replace uses exact literal text. replaceRegex, extractRegex, and matchesRegex use regex pattern strings.',
-    '- concat joins values with no separator. Include literal separators like " " when needed.',
-    '- coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".',
-    '- coalesce selects the first value that is not null and not "". Use match/isEmpty on trimmed values when whitespace-only strings should count as missing.',
-    '- contains, startsWith, endsWith, and matchesRegex are case-sensitive. Normalize with lower(...) when matching case-insensitively.',
+    ...AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES,
     '',
     'Rules:',
     '- First, inspect "Schema currently available to the returned steps" and ground every referenced input/source column against that list before drafting.',
@@ -697,6 +673,7 @@ export function buildGeminiSystemInstruction(
     '- If the user names match outputs like return "email", return "sms", and return "none", include those named outputs explicitly in the classification logic.',
     '- isEmpty(...) already treats whitespace-only strings as empty.',
     '- For multi-step implementations, include concise comment steps so the workflow stays readable and the phase boundaries are obvious in the editor.',
+    '- When an approved requirement checklist is present, treat it as the acceptance contract and implement every item.',
     '- Use match for exclusive classification and bucketing. Match is ordered and first-match-wins.',
     '- Use scopedRule for cumulative cell rewrite behavior. Multiple scopedRule cases may apply in order to the evolving current cell value.',
     '- scopedRule uses { "source": "value" }. match case conditions and result expressions may use { "source": "caseValue" }. Do not mix them up.',
@@ -704,6 +681,7 @@ export function buildGeminiSystemInstruction(
     '',
     'Schema currently available to the returned steps:',
     ...availableSchemaLines,
+    ...requirementPlanSections,
     '',
     'Current workflow/editor issues:',
     ...currentIssues,
@@ -749,10 +727,105 @@ export function buildGeminiContents(messages: AIMessage[], userMessage: AIMessag
   }));
 }
 
+export function buildRequirementPlanSystemInstruction(context: AIPromptContext): string {
+  const availableSchemaLines = getAvailableSchemaPromptLines(context);
+  const currentIssues = context.currentIssues.length > 0
+    ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
+    : ['- (none)'];
+
+  return [
+    'You are an expert Scratch My Table task planner.',
+    'Convert the user request and conversation into a concise acceptance checklist before implementation.',
+    'Return JSON only. Do not use markdown fences.',
+    'Do not return workflow steps, authoring IR steps, canonical Workflow IR, or Blockly data.',
+    '',
+    'Response contract:',
+    '- clarify: { "mode": "clarify", "msg": "...", "ass": [] }',
+    '- plan: { "mode": "plan", "msg": "...", "ass": [], "draftKind": "singleWorkflow"|"workflowSet", "checklist": [<item>, ...], "workflowPlan"?: <workflow plan> }',
+    '- checklist item: { "id": "req_short_slug", "requirement": "One concise requirement.", "acceptanceCriteria": ["Concrete criterion.", "..."] }',
+    '- workflowPlan for workflowSet: { "applyMode"?: "append"|"replaceActive"|"replacePackage", "workflows"?: [{ "workflowId": "wf_slug", "name": "Name", "description"?: "..." }], "runOrderWorkflowIds"?: ["wf_a"] }',
+    '',
+    'Planning rules:',
+    '- If the request is ambiguous, missing a required source column, or needs a user-controlled split/apply choice, return clarify.',
+    '- For large multi-concern requests, return clarify proposing named workflows and run order unless the user has already clearly approved the split and apply mode in this conversation.',
+    '- Treat numbered requests with 5 or more goals/phases, such as "Goal 1" through "Goal 5", as large multi-concern requests.',
+    '- Treat requests that combine 5 or more major phases such as normalize, derive/classify, format/highlight, cleanup/drop, filter, dedupe, and sort as large multi-concern requests.',
+    '- A large multi-concern request should not return a singleWorkflow plan unless the user explicitly says to keep it as one workflow.',
+    '- Split clarification must ask the user to choose append, replace active workflow, or replace package. Do not silently infer that choice.',
+    '- If the user has approved append, replace active, or replace package, return plan with draftKind "workflowSet" and workflowPlan.applyMode set accordingly.',
+    '- If the user explicitly wants one workflow, return plan with draftKind "singleWorkflow".',
+    '- Checklist items must be concrete and verifiable from the final compiled draft.',
+    '- Checklist acceptance criteria must describe required observable outcomes, not preferred implementation primitives.',
+    '- Do not prescribe operators like coalesce, match, replaceRegex, or length unless the user explicitly requested that operator.',
+    '- For exact text length requirements, write outcome criteria such as "Phone has exactly 10 digits" and let implementation choose length(...) or matchesRegex(...).',
+    '- Preserve exact named outputs, derived column names, sort/dedupe keys, filter conditions, cleanup/drop requests, and formatting requirements as checklist items.',
+    '- Do not invent requirements not present in the conversation.',
+    '',
+    ...buildSharedImplementationDocumentation(),
+    '',
+    'Schema currently available:',
+    ...availableSchemaLines,
+    '',
+    'Current workflow/editor issues:',
+    ...currentIssues,
+  ].join('\n');
+}
+
+export function buildChecklistVerificationSystemInstruction(context: AIPromptContext): string {
+  const availableSchemaLines = getAvailableSchemaPromptLines(context);
+
+  return [
+    'You are a strict Scratch My Table implementation reviewer.',
+    'Verify whether the compiled canonical draft satisfies the approved checklist.',
+    'Return JSON only. Do not use markdown fences.',
+    '',
+    'Response contract:',
+    '- { "status": "pass"|"fail", "issues": [<issue>, ...] }',
+    '- issue: { "checklistId": "req_id", "code": "short_code", "message": "Actionable repair instruction." }',
+    '',
+    'Review rules:',
+    '- Return pass only when every checklist item is materially satisfied by the compiled draft.',
+    '- Do not fail for harmless implementation differences.',
+    '- Do fail when a requested derived column, label, filter, formatting rule, drop, dedupe key, sort key/direction, or normalization is missing or contradictory.',
+    '- Messages must tell the repair model exactly what to change.',
+    '- Use checklist IDs exactly as provided.',
+    '',
+    ...buildSharedImplementationDocumentation(),
+    '- Do not fail a checklist item for missing whitespace handling when isEmpty is used.',
+    '- Do not require an alternative implementation when the compiled draft already satisfies the checklist under these semantics.',
+    '',
+    'Schema context:',
+    ...availableSchemaLines,
+  ].join('\n');
+}
+
+export function buildChecklistVerificationUserMessage(input: {
+  userText: string;
+  requirementPlan: Extract<AIRequirementPlanResponse, { mode: 'plan' }>;
+  draft: AIDraft;
+}) {
+  return [
+    'Verify this compiled draft against the approved checklist.',
+    '',
+    'Latest user message:',
+    input.userText,
+    '',
+    'Approved checklist:',
+    JSON.stringify(input.requirementPlan.checklist, null, 2),
+    '',
+    'Workflow plan:',
+    JSON.stringify(input.requirementPlan.workflowPlan ?? null, null, 2),
+    '',
+    'Compiled canonical draft:',
+    JSON.stringify(formatDraftForPrompt(input.draft), null, 2),
+  ].join('\n');
+}
+
 export function buildRepairUserMessage(
   previousRawText: string,
   issues: AIRepairIssueSummary[],
   context: AIPromptContext,
+  requirementPlan?: Extract<AIRequirementPlanResponse, { mode: 'plan' }>,
 ) {
   const availableSchemaLines = getAvailableSchemaPromptLines(context);
 
@@ -761,22 +834,17 @@ export function buildRepairUserMessage(
     'Rewrite the FULL authoring draft so it satisfies these issues.',
     'Return JSON only with the same mode shape as the previous invalid response: draft uses mode/msg/ass/steps; workflowSetDraft uses mode/msg/ass/applyMode/workflows/runOrderWorkflowIds.',
     'Return authoring IR only. Do not return canonical Workflow IR v2, canonical call nodes, or step IDs.',
-    'Use authoring operands only: { "source": "column" }, { "source": "value" }, { "source": "caseValue" }, { "source": "literal" }.',
-    'Use authoring value kinds only: nullary, unary, binary, ternary, nary, match.',
-    'Use authoring boolean kinds only: predicate, compare, between, boolean.',
-    'Use this exact fill-color word map: white=#FFFFFF, green=#C6EFCE, yellow=#FFEB9C, orange=#F4B183, red=#FFC7CE, purple=#D9C2E9, blue=#BDD7EE.',
-    'If the user asks for a named color, emit the mapped hex exactly.',
-    'datePart units are singular: year, month, day, dayOfWeek, hour, minute, second.',
-    'dateDiff/dateAdd units are plural: years, months, days, hours, minutes, seconds. For account age in days, use dateDiff(now(), <signup date>, "days").',
-    'dateDiff(a, b, unit) returns a - b; put now() first and the past date second for elapsed age.',
-    'substring uses zero-based start plus length. atIndex uses a zero-based index.',
-    'replace uses literal exact text; replaceRegex, extractRegex, and matchesRegex use regex pattern strings.',
-    'concat has no separator unless you include a literal separator.',
-    'coalesce is always nary: { "kind": "nary", "op": "coalesce", "items": [a, b, ...] }. Never emit coalesce as kind "unary", "binary", or "ternary".',
-    'coalesce checks null/empty-string, not whitespace-only strings. Use match/isEmpty on trimmed values for whitespace fallback.',
+    ...(requirementPlan
+      ? [
+          'You must satisfy this approved requirement checklist:',
+          JSON.stringify(requirementPlan.checklist, null, 2),
+          ...(requirementPlan.workflowPlan ? ['Approved workflow plan:', JSON.stringify(requirementPlan.workflowPlan, null, 2)] : []),
+        ]
+      : []),
+    ...AI_AUTHORING_IR_DOCUMENTATION_LINES,
+    '',
+    ...buildSharedImplementationDocumentation(),
     'Preserve or add concise comment steps when the implementation has multiple phases.',
-    'Use { "source": "value" } only inside scopedRule conditions and cell patch values.',
-    'Use { "source": "caseValue" } only inside match.cases[*].when and match.cases[*].then.',
     'Check the listed schema columns before drafting. Use only listed schema columns plus columns derived earlier in the workflow.',
     'If a workflow must fill from a fallback column and then normalize the final result, use separate sequential steps. Do not rely on scopedRule.defaultPatch after a matched fallback case.',
     'If the user explicitly names a column like Phone or Email (2), use that exact provided column id.',

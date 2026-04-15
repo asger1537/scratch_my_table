@@ -38,6 +38,7 @@ const DIRECT_UNARY_FUNCTION_NAMES = new Set<WorkflowExpressionFunctionName>([
   'collapseWhitespace',
   'first',
   'last',
+  'length',
   'round',
   'floor',
   'ceil',

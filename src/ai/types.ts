@@ -25,9 +25,13 @@ export interface AIMessage {
 export interface AIProgressEvent {
   stage:
     | 'start'
+    | 'request_plan'
+    | 'response_plan'
     | 'request_initial'
     | 'response_initial'
     | 'validate_initial'
+    | 'request_verify'
+    | 'response_verify'
     | 'repair_requested'
     | 'request_repair'
     | 'response_repair'
@@ -40,7 +44,7 @@ export interface AIProgressEvent {
 }
 
 export interface GeminiClientLogEvent {
-  phase: 'initial' | 'repair';
+  phase: 'plan' | 'initial' | 'repair' | 'verify';
   kind: 'request_started' | 'response_received' | 'response_parsed' | 'request_failed';
   message: string;
   rawText?: string;
@@ -67,16 +71,68 @@ export interface AIDebugRepairAttempt {
   compiledDraft?: CompiledAuthoringDraft;
   compilationIssues: AIDraftIssue[];
   validationIssues: AIDraftIssue[];
+  verificationIssues: AIDraftIssue[];
+}
+
+export interface AIRequirementChecklistItem {
+  id: string;
+  requirement: string;
+  acceptanceCriteria: string[];
+}
+
+export type AIRequirementPlanResponse =
+  | {
+      mode: 'clarify';
+      msg: string;
+      ass: string[];
+    }
+  | {
+      mode: 'plan';
+      msg: string;
+      ass: string[];
+      draftKind: 'singleWorkflow' | 'workflowSet';
+      checklist: AIRequirementChecklistItem[];
+      workflowPlan?: {
+        applyMode?: AuthoringWorkflowSetApplyMode;
+        workflows?: Array<{
+          workflowId: string;
+          name: string;
+          description?: string;
+        }>;
+        runOrderWorkflowIds?: string[];
+      };
+    };
+
+export interface AIChecklistVerificationIssue {
+  checklistId: string;
+  code: string;
+  message: string;
+}
+
+export interface AIChecklistVerificationResponse {
+  status: 'pass' | 'fail';
+  issues: AIChecklistVerificationIssue[];
+}
+
+export interface AIChecklistVerificationAttempt {
+  target: 'initial' | 'repair';
+  attempt?: number;
+  rawText: string;
+  response: AIChecklistVerificationResponse;
+  issues: AIDraftIssue[];
 }
 
 export interface AIDebugTrace {
   outcomeKind: 'clarify' | 'draft' | 'invalidDraft';
   repaired: boolean;
+  requirementPlanRawText?: string;
+  requirementPlan?: AIRequirementPlanResponse;
   initialRawText: string;
   initialResponse: AuthoringDraftResponse;
   initialCompiledDraft?: CompiledAuthoringDraft;
   initialCompilationIssues: AIDraftIssue[];
   initialValidationIssues: AIDraftIssue[];
+  verificationAttempts: AIChecklistVerificationAttempt[];
   repairAttempts: AIDebugRepairAttempt[];
 }
 
@@ -143,6 +199,10 @@ export interface GeminiDraftTurnInput {
   context: AIPromptContext;
   userMessage: AIMessage;
   phase?: 'initial' | 'repair';
+  promptOptions?: {
+    includeCuratedExamples?: boolean;
+    requirementPlan?: Extract<AIRequirementPlanResponse, { mode: 'plan' }>;
+  };
   onLogEvent?: (event: GeminiClientLogEvent) => void;
 }
 
