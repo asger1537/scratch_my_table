@@ -88,7 +88,9 @@ describe('AI workflow copilot helpers', () => {
     expect(planningInstruction).toContain('For large multi-concern requests, return clarify proposing named workflows and run order');
     expect(planningInstruction).toContain('Treat numbered requests with 5 or more goals/phases');
     expect(planningInstruction).toContain('A large multi-concern request should not return a singleWorkflow plan unless the user explicitly says to keep it as one workflow.');
-    expect(planningInstruction).toContain('Split clarification must ask the user to choose append, replace active workflow, or replace package.');
+    expect(planningInstruction).toContain('If there is existing workflow content, split clarification must ask the user to choose append, replace active workflow, or replace package.');
+    expect(planningInstruction).toContain('If there is no existing workflow content, split clarification must only ask whether to create the proposed workflow sequence.');
+    expect(planningInstruction).toContain('Current workflow content state: existing workflow content is present.');
     expect(planningInstruction).toContain('"draftKind": "singleWorkflow"|"workflowSet"');
     expect(planningInstruction).toContain('Checklist acceptance criteria must describe required observable outcomes, not preferred implementation primitives.');
     expect(planningInstruction).toContain('Do not prescribe operators like coalesce, match, replaceRegex, or length unless the user explicitly requested that operator.');
@@ -103,8 +105,10 @@ describe('AI workflow copilot helpers', () => {
     expect(verificationInstruction).toContain(AI_OPERATOR_DOCUMENTATION_LINES[0]);
     expect(verificationInstruction).toContain(AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES[0]);
     expect(verificationInstruction).toContain('In scopedRule, then.value assigns/replaces the target cell value. It is not merely a returned expression.');
+    expect(verificationInstruction).toContain('if no case matches and there is no defaultPatch, the cell is preserved unchanged');
     expect(verificationInstruction).toContain('A later scopedRule targeting the same column sees the value assigned by an earlier scopedRule.');
     expect(verificationInstruction).toContain('isEmpty(...) treats null, empty strings, and whitespace-only strings as empty.');
+    expect(verificationInstruction).toContain('A fallback-only scopedRule such as "if current Email is empty, set it to Email (2)" does not clear non-empty Email cells.');
     expect(verificationInstruction).toContain('a scopedRule that fills Email from Email (2), followed by a scopedRule that trims/lowercases Email, satisfies "fall back, then normalize the final Email"');
     expect(verificationInstruction).toContain('Compiled canonical drafts use call names such as equals, greaterThan, lessThan');
     expect(verificationInstruction).toContain('do not fail it just because it uses canonical call names instead of authoring operator aliases');
@@ -626,6 +630,134 @@ describe('AI workflow copilot helpers', () => {
     expect(outcome.assistantMessage.text).toContain('append');
     expect(outcome.assistantMessage.text).toContain('replace the active workflow');
     expect(outcome.assistantMessage.text).toContain('replace the full workflow package');
+  });
+
+  it('asks only for split approval when there is no existing workflow content', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createRequirementPlanResponse({
+            draftKind: 'workflowSet',
+            workflowPlan: {
+              applyMode: 'replacePackage',
+              workflows: [
+                { workflowId: 'wf_normalize', name: 'Normalize source fields' },
+                { workflowId: 'wf_finalize', name: 'Finalize rows' },
+              ],
+              runOrderWorkflowIds: ['wf_normalize', 'wf_finalize'],
+            },
+          }),
+        ),
+      );
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createEmptyPromptContext(),
+      userText: [
+        'Goal 1: Normalize email.',
+        'Goal 2: Normalize phone.',
+        'Goal 3: Derive contact method.',
+        'Goal 4: Derive customer tier.',
+        'Goal 5: Highlight at-risk rows.',
+      ].join('\n'),
+      validateCandidateWorkflow,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'clarify',
+        assistantMessage: expect.objectContaining({
+          text: expect.stringContaining('"Normalize source fields" -> "Finalize rows"'),
+        }),
+      }),
+    );
+    expect(outcome.assistantMessage.text).toContain('Should I create it as that workflow sequence?');
+    expect(outcome.assistantMessage.text).not.toContain('append');
+    expect(outcome.assistantMessage.text).not.toContain('replace the active workflow');
+    expect(outcome.assistantMessage.text).not.toContain('replace the full workflow package');
+  });
+
+  it('allows split approval without apply-mode choice when there is no existing workflow content', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createRequirementPlanResponse({
+            draftKind: 'workflowSet',
+            workflowPlan: {
+              applyMode: 'replacePackage',
+              workflows: [
+                { workflowId: 'wf_normalize', name: 'Normalize source fields' },
+              ],
+              runOrderWorkflowIds: ['wf_normalize'],
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'workflowSetDraft',
+            msg: 'Create the approved workflow sequence.',
+            ass: [],
+            applyMode: 'replacePackage',
+            workflows: [
+              {
+                workflowId: 'wf_normalize',
+                name: 'Normalize source fields',
+                steps: [
+                  {
+                    type: 'comment',
+                    text: 'Prepare source fields.',
+                  },
+                ],
+              },
+            ],
+            runOrderWorkflowIds: ['wf_normalize'],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
+    const context = createEmptyPromptContext();
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+    const validateCandidateWorkflowSet = vi.fn<(_workflows: Workflow[], _runOrderWorkflowIds: string[]) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: {
+        ...context,
+        messages: [
+          {
+            role: 'assistant',
+            text: 'I recommend splitting this into the workflow sequence "Normalize source fields". Should I create it as that workflow sequence?',
+            timestamp: '2026-04-15T12:48:31.000Z',
+          },
+        ],
+      },
+      userText: 'Yes',
+      validateCandidateWorkflow,
+      validateCandidateWorkflowSet,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(validateCandidateWorkflowSet).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        draft: expect.objectContaining({
+          kind: 'workflowSet',
+          applyMode: 'replacePackage',
+        }),
+      }),
+    );
   });
 
   it('does not treat assistant-proposed apply-mode options as a user apply-mode choice', async () => {
@@ -1942,6 +2074,19 @@ function createPromptContextWithoutPhone(): AIPromptContext {
         },
       },
     },
+  };
+}
+
+function createEmptyPromptContext(): AIPromptContext {
+  const context = createPromptContext();
+
+  return {
+    ...context,
+    workflow: {
+      ...context.workflow,
+      steps: [],
+    },
+    workspacePromptSnapshot: '',
   };
 }
 

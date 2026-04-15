@@ -562,6 +562,7 @@ export function buildGeminiSystemInstruction(
   const workflowSummary = summarizeWorkflowSteps(context.workflow);
   const workflowSteps = context.workflow.steps.length > 0 ? JSON.stringify(stripWorkflowStepIds(context.workflow.steps), null, 2) : '(no steps yet)';
   const draftSummary = context.draft ? JSON.stringify(formatDraftForPrompt(context.draft), null, 2) : '(no draft yet)';
+  const hasWorkflowContent = hasCurrentWorkflowContent(context);
   const currentIssues = context.currentIssues.length > 0
     ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
     : ['- (none)'];
@@ -621,8 +622,11 @@ export function buildGeminiSystemInstruction(
     '',
     'Multi-workflow split behavior:',
     '- If a request is large, has several independent concerns, or has many phases such as normalize, derive/classify, format, cleanup, filter, dedupe, and sort, prefer proposing a workflow split first.',
-    '- When proposing a split, return mode "clarify" and name the proposed workflows, their run order, and ask whether to append them or replace existing workflow(s).',
+    '- When proposing a split, return mode "clarify" and name the proposed workflows and their run order.',
+    '- If there is existing workflow content, ask whether to append them, replace the active workflow, or replace the full workflow package.',
+    '- If there is no existing workflow content, ask only whether to create the proposed workflow sequence. Do not ask append/replace questions.',
     '- If the user clearly approves a split and chooses append, replace active, or replace package, return mode "workflowSetDraft".',
+    '- If there is no existing workflow content and the user approves the split, return mode "workflowSetDraft" with applyMode "replacePackage".',
     '- If the user explicitly asks for one workflow, return mode "draft" even for large requests.',
     '- Workflow-set drafts are validated as one run-order sequence, so later workflows may use columns created by earlier workflows.',
     '',
@@ -691,6 +695,7 @@ export function buildGeminiSystemInstruction(
     '',
     'Current workflow summary:',
     ...workflowSummary.map((line) => `- ${line}`),
+    `Current workflow content state: ${hasWorkflowContent ? 'existing workflow content is present' : 'no existing workflow content'}.`,
     '',
     'Current AI draft workflow steps without IDs:',
     draftSummary,
@@ -729,6 +734,7 @@ export function buildGeminiContents(messages: AIMessage[], userMessage: AIMessag
 
 export function buildRequirementPlanSystemInstruction(context: AIPromptContext): string {
   const availableSchemaLines = getAvailableSchemaPromptLines(context);
+  const hasWorkflowContent = hasCurrentWorkflowContent(context);
   const currentIssues = context.currentIssues.length > 0
     ? context.currentIssues.map((issue) => `- ${issue.code}: ${issue.message}`)
     : ['- (none)'];
@@ -747,12 +753,15 @@ export function buildRequirementPlanSystemInstruction(context: AIPromptContext):
     '',
     'Planning rules:',
     '- If the request is ambiguous, missing a required source column, or needs a user-controlled split/apply choice, return clarify.',
-    '- For large multi-concern requests, return clarify proposing named workflows and run order unless the user has already clearly approved the split and apply mode in this conversation.',
+    '- For large multi-concern requests, return clarify proposing named workflows and run order unless the user has already clearly approved the split.',
     '- Treat numbered requests with 5 or more goals/phases, such as "Goal 1" through "Goal 5", as large multi-concern requests.',
     '- Treat requests that combine 5 or more major phases such as normalize, derive/classify, format/highlight, cleanup/drop, filter, dedupe, and sort as large multi-concern requests.',
     '- A large multi-concern request should not return a singleWorkflow plan unless the user explicitly says to keep it as one workflow.',
-    '- Split clarification must ask the user to choose append, replace active workflow, or replace package. Do not silently infer that choice.',
+    '- Split clarification must name the proposed workflows and their run order.',
+    '- If there is existing workflow content, split clarification must ask the user to choose append, replace active workflow, or replace package. Do not silently infer that choice.',
+    '- If there is no existing workflow content, split clarification must only ask whether to create the proposed workflow sequence. Do not ask append/replace questions.',
     '- If the user has approved append, replace active, or replace package, return plan with draftKind "workflowSet" and workflowPlan.applyMode set accordingly.',
+    '- If there is no existing workflow content and the user has approved the split, return plan with draftKind "workflowSet" and workflowPlan.applyMode "replacePackage".',
     '- If the user explicitly wants one workflow, return plan with draftKind "singleWorkflow".',
     '- Checklist items must be concrete and verifiable from the final compiled draft.',
     '- Checklist acceptance criteria must describe required observable outcomes, not preferred implementation primitives.',
@@ -768,6 +777,8 @@ export function buildRequirementPlanSystemInstruction(context: AIPromptContext):
     '',
     'Current workflow/editor issues:',
     ...currentIssues,
+    '',
+    `Current workflow content state: ${hasWorkflowContent ? 'existing workflow content is present' : 'no existing workflow content'}.`,
   ].join('\n');
 }
 
@@ -890,6 +901,20 @@ function getWorkflowForPromptSchema(context: AIPromptContext) {
   }
 
   return replaceWorkflowSteps(context.workflow, context.draft.steps);
+}
+
+function hasCurrentWorkflowContent(context: AIPromptContext) {
+  if (context.workflow.steps.length > 0) {
+    return true;
+  }
+
+  if (!context.draft) {
+    return false;
+  }
+
+  return context.draft.kind === 'workflowSet'
+    ? context.draft.workflows.some((workflow) => workflow.steps.length > 0)
+    : context.draft.steps.length > 0;
 }
 
 function getAvailableSchemaPromptLines(context: AIPromptContext) {

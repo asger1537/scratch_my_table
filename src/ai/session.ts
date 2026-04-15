@@ -695,8 +695,13 @@ function getForcedWorkflowSplitClarificationMessage(
     ...options.context.messages.filter((message) => message.role === 'user').map((message) => message.text),
     options.userText,
   ].join('\n');
+  const hasWorkflowContent = hasCurrentWorkflowContent(options.context);
 
-  if (requirementPlan.draftKind === 'workflowSet' && !hasExplicitWorkflowSetApplyChoice(userConversationText)) {
+  if (requirementPlan.draftKind === 'workflowSet' && !hasWorkflowContent && !hasExplicitWorkflowSplitApproval(options)) {
+    return buildForcedWorkflowSetSplitClarificationMessage(requirementPlan);
+  }
+
+  if (requirementPlan.draftKind === 'workflowSet' && hasWorkflowContent && !hasExplicitWorkflowSetApplyChoice(userConversationText)) {
     return buildForcedWorkflowSetApplyModeClarificationMessage(requirementPlan);
   }
 
@@ -705,10 +710,24 @@ function getForcedWorkflowSplitClarificationMessage(
     && !hasExplicitSingleWorkflowRequest(userConversationText)
     && (countNumberedGoalHeadings(options.userText) >= 5 || countMajorConcernSignals(options.userText) >= 5)
   ) {
-    return buildForcedWorkflowSplitClarificationMessage();
+    return buildForcedWorkflowSplitClarificationMessage(hasWorkflowContent);
   }
 
   return null;
+}
+
+function hasCurrentWorkflowContent(context: AIPromptContext) {
+  if (context.workflow.steps.length > 0) {
+    return true;
+  }
+
+  if (!context.draft) {
+    return false;
+  }
+
+  return context.draft.kind === 'workflowSet'
+    ? context.draft.workflows.some((workflow) => workflow.steps.length > 0)
+    : context.draft.steps.length > 0;
 }
 
 function hasExplicitSingleWorkflowRequest(userText: string) {
@@ -717,6 +736,21 @@ function hasExplicitSingleWorkflowRequest(userText: string) {
 
 function hasExplicitWorkflowSetApplyChoice(text: string) {
   return /\bappend\b|\badd (?:them|these|the workflows)\b|\breplace\s+(?:the\s+)?active\s+workflow\b|\breplace\s+(?:the\s+)?(?:full\s+)?(?:workflow\s+)?package\b|\breplace\s+all\s+workflows\b/i.test(text);
+}
+
+function hasExplicitWorkflowSplitApproval(options: RunGeminiDraftTurnOptions) {
+  const latestUserText = options.userText.trim();
+
+  if (/\bsplit\s+(?:it|this|that|them)\b|\bcreate\s+(?:the\s+)?(?:workflow\s+)?sequence\b|\bmultiple workflows\b|\bseparate workflows\b/i.test(latestUserText)) {
+    return true;
+  }
+
+  if (!/^(?:yes|yeah|yep|sure|ok|okay|please|go ahead|do it)[.! ]*$/i.test(latestUserText)) {
+    return false;
+  }
+
+  const previousAssistantMessage = [...options.context.messages].reverse().find((message) => message.role === 'assistant');
+  return Boolean(previousAssistantMessage && /\bsplit\b|\bworkflow sequence\b|\bmultiple workflows\b/i.test(previousAssistantMessage.text));
 }
 
 function countNumberedGoalHeadings(userText: string) {
@@ -744,10 +778,21 @@ function countMajorConcernSignals(userText: string) {
   return concerns.filter((pattern) => pattern.test(normalized)).length;
 }
 
-function buildForcedWorkflowSplitClarificationMessage() {
-  return [
+function buildForcedWorkflowSplitClarificationMessage(hasWorkflowContent: boolean) {
+  const splitProposal = [
     'This is a large multi-concern request that is likely cleaner as multiple workflows run in sequence.',
     'I recommend splitting it into workflows such as "Normalize source fields", "Derive classifications", and "Finalize rows", run in that order.',
+  ];
+
+  if (!hasWorkflowContent) {
+    return [
+      ...splitProposal,
+      'Should I create it as that workflow sequence?',
+    ].join(' ');
+  }
+
+  return [
+    ...splitProposal,
     'Should I append those workflows, replace the active workflow, or replace the full workflow package?',
   ].join(' ');
 }
@@ -761,6 +806,18 @@ function buildForcedWorkflowSetApplyModeClarificationMessage(requirementPlan: Ex
   return [
     workflowSummary,
     'Before I generate/apply that workflow set, should I append it, replace the active workflow, or replace the full workflow package?',
+  ].join(' ');
+}
+
+function buildForcedWorkflowSetSplitClarificationMessage(requirementPlan: Extract<AIRequirementPlanResponse, { mode: 'plan' }>) {
+  const workflowNames = requirementPlan.workflowPlan?.workflows?.map((workflow) => workflow.name).filter(Boolean) ?? [];
+  const workflowSummary = workflowNames.length > 0
+    ? `I recommend splitting this into the workflow sequence ${workflowNames.map((name) => `"${name}"`).join(' -> ')}.`
+    : 'I recommend splitting this into a workflow sequence.';
+
+  return [
+    workflowSummary,
+    'Should I create it as that workflow sequence?',
   ].join(' ');
 }
 
