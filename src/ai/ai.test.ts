@@ -79,6 +79,31 @@ describe('AI workflow copilot helpers', () => {
     expect(instruction).not.toContain('alice@example.com');
   });
 
+  it('grounds available AI columns in the workflow input schema, not the current workflow output schema', () => {
+    const context = createPromptContext();
+    const instruction = buildGeminiSystemInstruction({
+      ...context,
+      workflow: {
+        ...context.workflow,
+        steps: [
+          {
+            id: 'step_drop_columns_1',
+            type: 'dropColumns',
+            columnIds: ['col_email_2'],
+          },
+        ],
+      },
+    });
+
+    const schemaStart = instruction.indexOf('Schema currently available to the returned steps:');
+    const schemaEnd = instruction.indexOf('Current workflow/editor issues:');
+    const schemaSection = instruction.slice(schemaStart, schemaEnd);
+
+    expect(schemaSection).toContain('- col_email | Email | string');
+    expect(schemaSection).toContain('- col_email_2 | Email (2) | string');
+    expect(instruction).toContain('dropColumns col_email_2');
+  });
+
   it('builds requirement planning and checklist verification prompts', () => {
     const context = createPromptContext();
     const planningInstruction = buildRequirementPlanSystemInstruction(context);
@@ -88,7 +113,7 @@ describe('AI workflow copilot helpers', () => {
     expect(planningInstruction).toContain('For large multi-concern requests, return clarify proposing named workflows and run order');
     expect(planningInstruction).toContain('Treat numbered requests with 5 or more goals/phases');
     expect(planningInstruction).toContain('A large multi-concern request should not return a singleWorkflow plan unless the user explicitly says to keep it as one workflow.');
-    expect(planningInstruction).toContain('If there is existing workflow content, split clarification must ask the user to choose append, replace active workflow, or replace package.');
+    expect(planningInstruction).toContain('If there is existing workflow content, split clarification must ask the user to choose replace active workflow or replace package.');
     expect(planningInstruction).toContain('If there is no existing workflow content, split clarification must only ask whether to create the proposed workflow sequence.');
     expect(planningInstruction).toContain('Current workflow content state: existing workflow content is present.');
     expect(planningInstruction).toContain('"draftKind": "singleWorkflow"|"workflowSet"');
@@ -423,13 +448,13 @@ describe('AI workflow copilot helpers', () => {
 
     expect(
       parseGeminiAuthoringResponse(
-        '{"mode":"workflowSetDraft","msg":"Split it.","ass":[],"applyMode":"append","workflows":[{"workflowId":"wf_prepare","name":"Prepare","steps":[{"type":"comment","text":"Prepare data."}]}],"runOrderWorkflowIds":["wf_prepare"]}',
+        '{"mode":"workflowSetDraft","msg":"Split it.","ass":[],"applyMode":"replaceActive","workflows":[{"workflowId":"wf_prepare","name":"Prepare","steps":[{"type":"comment","text":"Prepare data."}]}],"runOrderWorkflowIds":["wf_prepare"]}',
       ),
     ).toEqual({
       mode: 'workflowSetDraft',
       msg: 'Split it.',
       ass: [],
-      applyMode: 'append',
+      applyMode: 'replaceActive',
       workflows: [
         {
           workflowId: 'wf_prepare',
@@ -443,6 +468,10 @@ describe('AI workflow copilot helpers', () => {
     expect(() => parseGeminiAuthoringResponse('{"mode":"maybe","msg":"Done.","ass":[],"steps":[]}')).toThrow(
       'Gemini response must include mode "clarify", "draft", or "workflowSetDraft".',
     );
+    expect(() =>
+      parseGeminiAuthoringResponse(
+        '{"mode":"workflowSetDraft","msg":"Split it.","ass":[],"applyMode":"append","workflows":[{"workflowId":"wf_prepare","name":"Prepare","steps":[{"type":"comment","text":"Prepare data."}]}],"runOrderWorkflowIds":["wf_prepare"]}',
+      )).toThrow('Gemini workflowSetDraft responses must include applyMode "replaceActive" or "replacePackage".');
     expect(() => parseGeminiAuthoringResponse('{"mode":"clarify","msg":"   ","ass":[],"steps":[]}')).toThrow(
       'Gemini response must include a non-empty msg string.',
     );
@@ -469,6 +498,45 @@ describe('AI workflow copilot helpers', () => {
     expect(
       parseGeminiRequirementPlanResponse(
         JSON.stringify({
+          plan: JSON.parse(createRequirementPlanResponse()),
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        mode: 'plan',
+        draftKind: 'singleWorkflow',
+        checklist: [
+          expect.objectContaining({
+            id: 'req_implement_request',
+          }),
+        ],
+      }),
+    );
+    expect(
+      parseGeminiRequirementPlanResponse(
+        JSON.stringify({
+          mode: 'plan',
+          msg: 'I will implement the requested workflow.',
+          draftKind: 'singleWorkflow',
+          checklist: [
+            {
+              id: 'req_implement_request',
+              requirement: 'Implement the request.',
+              acceptanceCriteria: ['The workflow satisfies the user request.'],
+            },
+          ],
+        }),
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        mode: 'plan',
+        ass: [],
+        draftKind: 'singleWorkflow',
+      }),
+    );
+    expect(
+      parseGeminiRequirementPlanResponse(
+        JSON.stringify({
           mode: 'clarify',
           msg: 'Should I split this into two workflows?',
           ass: [],
@@ -483,6 +551,10 @@ describe('AI workflow copilot helpers', () => {
       status: 'pass',
       issues: [],
     });
+    expect(parseGeminiChecklistVerificationResponse('{"status":"pass"}')).toEqual({
+      status: 'pass',
+      issues: [],
+    });
     expect(parseGeminiChecklistVerificationResponse(createChecklistFailResponse())).toEqual({
       status: 'fail',
       issues: [
@@ -491,6 +563,9 @@ describe('AI workflow copilot helpers', () => {
         }),
       ],
     });
+    expect(() => parseGeminiChecklistVerificationResponse('{"status":"fail"}')).toThrow(
+      'Gemini checklist verification response must include issues as an object array.',
+    );
   });
 
   it('lets Gemini decide whether to clarify when a named prompt column is absent from the schema', async () => {
@@ -575,12 +650,11 @@ describe('AI workflow copilot helpers', () => {
         }),
       }),
     );
-    expect(outcome.assistantMessage.text).toContain('append');
     expect(outcome.assistantMessage.text).toContain('replace the active workflow');
     expect(outcome.assistantMessage.text).toContain('replace the full workflow package');
   });
 
-  it('forces workflow-set apply-mode clarification when Gemini infers append or replace without user approval', async () => {
+  it('forces workflow-set apply-mode clarification when Gemini infers replace without user approval', async () => {
     const fetchFn = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -631,7 +705,6 @@ describe('AI workflow copilot helpers', () => {
         }),
       }),
     );
-    expect(outcome.assistantMessage.text).toContain('append');
     expect(outcome.assistantMessage.text).toContain('replace the active workflow');
     expect(outcome.assistantMessage.text).toContain('replace the full workflow package');
   });
@@ -797,7 +870,7 @@ describe('AI workflow copilot helpers', () => {
           },
           {
             role: 'assistant',
-            text: 'Should I append it, replace the active workflow, or replace the full workflow package?',
+            text: 'Should I replace the active workflow, or replace the full workflow package?',
             timestamp: '2026-04-15T12:48:31.000Z',
           },
         ],
@@ -813,7 +886,7 @@ describe('AI workflow copilot helpers', () => {
       expect.objectContaining({
         kind: 'clarify',
         assistantMessage: expect.objectContaining({
-          text: expect.stringContaining('append it, replace the active workflow, or replace the full workflow package'),
+          text: expect.stringContaining('replace the active workflow with it, or replace the full workflow package'),
         }),
       }),
     );
@@ -1187,6 +1260,95 @@ describe('AI workflow copilot helpers', () => {
           ],
           repairAttempts: [
             expect.objectContaining({
+              compilationIssues: [],
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it('routes malformed implementation JSON into repair instead of failing the turn', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          createRequirementPlanResponse({
+            draftKind: 'workflowSet',
+            workflowPlan: {
+              applyMode: 'replaceActive',
+              workflows: [{ workflowId: 'wf_prepare_contacts', name: 'Prepare contacts' }],
+              runOrderWorkflowIds: ['wf_prepare_contacts'],
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          '{"mode":"workflowSetDraft","msg":"Broken workflow set.","ass":[],"applyMode":"replaceActive","workflows":[{',
+        ),
+      )
+      .mockResolvedValueOnce(
+        createGeminiResponse(
+          JSON.stringify({
+            mode: 'workflowSetDraft',
+            msg: 'Fixed workflow set.',
+            ass: [],
+            applyMode: 'replaceActive',
+            workflows: [
+              {
+                workflowId: 'wf_prepare_contacts',
+                name: 'Prepare contacts',
+                steps: [
+                  {
+                    type: 'comment',
+                    text: 'Prepare contacts.',
+                  },
+                ],
+              },
+            ],
+            runOrderWorkflowIds: ['wf_prepare_contacts'],
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(createGeminiResponse(createChecklistPassResponse()));
+    const validateCandidateWorkflow = vi.fn<(_workflow: Workflow) => Promise<WorkflowValidationIssue[]>>();
+    const validateCandidateWorkflowSet = vi.fn<(_workflows: Workflow[], _runOrderWorkflowIds: string[]) => Promise<WorkflowValidationIssue[]>>()
+      .mockResolvedValueOnce([]);
+
+    const outcome = await runGeminiDraftTurn({
+      settings: createAISettings(),
+      context: createPromptContext(),
+      userText: 'Split this into contact preparation workflows and replace the active workflow.',
+      validateCandidateWorkflow,
+      validateCandidateWorkflowSet,
+      fetchFn,
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    expect(validateCandidateWorkflow).not.toHaveBeenCalled();
+    expect(validateCandidateWorkflowSet).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual(
+      expect.objectContaining({
+        kind: 'draft',
+        repaired: true,
+        draft: expect.objectContaining({
+          kind: 'workflowSet',
+          applyMode: 'replaceActive',
+        }),
+        debugTrace: expect.objectContaining({
+          initialCompilationIssues: [
+            expect.objectContaining({
+              code: 'authoringInvalidJson',
+            }),
+          ],
+          repairAttempts: [
+            expect.objectContaining({
+              repairPromptIssues: [
+                expect.objectContaining({
+                  code: 'authoringInvalidJson',
+                }),
+              ],
               compilationIssues: [],
             }),
           ],
@@ -1774,7 +1936,7 @@ describe('AI workflow copilot helpers', () => {
               },
             ],
             workflowPlan: {
-              applyMode: 'append',
+              applyMode: 'replaceActive',
               workflows: [
                 { workflowId: 'wf_prepare_contacts', name: 'Prepare contacts' },
                 { workflowId: 'wf_filter_contacts', name: 'Filter contacts' },
@@ -1790,7 +1952,7 @@ describe('AI workflow copilot helpers', () => {
             mode: 'workflowSetDraft',
             msg: 'Split contact cleanup into prepare and filter workflows.',
             ass: [],
-            applyMode: 'append',
+            applyMode: 'replaceActive',
             workflows: [
               {
                 workflowId: 'wf_prepare_contacts',
@@ -1843,7 +2005,7 @@ describe('AI workflow copilot helpers', () => {
     const outcome = await runGeminiDraftTurn({
       settings: createAISettings(),
       context: createPromptContext(),
-      userText: 'Split this into contact preparation and contact filtering workflows, and append them.',
+      userText: 'Split this into contact preparation and contact filtering workflows, and replace the active workflow.',
       validateCandidateWorkflow,
       validateCandidateWorkflowSet,
       fetchFn,
@@ -1878,7 +2040,7 @@ describe('AI workflow copilot helpers', () => {
         kind: 'draft',
         draft: expect.objectContaining({
           kind: 'workflowSet',
-          applyMode: 'append',
+          applyMode: 'replaceActive',
           runOrderWorkflowIds: ['wf_prepare_contacts', 'wf_filter_contacts'],
         }),
       }),
@@ -2188,7 +2350,7 @@ function createRequirementPlanResponse(
       acceptanceCriteria: string[];
     }>;
     workflowPlan: {
-      applyMode: 'append' | 'replaceActive' | 'replacePackage';
+      applyMode: 'replaceActive' | 'replacePackage';
       workflows: Array<{
         workflowId: string;
         name: string;

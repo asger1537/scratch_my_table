@@ -1,7 +1,6 @@
-import { validateWorkflowSemantics, type Workflow } from '../workflow';
-import { flattenWorkflowSequence } from '../workflowPackage';
+import type { Workflow } from '../workflow';
 
-import { replaceWorkflowSteps, stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
+import { stripWorkflowStepIds, summarizeWorkflowSteps } from './draft';
 import {
   AI_AUTHORING_IR_DOCUMENTATION_LINES,
   AI_CANONICAL_RUNTIME_DOCUMENTATION_LINES,
@@ -450,18 +449,18 @@ const CURATED_EXAMPLES = [
     user: 'Normalize contact fields, derive customer tiers, highlight risk, clean up helpers, filter contactable rows, and sort the final output.',
     assistant: {
       mode: 'clarify',
-      msg: 'This is a large multi-part task. I recommend splitting it into workflows named "Contact normalization", "Customer classification", and "Final cleanup and ordering", run in that order. Should I append these workflows or replace the active workflow/package?',
+      msg: 'This is a large multi-part task. I recommend splitting it into workflows named "Contact normalization", "Customer classification", and "Final cleanup and ordering", run in that order. Should I replace the active workflow with that sequence or replace the full workflow package?',
       ass: [],
       steps: [],
     },
   },
   {
-    user: 'Yes, split it and append the workflows.',
+    user: 'Yes, split it and replace the active workflow.',
     assistant: {
       mode: 'workflowSetDraft',
       msg: 'Create a three-workflow sequence for contact cleanup, classification, and final presentation.',
       ass: [],
-      applyMode: 'append',
+      applyMode: 'replaceActive',
       workflows: [
         {
           workflowId: 'wf_contact_normalization',
@@ -613,19 +612,18 @@ export function buildGeminiSystemInstruction(
     '- Never return mode "workflowSetDraft" with empty workflows, empty workflow steps, or empty runOrderWorkflowIds.',
     '',
     'Workflow-set draft shape:',
-    '- { "mode": "workflowSetDraft", "msg": "...", "ass": [], "applyMode": "append"|"replaceActive"|"replacePackage", "workflows": [<workflow draft>, ...], "runOrderWorkflowIds": ["wf_a", "wf_b"] }',
+    '- { "mode": "workflowSetDraft", "msg": "...", "ass": [], "applyMode": "replaceActive"|"replacePackage", "workflows": [<workflow draft>, ...], "runOrderWorkflowIds": ["wf_a", "wf_b"] }',
     '- workflow draft: { "workflowId": "wf_short_slug", "name": "Readable name", "description"?: "...", "steps": [<authoring step>, ...] }',
     '- runOrderWorkflowIds must contain workflow IDs from workflows in execution order.',
-    '- append keeps existing workflows and adds the generated workflows.',
     '- replaceActive replaces the active workflow with the first generated workflow and adds the remaining generated workflows.',
     '- replacePackage replaces the whole workflow package with the generated workflows.',
     '',
     'Multi-workflow split behavior:',
     '- If a request is large, has several independent concerns, or has many phases such as normalize, derive/classify, format, cleanup, filter, dedupe, and sort, prefer proposing a workflow split first.',
     '- When proposing a split, return mode "clarify" and name the proposed workflows and their run order.',
-    '- If there is existing workflow content, ask whether to append them, replace the active workflow, or replace the full workflow package.',
-    '- If there is no existing workflow content, ask only whether to create the proposed workflow sequence. Do not ask append/replace questions.',
-    '- If the user clearly approves a split and chooses append, replace active, or replace package, return mode "workflowSetDraft".',
+    '- If there is existing workflow content, ask whether to replace the active workflow or replace the full workflow package.',
+    '- If there is no existing workflow content, ask only whether to create the proposed workflow sequence. Do not ask replacement-choice questions.',
+    '- If the user clearly approves a split and chooses replace active or replace package, return mode "workflowSetDraft".',
     '- If there is no existing workflow content and the user approves the split, return mode "workflowSetDraft" with applyMode "replacePackage".',
     '- If the user explicitly asks for one workflow, return mode "draft" even for large requests.',
     '- Workflow-set drafts are validated as one run-order sequence, so later workflows may use columns created by earlier workflows.',
@@ -749,7 +747,7 @@ export function buildRequirementPlanSystemInstruction(context: AIPromptContext):
     '- clarify: { "mode": "clarify", "msg": "...", "ass": [] }',
     '- plan: { "mode": "plan", "msg": "...", "ass": [], "draftKind": "singleWorkflow"|"workflowSet", "checklist": [<item>, ...], "workflowPlan"?: <workflow plan> }',
     '- checklist item: { "id": "req_short_slug", "requirement": "One concise requirement.", "acceptanceCriteria": ["Concrete criterion.", "..."] }',
-    '- workflowPlan for workflowSet: { "applyMode"?: "append"|"replaceActive"|"replacePackage", "workflows"?: [{ "workflowId": "wf_slug", "name": "Name", "description"?: "..." }], "runOrderWorkflowIds"?: ["wf_a"] }',
+    '- workflowPlan for workflowSet: { "applyMode"?: "replaceActive"|"replacePackage", "workflows"?: [{ "workflowId": "wf_slug", "name": "Name", "description"?: "..." }], "runOrderWorkflowIds"?: ["wf_a"] }',
     '',
     'Planning rules:',
     '- If the request is ambiguous, missing a required source column, or needs a user-controlled split/apply choice, return clarify.',
@@ -758,9 +756,9 @@ export function buildRequirementPlanSystemInstruction(context: AIPromptContext):
     '- Treat requests that combine 5 or more major phases such as normalize, derive/classify, format/highlight, cleanup/drop, filter, dedupe, and sort as large multi-concern requests.',
     '- A large multi-concern request should not return a singleWorkflow plan unless the user explicitly says to keep it as one workflow.',
     '- Split clarification must name the proposed workflows and their run order.',
-    '- If there is existing workflow content, split clarification must ask the user to choose append, replace active workflow, or replace package. Do not silently infer that choice.',
-    '- If there is no existing workflow content, split clarification must only ask whether to create the proposed workflow sequence. Do not ask append/replace questions.',
-    '- If the user has approved append, replace active, or replace package, return plan with draftKind "workflowSet" and workflowPlan.applyMode set accordingly.',
+    '- If there is existing workflow content, split clarification must ask the user to choose replace active workflow or replace package. Do not silently infer that choice.',
+    '- If there is no existing workflow content, split clarification must only ask whether to create the proposed workflow sequence. Do not ask replacement-choice questions.',
+    '- If the user has approved replace active or replace package, return plan with draftKind "workflowSet" and workflowPlan.applyMode set accordingly.',
     '- If there is no existing workflow content and the user has approved the split, return plan with draftKind "workflowSet" and workflowPlan.applyMode "replacePackage".',
     '- If the user explicitly wants one workflow, return plan with draftKind "singleWorkflow".',
     '- Checklist items must be concrete and verifiable from the final compiled draft.',
@@ -885,22 +883,7 @@ export function buildRepairUserMessage(
 }
 
 function getAvailableSchemaContextWorkflow(context: AIPromptContext) {
-  const workflowForSchema = getWorkflowForPromptSchema(context);
-  const validation = validateWorkflowSemantics(workflowForSchema, context.table);
-
-  return validation.valid ? validation.finalSchema.columns : context.table.schema.columns;
-}
-
-function getWorkflowForPromptSchema(context: AIPromptContext) {
-  if (!context.draft) {
-    return context.workflow;
-  }
-
-  if (context.draft.kind === 'workflowSet') {
-    return flattenWorkflowSequence(context.draft.workflows, context.draft.runOrderWorkflowIds).workflow;
-  }
-
-  return replaceWorkflowSteps(context.workflow, context.draft.steps);
+  return context.table.schema.columns;
 }
 
 function hasCurrentWorkflowContent(context: AIPromptContext) {

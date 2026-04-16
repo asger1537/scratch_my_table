@@ -151,8 +151,8 @@ function compileAuthoringWorkflowSetDraft(
 ): CompileResult<CompiledAuthoringDraft> {
   const issues: AIDraftIssue[] = [];
 
-  if (response.applyMode !== 'append' && response.applyMode !== 'replaceActive' && response.applyMode !== 'replacePackage') {
-    issues.push(makeIssue('authoringInvalidApplyMode', 'Workflow-set drafts require applyMode to be append, replaceActive, or replacePackage.', 'applyMode'));
+  if (response.applyMode !== 'replaceActive' && response.applyMode !== 'replacePackage') {
+    issues.push(makeIssue('authoringInvalidApplyMode', 'Workflow-set drafts require applyMode to be replaceActive or replacePackage.', 'applyMode'));
   }
 
   if (!Array.isArray(response.workflows) || response.workflows.length === 0) {
@@ -694,7 +694,7 @@ function compileValueExpression(
         { allowValue: false, allowCaseValue: false },
         issues,
       );
-      const cases = compileMatchCases(expression.cases, `${path}.cases`, scope, issues);
+      const cases = compileMatchCases(expression.cases, `${path}.cases`, scope, issues, expression.otherwise, `${path}.otherwise`);
 
       return subject && cases
         ? {
@@ -716,6 +716,8 @@ function compileMatchCases(
   path: string,
   outerScope: CompileExpressionScope,
   issues: AIDraftIssue[],
+  topLevelOtherwiseInput?: unknown,
+  topLevelOtherwisePath?: string,
 ): WorkflowMatchCase[] | null {
   if (!Array.isArray(casesInput) || casesInput.length === 0) {
     issues.push(makeIssue('authoringInvalidMatch', 'Match expressions require a non-empty cases array.', path));
@@ -801,6 +803,31 @@ function compileMatchCases(
         break;
     }
   });
+
+  if (topLevelOtherwiseInput !== undefined) {
+    otherwiseCount += 1;
+
+    if (otherwiseCount > 1) {
+      issues.push(makeIssue('authoringInvalidMatch', 'Match expressions may include at most one otherwise case.', topLevelOtherwisePath ?? `${path}.otherwise`));
+    }
+
+    const then = compileValueInput(
+      topLevelOtherwiseInput,
+      topLevelOtherwisePath ?? `${path}.otherwise`,
+      {
+        allowValue: outerScope.allowValue,
+        allowCaseValue: true,
+      },
+      issues,
+    );
+
+    if (then) {
+      compiledCases.push({
+        kind: 'otherwise',
+        then,
+      });
+    }
+  }
 
   return compiledCases;
 }

@@ -119,6 +119,7 @@ export interface AuthoringMatchValueExpression {
   kind: 'match';
   subject: AuthoringValueInput;
   cases: AuthoringMatchCase[];
+  otherwise?: AuthoringValueInput;
 }
 
 export type AuthoringValueExpression =
@@ -279,7 +280,6 @@ export type AuthoringStepInput =
   | AuthoringSortRowsStepInput;
 
 export type AuthoringWorkflowSetApplyMode =
-  | 'append'
   | 'replaceActive'
   | 'replacePackage';
 

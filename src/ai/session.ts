@@ -735,7 +735,7 @@ function hasExplicitSingleWorkflowRequest(userText: string) {
 }
 
 function hasExplicitWorkflowSetApplyChoice(text: string) {
-  return /\bappend\b|\badd (?:them|these|the workflows)\b|\breplace\s+(?:the\s+)?active\s+workflow\b|\breplace\s+(?:the\s+)?(?:full\s+)?(?:workflow\s+)?package\b|\breplace\s+all\s+workflows\b/i.test(text);
+  return /\breplace\s+(?:the\s+)?active\s+workflow\b|\breplace\s+(?:the\s+)?(?:full\s+)?(?:workflow\s+)?package\b|\breplace\s+all\s+workflows\b/i.test(text);
 }
 
 function hasExplicitWorkflowSplitApproval(options: RunGeminiDraftTurnOptions) {
@@ -793,7 +793,7 @@ function buildForcedWorkflowSplitClarificationMessage(hasWorkflowContent: boolea
 
   return [
     ...splitProposal,
-    'Should I append those workflows, replace the active workflow, or replace the full workflow package?',
+    'Should I replace the active workflow with that sequence, or replace the full workflow package?',
   ].join(' ');
 }
 
@@ -805,7 +805,7 @@ function buildForcedWorkflowSetApplyModeClarificationMessage(requirementPlan: Ex
 
   return [
     workflowSummary,
-    'Before I generate/apply that workflow set, should I append it, replace the active workflow, or replace the full workflow package?',
+    'Before I generate/apply that workflow set, should I replace the active workflow with it, or replace the full workflow package?',
   ].join(' ');
 }
 

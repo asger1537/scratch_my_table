@@ -1,5 +1,5 @@
 import { compileAuthoringResponse } from './compileAuthoringDraft';
-import { type AuthoringDraftResponse } from './authoringIr';
+import { type AIDraftIssue, type AuthoringDraftResponse } from './authoringIr';
 import {
   buildChecklistVerificationSystemInstruction,
   buildChecklistVerificationUserMessage,
@@ -192,7 +192,27 @@ export async function generateGeminiDraftTurn(
     emitLogEvent(input, 'response_received', 'Gemini response body received.', {
       rawText,
     });
-    const parsed = parseGeminiAuthoringResponse(rawText);
+    let parsed: AuthoringDraftResponse;
+
+    try {
+      parsed = parseGeminiAuthoringResponse(rawText);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Gemini returned malformed authoring JSON.';
+      const fallbackResponse = createMalformedAuthoringResponse(rawText, input.promptOptions);
+
+      emitLogEvent(input, 'response_parse_failed', errorMessage, {
+        rawText,
+        error: errorMessage,
+        responseMode: fallbackResponse.mode,
+      });
+
+      return {
+        response: fallbackResponse,
+        rawText,
+        compilationIssues: [createAuthoringParseIssue(errorMessage)],
+      };
+    }
+
     emitLogEvent(input, 'response_parsed', `Gemini response parsed in mode "${parsed.mode}".`, {
       rawText,
       responseMode: parsed.mode,
@@ -234,6 +254,50 @@ export async function generateGeminiDraftTurn(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function createMalformedAuthoringResponse(rawText: string, promptOptions: GeminiDraftTurnInput['promptOptions']): AuthoringDraftResponse {
+  const mode = inferMalformedAuthoringMode(rawText, promptOptions);
+
+  if (mode === 'workflowSetDraft') {
+    return {
+      mode,
+      msg: 'Malformed JSON response.',
+      ass: [],
+      applyMode: 'replaceActive',
+      workflows: [],
+      runOrderWorkflowIds: [],
+    };
+  }
+
+  return {
+    mode: 'draft',
+    msg: 'Malformed JSON response.',
+    ass: [],
+    steps: [],
+  };
+}
+
+function inferMalformedAuthoringMode(rawText: string, promptOptions: GeminiDraftTurnInput['promptOptions']) {
+  if (/"mode"\s*:\s*"workflowSetDraft"/.test(rawText)) {
+    return 'workflowSetDraft';
+  }
+
+  if (/"mode"\s*:\s*"draft"/.test(rawText)) {
+    return 'draft';
+  }
+
+  return promptOptions?.requirementPlan?.draftKind === 'workflowSet' ? 'workflowSetDraft' : 'draft';
+}
+
+function createAuthoringParseIssue(message: string): AIDraftIssue {
+  return {
+    code: 'authoringInvalidJson',
+    severity: 'error',
+    phase: 'authoring',
+    path: '$',
+    message: `Gemini returned malformed authoring JSON: ${message}`,
+  };
 }
 
 export async function generateGeminiRequirementPlanTurn(
@@ -476,8 +540,8 @@ export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftRes
     const workflows = parsed.workflows;
     const runOrderWorkflowIds = parsed.runOrderWorkflowIds;
 
-    if (applyMode !== 'append' && applyMode !== 'replaceActive' && applyMode !== 'replacePackage') {
-      throw new Error('Gemini workflowSetDraft responses must include applyMode "append", "replaceActive", or "replacePackage".');
+    if (applyMode !== 'replaceActive' && applyMode !== 'replacePackage') {
+      throw new Error('Gemini workflowSetDraft responses must include applyMode "replaceActive" or "replacePackage".');
     }
 
     if (!Array.isArray(workflows) || workflows.length === 0 || workflows.some((workflow) => !workflow || typeof workflow !== 'object' || Array.isArray(workflow))) {
@@ -517,7 +581,7 @@ export function parseGeminiAuthoringResponse(rawText: string): AuthoringDraftRes
 }
 
 export function parseGeminiRequirementPlanResponse(rawText: string): AIRequirementPlanResponse {
-  const parsed = JSON.parse(stripJsonCodeFence(rawText)) as Record<string, unknown>;
+  const parsed = unwrapRequirementPlanResponse(JSON.parse(stripJsonCodeFence(rawText)));
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('Gemini returned an invalid requirement plan response.');
@@ -525,7 +589,7 @@ export function parseGeminiRequirementPlanResponse(rawText: string): AIRequireme
 
   const mode = parsed.mode;
   const msg = parsed.msg;
-  const ass = parsed.ass;
+  const ass = parsed.ass === undefined ? [] : parsed.ass;
 
   if (mode !== 'clarify' && mode !== 'plan') {
     throw new Error('Gemini requirement plan response must include mode "clarify" or "plan".');
@@ -572,6 +636,22 @@ export function parseGeminiRequirementPlanResponse(rawText: string): AIRequireme
   };
 }
 
+function unwrapRequirementPlanResponse(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (value.mode === 'clarify' || value.mode === 'plan') {
+    return value;
+  }
+
+  return isRecord(value.plan) ? value.plan : value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function parseGeminiChecklistVerificationResponse(rawText: string): AIChecklistVerificationResponse {
   const parsed = JSON.parse(stripJsonCodeFence(rawText)) as Record<string, unknown>;
 
@@ -584,6 +664,13 @@ export function parseGeminiChecklistVerificationResponse(rawText: string): AIChe
 
   if (status !== 'pass' && status !== 'fail') {
     throw new Error('Gemini checklist verification response must include status "pass" or "fail".');
+  }
+
+  if (status === 'pass' && issues === undefined) {
+    return {
+      status,
+      issues: [],
+    };
   }
 
   if (!Array.isArray(issues) || issues.some((issue) => !isChecklistVerificationIssue(issue))) {
@@ -657,7 +744,6 @@ function isWorkflowPlan(value: unknown): value is Extract<AIRequirementPlanRespo
 
   if (
     candidate.applyMode !== undefined
-    && candidate.applyMode !== 'append'
     && candidate.applyMode !== 'replaceActive'
     && candidate.applyMode !== 'replacePackage'
   ) {

@@ -228,23 +228,25 @@ function compareIssues(left: AIDraftIssue, right: AIDraftIssue, structuralOnly: 
 function getIssuePriority(issue: AIDraftIssue, structuralOnly: boolean) {
   if (issue.phase === 'authoring') {
     switch (issue.code) {
-      case 'authoringMissingField':
+      case 'authoringInvalidJson':
         return 0;
-      case 'authoringInvalidContext':
+      case 'authoringMissingField':
         return 1;
-      case 'authoringUnsupportedOp':
+      case 'authoringInvalidContext':
         return 2;
-      case 'authoringInvalidOperandSource':
+      case 'authoringUnsupportedOp':
         return 3;
+      case 'authoringInvalidOperandSource':
+        return 4;
       case 'authoringInvalidMatch':
       case 'authoringInvalidBetween':
-        return 4;
-      case 'authoringEmptyGroup':
         return 5;
-      case 'authoringType':
+      case 'authoringEmptyGroup':
         return 6;
-      default:
+      case 'authoringType':
         return 7;
+      default:
+        return 8;
     }
   }
 

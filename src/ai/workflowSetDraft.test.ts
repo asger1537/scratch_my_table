@@ -6,21 +6,6 @@ import { createWorkflowPackage } from '../workflowPackage';
 import type { Workflow } from '../workflow';
 
 describe('applyWorkflowSetDraftToPackage', () => {
-  it('appends generated workflows and sets run order to the generated sequence', () => {
-    const currentPackage = createWorkflowPackage([createWorkflow('wf_existing', 'Existing workflow')], 'wf_existing', ['wf_existing']);
-    const draft = createWorkflowSetDraft('append');
-
-    const applied = applyWorkflowSetDraftToPackage(currentPackage, 'wf_existing', draft);
-
-    expect(applied.workflowPackage.workflows.map((workflow) => workflow.workflowId)).toEqual([
-      'wf_existing',
-      'wf_prepare',
-      'wf_filter',
-    ]);
-    expect(applied.workflowPackage.runOrderWorkflowIds).toEqual(['wf_prepare', 'wf_filter']);
-    expect(applied.workflowPackage.activeWorkflowId).toBe('wf_prepare');
-  });
-
   it('replaces only the active workflow for replaceActive drafts', () => {
     const currentPackage = createWorkflowPackage(
       [

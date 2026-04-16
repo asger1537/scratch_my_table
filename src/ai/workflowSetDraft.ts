@@ -67,14 +67,7 @@ export function applyWorkflowSetDraftToPackage(
     };
   }
 
-  return {
-    workflowPackage: createWorkflowPackage(
-      [...preservedWorkflows, ...materializedWorkflows],
-      nextActiveWorkflowId,
-      runOrderWorkflowIds,
-    ),
-    workflowIdMap,
-  };
+  throw new Error(`Unsupported workflow-set apply mode '${String(draft.applyMode)}'.`);
 }
 
 function getPreservedWorkflows(
@@ -86,11 +79,7 @@ function getPreservedWorkflows(
     return [];
   }
 
-  if (applyMode === 'replaceActive') {
-    return currentPackage.workflows.filter((workflow) => workflow.workflowId !== activeWorkflowId);
-  }
-
-  return currentPackage.workflows;
+  return currentPackage.workflows.filter((workflow) => workflow.workflowId !== activeWorkflowId);
 }
 
 function getUniqueWorkflowId(existingIds: Set<string>, preferredId: string) {

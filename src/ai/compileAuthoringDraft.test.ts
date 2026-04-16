@@ -9,7 +9,7 @@ describe('compileAuthoringDraft', () => {
       mode: 'workflowSetDraft',
       msg: 'Split into two workflows.',
       ass: [],
-      applyMode: 'append',
+      applyMode: 'replaceActive',
       workflows: [
         {
           workflowId: 'wf_prepare',
@@ -56,7 +56,7 @@ describe('compileAuthoringDraft', () => {
     expect(compiled.issues).toEqual([]);
     expect(compiled.value).toEqual({
       kind: 'workflowSet',
-      applyMode: 'append',
+      applyMode: 'replaceActive',
       workflows: [
         expect.objectContaining({
           workflowId: 'wf_prepare',
@@ -86,7 +86,7 @@ describe('compileAuthoringDraft', () => {
       mode: 'workflowSetDraft',
       msg: 'Bad split.',
       ass: [],
-      applyMode: 'append',
+      applyMode: 'replaceActive',
       workflows: [
         {
           workflowId: 'wf_duplicate',
@@ -365,6 +365,81 @@ describe('compileAuthoringDraft', () => {
     ]);
   });
 
+  it('lowers top-level match otherwise into a canonical otherwise case', () => {
+    const steps: AuthoringStepInput[] = [
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_email_source',
+          displayName: 'Email Source',
+        },
+        derive: {
+          kind: 'match',
+          subject: { source: 'column', columnId: 'col_email' },
+          cases: [
+            {
+              kind: 'when',
+              when: {
+                kind: 'boolean',
+                op: 'not',
+                item: {
+                  kind: 'predicate',
+                  op: 'isEmpty',
+                  input: { source: 'caseValue' },
+                },
+              },
+              then: { source: 'literal', value: 'original' },
+            },
+            {
+              kind: 'when',
+              when: {
+                kind: 'boolean',
+                op: 'not',
+                item: {
+                  kind: 'predicate',
+                  op: 'isEmpty',
+                  input: { source: 'column', columnId: 'col_email_2' },
+                },
+              },
+              then: { source: 'literal', value: 'fallback' },
+            },
+          ],
+          otherwise: { source: 'literal', value: 'empty' },
+        },
+      },
+    ];
+
+    expect(compileAuthoringDraftToWorkflowSteps(steps)).toEqual([
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_email_source',
+          displayName: 'Email Source',
+        },
+        expression: {
+          kind: 'match',
+          subject: column('col_email'),
+          cases: [
+            {
+              kind: 'when',
+              when: call('not', call('isEmpty', caseValue())),
+              then: literal('original'),
+            },
+            {
+              kind: 'when',
+              when: call('not', call('isEmpty', column('col_email_2'))),
+              then: literal('fallback'),
+            },
+            {
+              kind: 'otherwise',
+              then: literal('empty'),
+            },
+          ],
+        },
+      },
+    ]);
+  });
+
   it('rejects value operands outside scopedRule contexts', () => {
     const compiled = compileAuthoringDraft([
       {
@@ -464,6 +539,48 @@ describe('compileAuthoringDraft', () => {
         }),
       ]),
     );
+  });
+
+  it('rejects duplicate top-level and case-list otherwise fallbacks', () => {
+    const compiled = compileAuthoringDraft([
+      {
+        type: 'deriveColumn',
+        newColumn: {
+          columnId: 'col_status_label',
+          displayName: 'Status Label',
+        },
+        derive: {
+          kind: 'match',
+          subject: { source: 'column', columnId: 'col_status' },
+          cases: [
+            {
+              kind: 'when',
+              when: {
+                kind: 'compare',
+                op: 'eq',
+                left: { source: 'caseValue' },
+                right: { source: 'literal', value: 'active' },
+              },
+              then: { source: 'literal', value: 'Active customer' },
+            },
+            {
+              kind: 'otherwise',
+              then: { source: 'literal', value: 'Other' },
+            },
+          ],
+          otherwise: { source: 'literal', value: 'Fallback' },
+        },
+      },
+    ]);
+
+    expect(compiled.value).toBeNull();
+    expect(compiled.issues).toEqual([
+      expect.objectContaining({
+        code: 'authoringInvalidMatch',
+        message: 'Match expressions may include at most one otherwise case.',
+        path: 'steps[0].derive.otherwise',
+      }),
+    ]);
   });
 
   it('rejects empty boolean and n-ary groups', () => {

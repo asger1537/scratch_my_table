@@ -173,8 +173,6 @@ function formatAIDraftSummary(draft: AIDraft) {
 
 function formatWorkflowSetApplyMode(applyMode: Extract<AIDraft, { kind: 'workflowSet' }>['applyMode']) {
   switch (applyMode) {
-    case 'append':
-      return 'append generated workflows';
     case 'replaceActive':
       return 'replace active workflow';
     case 'replacePackage':

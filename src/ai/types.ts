@@ -45,7 +45,7 @@ export interface AIProgressEvent {
 
 export interface GeminiClientLogEvent {
   phase: 'plan' | 'initial' | 'repair' | 'verify';
-  kind: 'request_started' | 'response_received' | 'response_parsed' | 'request_failed';
+  kind: 'request_started' | 'response_received' | 'response_parsed' | 'response_parse_failed' | 'request_failed';
   message: string;
   rawText?: string;
   error?: string;
