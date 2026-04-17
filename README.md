@@ -159,8 +159,4 @@ Scratch My Table sits at the intersection of spreadsheet cleanup, workflow autho
 - it supports reuse through workflow packages and run sequences
 - it combines deterministic execution with optional AI-assisted authoring
 
-## Status
 
-Prototype / active development.
-
-The repository includes runtime docs, validation rules, tests, fixtures, and example workflows that make the current design explicit and reproducible.
