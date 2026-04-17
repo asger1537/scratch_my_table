@@ -121,7 +121,8 @@ The app includes an **Ask AI** flow for natural-language workflow authoring.
 4. Review the generated draft.
 5. Apply it only if it looks right.
 
-This keeps AI suggestions reviewable instead of mutating the live workflow immediately.
+This keeps AI suggestions reviewable instead of mutating the live workflow immediately. 
+**Note**: while the tool currently only supports Gemini, it is straightforward to integrate other LLMs (including proprietary ones) as long they can be used via an API.
 
 ## Project structure
 
