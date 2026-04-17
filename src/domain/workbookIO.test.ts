@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import { describe, expect, it } from 'vitest';
 
 import { exportTableToCsv, importCsvWorkbook } from './csv';
@@ -196,6 +196,30 @@ describe('Milestone 1 normalization and export', () => {
         color: { rgb: 'FF1C1A17' },
       },
     });
+  });
+
+  it('writes XLSX cell fill styles into the exported workbook file', async () => {
+    const workbook = importCsvWorkbook('simple-customers.csv', await readFixture('simple-customers.csv'));
+    const table = getActiveTable(workbook);
+
+    if (!table) {
+      throw new Error('Expected active table for XLSX export style test.');
+    }
+
+    table.rowsById.row_1.cellsByColumnId.col_email = null;
+    table.rowsById.row_1.stylesByColumnId.col_email = { fillColor: '#ffeb9c' };
+
+    const exportedBytes = exportTableToXlsxBytes(table);
+    const exportedWorkbook = XLSX.read(exportedBytes, {
+      type: 'array',
+      cellStyles: true,
+    });
+    const exportedSheet = exportedWorkbook.Sheets[exportedWorkbook.SheetNames[0]];
+
+    expect(exportedSheet.D2?.s).toEqual(expect.objectContaining({
+      patternType: 'solid',
+      fgColor: { rgb: 'FFEB9C' },
+    }));
   });
 });
 

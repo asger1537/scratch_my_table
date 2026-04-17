@@ -970,6 +970,11 @@ code {
   min-width: 0;
 }
 
+.workflow-editor-toolbox-search--inactive {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .workflow-tab-strip {
   display: flex;
   flex-wrap: wrap;

@@ -1454,18 +1454,32 @@ export default function App() {
             <section className="panel-stack" ref={runResultSectionRef}>
               <RunResultPanel
                 executionResult={executionResult}
-                onExportCsv={() => {
-                  handleExportTableCsv(resultTable);
-                }}
-                onExportXlsx={() => {
-                  handleExportTableXlsx(resultTable);
-                }}
                 runContext={lastRunContext}
               />
               {resultTable ? (
                 <PreviewPanel
                   allowFullscreen
                   description={`Showing ${resultPreviewRows.length} of ${resultTable.rowOrder.length} transformed rows.`}
+                  headerControls={
+                    <div className="export-actions export-actions--compact">
+                      <button
+                        onClick={() => {
+                          handleExportTableCsv(resultTable);
+                        }}
+                        type="button"
+                      >
+                        Export CSV
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleExportTableXlsx(resultTable);
+                        }}
+                        type="button"
+                      >
+                        Export XLSX
+                      </button>
+                    </div>
+                  }
                   previewRows={resultPreviewRows}
                   table={resultTable}
                   title="Run result"
@@ -2159,20 +2173,14 @@ function ValidationPanel({
 
 function RunResultPanel({
   executionResult,
-  onExportCsv,
-  onExportXlsx,
   runContext,
 }: {
   executionResult: WorkflowExecutionResult | null;
-  onExportCsv: () => void;
-  onExportXlsx: () => void;
   runContext: RunExecutionContext | null;
 }) {
   if (!executionResult) {
     return null;
   }
-
-  const canExport = Boolean(executionResult && executionResult.validationErrors.length === 0 && executionResult.transformedTable);
 
   return (
     <section className="panel panel--compact">
@@ -2187,16 +2195,6 @@ function RunResultPanel({
               : 'Compact metadata for the latest workflow run.'}
           </p>
         </div>
-        {canExport ? (
-          <div className="export-actions export-actions--compact">
-            <button onClick={onExportCsv} type="button">
-              Export CSV
-            </button>
-            <button onClick={onExportXlsx} type="button">
-              Export XLSX
-            </button>
-          </div>
-        ) : null}
       </div>
       {executionResult.validationErrors.length > 0 ? (
         <div className="empty-panel">Run blocked by validation errors.</div>

@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 import { CellValue, ImportWarning, Table, Workbook, getOrderedRows, getReadableTextColor } from './model';
 import { ImportedCellInput, cellValueToHeaderText, extractDisplayHeaderLine, normalizeImportedWorkbook } from './normalize';
@@ -109,11 +109,7 @@ export function buildWorksheetFromTable(table: Table): XLSX.WorkSheet {
       }
 
       const address = XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex });
-      const cell = sheet[address];
-
-      if (!cell) {
-        return;
-      }
+      const cell = sheet[address] ?? (sheet[address] = { t: 's', v: '' });
 
       const rgb = `FF${fillColor.slice(1).toLocaleUpperCase()}`;
       const textRgb = `FF${getReadableTextColor(fillColor).slice(1).toLocaleUpperCase()}`;

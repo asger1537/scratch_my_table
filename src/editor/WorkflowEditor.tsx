@@ -594,6 +594,7 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
   }
 
   const activeToolboxCategory = getWorkflowToolboxCategory(activeToolboxCategoryId);
+  const activeToolboxCategoryName = activeToolboxCategory?.name ?? 'Blocks';
 
   return (
     <div className={`workflow-editor-shell${isFallbackFullscreen ? ' workflow-editor-shell--fullscreen' : ''}`} ref={shellRef}>
@@ -693,19 +694,23 @@ export const WorkflowEditor = forwardRef<WorkflowEditorHandle, WorkflowEditorPro
         </div>
       </div>
       {workflowTabs ? <div className="workflow-editor-tabs">{workflowTabs}</div> : null}
-      {activeToolboxCategory ? (
-        <div className="workflow-editor-toolbox-search" onMouseDown={handleToolboxSearchPointerDown}>
-          <span className="workflow-editor-toolbox-search__label">{activeToolboxCategory.name}</span>
-          <input
-            className="workflow-editor-toolbox-search__input"
-            onChange={(event) => setToolboxSearchQuery(event.target.value)}
-            onMouseDown={handleToolboxSearchPointerDown}
-            placeholder={`Search ${activeToolboxCategory.name}`}
-            type="search"
-            value={toolboxSearchQuery}
-          />
-        </div>
-      ) : null}
+      <div
+        aria-hidden={activeToolboxCategory ? undefined : true}
+        className={`workflow-editor-toolbox-search${activeToolboxCategory ? '' : ' workflow-editor-toolbox-search--inactive'}`}
+        onMouseDown={activeToolboxCategory ? handleToolboxSearchPointerDown : undefined}
+      >
+        <span className="workflow-editor-toolbox-search__label">{activeToolboxCategoryName}</span>
+        <input
+          className="workflow-editor-toolbox-search__input"
+          disabled={!activeToolboxCategory}
+          onChange={(event) => setToolboxSearchQuery(event.target.value)}
+          onMouseDown={activeToolboxCategory ? handleToolboxSearchPointerDown : undefined}
+          placeholder={`Search ${activeToolboxCategoryName}`}
+          tabIndex={activeToolboxCategory ? undefined : -1}
+          type="search"
+          value={activeToolboxCategory ? toolboxSearchQuery : ''}
+        />
+      </div>
       <div className="workflow-editor-canvas" ref={containerRef} />
       <section className={`workflow-editor-validation${isValidationCollapsed ? ' workflow-editor-validation--collapsed' : ''}`}>
         <h2 className="workflow-editor-validation__heading">
