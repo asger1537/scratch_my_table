@@ -6,7 +6,7 @@ Scratch My Table helps turn one-off spreadsheet cleanup work into repeatable wor
 
 ## Demo
 
-[Watch the demo video](demo.mp4)
+https://github.com/user-attachments/assets/f3c07650-121d-45df-a6bb-98664b039ad0
 
 ## What it does
 
