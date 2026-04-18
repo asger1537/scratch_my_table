@@ -141,16 +141,6 @@ docs/
   example-workflows.md
 ```
 
-## Architecture notes
-
-A few design choices shape the project:
-
-- **One current workflow format:** workflows are lowered into one small canonical language for table operations.
-- **Editor is not the runtime:** Blockly is the authoring UI, not the source of truth.
-- **Validation matters:** workflows are structurally and semantically validated before execution.
-- **Stable references:** workflows refer to canonical `columnId` values instead of transient UI selections.
-- **Modern web build:** this is a standard Vite web app, not a `file://` single-file workflow.
-
 ## Why this project is interesting
 
 Scratch My Table sits at the intersection of spreadsheet cleanup, workflow authoring, and structured execution:
