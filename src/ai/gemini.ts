@@ -33,6 +33,20 @@ interface GeminiGenerateContentResponse {
   };
 }
 
+interface GeminiListModelsResponse {
+  models?: GeminiListedModel[];
+  nextPageToken?: string;
+  error?: {
+    message?: string;
+  };
+}
+
+interface GeminiListedModel {
+  name?: string;
+  displayName?: string;
+  supportedGenerationMethods?: string[];
+}
+
 type GeminiResponseJsonSchema = Record<string, unknown>;
 type GeminiThinkingConfig =
   | {
@@ -64,7 +78,12 @@ class GeminiRequestFailureError extends Error {
 }
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-export const GEMINI_MODEL_OPTIONS = [
+export interface GeminiModelOption {
+  value: string;
+  label: string;
+}
+
+export const GEMINI_MODEL_OPTIONS: GeminiModelOption[] = [
   {
     value: 'gemini-2.5-flash',
     label: 'Gemini 2.5 Flash',
@@ -77,9 +96,9 @@ export const GEMINI_MODEL_OPTIONS = [
     value: 'gemini-3.1-flash-lite-preview',
     label: 'Gemini 3.1 Flash-Lite Preview',
   },
-] as const;
-const GEMINI_MODEL_OPTION_VALUES = new Set<string>(GEMINI_MODEL_OPTIONS.map((option) => option.value));
+];
 const GEMINI_REQUEST_TIMEOUT_MS = 180_000;
+const GEMINI_MODEL_LIST_PAGE_SIZE = 1000;
 export const GEMINI_MAX_OUTPUT_TOKENS = 16_384;
 
 interface BuildGeminiRequestExportOptions {
@@ -254,6 +273,62 @@ export async function generateGeminiDraftTurn(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+export async function fetchGeminiModelOptions(
+  apiKey: string,
+  options: {
+    fetchFn?: typeof fetch;
+    signal?: AbortSignal;
+  } = {},
+): Promise<GeminiModelOption[]> {
+  const trimmedApiKey = apiKey.trim();
+
+  if (trimmedApiKey === '') {
+    return [];
+  }
+
+  const fetchFn = options.fetchFn ?? fetch;
+  const modelOptions: GeminiModelOption[] = [];
+  let pageToken = '';
+
+  do {
+    const url = new URL('https://generativelanguage.googleapis.com/v1beta/models');
+
+    url.searchParams.set('pageSize', String(GEMINI_MODEL_LIST_PAGE_SIZE));
+    url.searchParams.set('key', trimmedApiKey);
+
+    if (pageToken !== '') {
+      url.searchParams.set('pageToken', pageToken);
+    }
+
+    const response = await fetchFn(url.toString(), {
+      method: 'GET',
+      signal: options.signal,
+    });
+    const rawResponseBody = await response.text();
+    const payload = parseGeminiModelListHttpResponseBody(rawResponseBody);
+
+    if (!response.ok) {
+      throw new Error(payload.error?.message ?? `Gemini model list request failed with status ${response.status}.`);
+    }
+
+    if (!Array.isArray(payload.models)) {
+      throw new Error('Gemini model list response did not include a models array.');
+    }
+
+    for (const model of payload.models) {
+      const option = toGeminiModelOption(model);
+
+      if (option) {
+        modelOptions.push(option);
+      }
+    }
+
+    pageToken = typeof payload.nextPageToken === 'string' ? payload.nextPageToken : '';
+  } while (pageToken !== '');
+
+  return dedupeGeminiModelOptions(modelOptions);
 }
 
 function createMalformedAuthoringResponse(rawText: string, promptOptions: GeminiDraftTurnInput['promptOptions']): AuthoringDraftResponse {
@@ -720,6 +795,72 @@ function parseGeminiHttpResponseBody(rawBody: string): GeminiGenerateContentResp
   }
 }
 
+function parseGeminiModelListHttpResponseBody(rawBody: string): GeminiListModelsResponse {
+  try {
+    return JSON.parse(rawBody) as GeminiListModelsResponse;
+  } catch {
+    const compactPreview = rawBody.replace(/\s+/g, ' ').trim().slice(0, 280);
+    throw new Error(
+      compactPreview === ''
+        ? 'Gemini returned an invalid empty model list response body.'
+        : `Gemini returned an invalid JSON model list response body. Preview: ${compactPreview}`,
+    );
+  }
+}
+
+function toGeminiModelOption(model: GeminiListedModel): GeminiModelOption | null {
+  if (!model || typeof model.name !== 'string') {
+    return null;
+  }
+
+  const supportedGenerationMethods = Array.isArray(model.supportedGenerationMethods)
+    ? model.supportedGenerationMethods
+    : [];
+
+  if (!supportedGenerationMethods.includes('generateContent')) {
+    return null;
+  }
+
+  const value = stripGeminiModelPrefix(model.name);
+
+  if (value === '') {
+    return null;
+  }
+
+  return {
+    value,
+    label: typeof model.displayName === 'string' && model.displayName.trim() !== ''
+      ? model.displayName.trim()
+      : formatGeminiModelLabel(value),
+  };
+}
+
+function dedupeGeminiModelOptions(options: GeminiModelOption[]) {
+  const seen = new Set<string>();
+  const deduped: GeminiModelOption[] = [];
+
+  for (const option of options) {
+    if (seen.has(option.value)) {
+      continue;
+    }
+
+    seen.add(option.value);
+    deduped.push(option);
+  }
+
+  return deduped;
+}
+
+export function formatGeminiModelLabel(model: string) {
+  const normalizedModel = normalizeGeminiModel(model);
+
+  return normalizedModel
+    .split('-')
+    .filter((part) => part !== '')
+    .map((part) => (part.length === 1 ? part.toUpperCase() : `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`))
+    .join(' ') || 'Gemini model';
+}
+
 function isRequirementChecklistItem(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
@@ -792,13 +933,16 @@ function buildGeminiUrl(model: string) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${normalizedModel}:generateContent`;
 }
 
+function stripGeminiModelPrefix(model: string) {
+  return model.trim().replace(/^models\//, '');
+}
+
 function normalizeGeminiModel(model: string) {
-  return model.trim().replace(/^models\//, '') || DEFAULT_GEMINI_MODEL;
+  return stripGeminiModelPrefix(model) || DEFAULT_GEMINI_MODEL;
 }
 
 export function normalizeGeminiModelSelection(model: string) {
-  const normalizedModel = normalizeGeminiModel(model);
-  return GEMINI_MODEL_OPTION_VALUES.has(normalizedModel) ? normalizedModel : DEFAULT_GEMINI_MODEL;
+  return normalizeGeminiModel(model);
 }
 
 function buildThinkingConfig(model: string, thinkingEnabled: boolean): GeminiThinkingConfig | undefined {

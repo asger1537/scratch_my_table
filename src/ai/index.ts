@@ -6,6 +6,8 @@ export {
   GEMINI_MAX_OUTPUT_TOKENS,
   GEMINI_MODEL_OPTIONS,
   buildGeminiRequestExport,
+  fetchGeminiModelOptions,
+  formatGeminiModelLabel,
   generateGeminiChecklistVerificationTurn,
   generateGeminiDraftTurn,
   generateGeminiRequirementPlanTurn,
@@ -14,7 +16,7 @@ export {
   parseGeminiChecklistVerificationResponse,
   parseGeminiRequirementPlanResponse,
 } from './gemini';
-export type { GeminiRequestExport } from './gemini';
+export type { GeminiModelOption, GeminiRequestExport } from './gemini';
 export {
   buildGeminiContents,
   buildGeminiSystemInstruction,

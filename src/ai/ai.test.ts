@@ -8,8 +8,10 @@ import {
   buildChecklistVerificationSystemInstruction,
   buildRepairUserMessage,
   buildRequirementPlanSystemInstruction,
+  fetchGeminiModelOptions,
   formatDraftStepsForDebug,
   generateGeminiDraftTurn,
+  normalizeGeminiModelSelection,
   parseGeminiAuthoringResponse,
   parseGeminiChecklistVerificationResponse,
   parseGeminiRequirementPlanResponse,
@@ -224,6 +226,57 @@ describe('AI workflow copilot helpers', () => {
 
     expect(requestExport.requestBody.generationConfig.responseMimeType).toBe('application/json');
     expect(requestExport.requestBody.generationConfig.responseJsonSchema).toEqual(schemaOverride);
+  });
+
+  it('loads Gemini model options that support content generation', async () => {
+    const fetchFn = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        createGeminiModelListResponse({
+          models: [
+            {
+              name: 'models/gemini-2.5-flash',
+              displayName: 'Gemini 2.5 Flash',
+              supportedGenerationMethods: ['generateContent', 'countTokens'],
+            },
+            {
+              name: 'models/gemini-embedding-001',
+              displayName: 'Gemini Embedding',
+              supportedGenerationMethods: ['embedContent'],
+            },
+            {
+              name: 'models/gemini-3.1-flash-lite-preview',
+              displayName: 'Gemini 3.1 Flash-Lite Preview',
+              supportedGenerationMethods: ['generateContent'],
+            },
+          ],
+        }),
+      );
+
+    const options = await fetchGeminiModelOptions('test-key', { fetchFn });
+
+    expect(options).toEqual([
+      {
+        value: 'gemini-2.5-flash',
+        label: 'Gemini 2.5 Flash',
+      },
+      {
+        value: 'gemini-3.1-flash-lite-preview',
+        label: 'Gemini 3.1 Flash-Lite Preview',
+      },
+    ]);
+    expect(fetchFn).toHaveBeenCalledWith(
+      expect.stringContaining('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000'),
+      expect.objectContaining({
+        method: 'GET',
+      }),
+    );
+    expect(fetchFn.mock.calls[0]?.[0]).toContain('key=test-key');
+  });
+
+  it('keeps model names returned by Gemini instead of limiting selection to static defaults', () => {
+    expect(normalizeGeminiModelSelection('models/gemini-4.0-flash-preview')).toBe('gemini-4.0-flash-preview');
+    expect(normalizeGeminiModelSelection('   ')).toBe('gemini-2.5-flash');
   });
 
   it('builds repair prompts for authoring IR', () => {
@@ -2440,6 +2493,15 @@ function createGeminiResponse(text: string): Response {
   return {
     ok: true,
     status: 200,
+    text: async () => JSON.stringify(payload),
+    json: async () => payload,
+  } as Response;
+}
+
+function createGeminiModelListResponse(payload: Record<string, unknown>, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
     text: async () => JSON.stringify(payload),
     json: async () => payload,
   } as Response;

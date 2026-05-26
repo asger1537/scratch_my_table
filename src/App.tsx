@@ -6,7 +6,9 @@ import {
   appendAIDevLog,
   buildDraftPreviewWorkflow,
   buildGeminiRequestExport,
+  fetchGeminiModelOptions,
   formatDraftStepsForDebug,
+  formatGeminiModelLabel,
   mapWorkflowValidationIssueToAIDraftIssue,
   normalizeGeminiModelSelection,
   replaceWorkflowSteps,
@@ -19,6 +21,7 @@ import {
   type AIProgressEvent,
   type AISettings,
   type GeminiClientLogEvent,
+  type GeminiModelOption,
   type GeminiRequestExport,
 } from './ai';
 import {
@@ -67,6 +70,7 @@ const COLLAPSIBLE_PANEL_MAX_HEIGHT_PX = 320;
 const GEMINI_API_KEY_STORAGE_KEY = 'scratch_my_table.gemini_api_key';
 const GEMINI_MODEL_STORAGE_KEY = 'scratch_my_table.gemini_model';
 const GEMINI_THINKING_ENABLED_STORAGE_KEY = 'scratch_my_table.gemini_thinking_enabled';
+const GEMINI_MODEL_FETCH_DEBOUNCE_MS = 500;
 
 type WorkflowImportMode = 'choice' | 'paste' | 'decision';
 
@@ -2284,7 +2288,62 @@ function AIAssistantModal({
   workflowIssueNotice: string | null;
 }) {
   const [isDraftPreviewOpen, setIsDraftPreviewOpen] = useState(false);
+  const [fetchedModelOptions, setFetchedModelOptions] = useState<GeminiModelOption[] | null>(null);
+  const [modelFetchState, setModelFetchState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+  const [modelFetchError, setModelFetchError] = useState<string | null>(null);
   const chatLogRef = useRef<HTMLDivElement | null>(null);
+  const selectedModel = normalizeGeminiModelSelection(aiSettings.model);
+  const modelSelectOptions = useMemo(
+    () => ensureSelectedGeminiModelOption(fetchedModelOptions && fetchedModelOptions.length > 0 ? fetchedModelOptions : GEMINI_MODEL_OPTIONS, selectedModel),
+    [fetchedModelOptions, selectedModel],
+  );
+  const modelFetchMessage = getGeminiModelFetchMessage({
+    hasApiKey: aiSettings.apiKey.trim() !== '',
+    modelFetchState,
+    modelFetchError,
+    loadedModelCount: fetchedModelOptions?.length ?? 0,
+  });
+
+  useEffect(() => {
+    const apiKey = aiSettings.apiKey.trim();
+
+    if (apiKey === '') {
+      setFetchedModelOptions(null);
+      setModelFetchState('idle');
+      setModelFetchError(null);
+      return;
+    }
+
+    const abortController = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      setModelFetchState('loading');
+      setModelFetchError(null);
+
+      void fetchGeminiModelOptions(apiKey, { signal: abortController.signal })
+        .then((options) => {
+          if (abortController.signal.aborted) {
+            return;
+          }
+
+          setFetchedModelOptions(options);
+          setModelFetchState('loaded');
+        })
+        .catch((caughtError) => {
+          if (isAbortError(caughtError) || abortController.signal.aborted) {
+            return;
+          }
+
+          setFetchedModelOptions(null);
+          setModelFetchState('error');
+          setModelFetchError(caughtError instanceof Error ? caughtError.message : 'Failed to load Gemini models.');
+        });
+    }, GEMINI_MODEL_FETCH_DEBOUNCE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      abortController.abort();
+    };
+  }, [aiSettings.apiKey]);
 
   useEffect(() => {
     if (!isDraftPreviewOpen) {
@@ -2354,14 +2413,15 @@ function AIAssistantModal({
                   model: event.target.value,
                 })
               }
-              value={aiSettings.model}
+              value={selectedModel}
             >
-              {GEMINI_MODEL_OPTIONS.map((option) => (
+              {modelSelectOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
               ))}
             </select>
+            {modelFetchMessage ? <small>{modelFetchMessage}</small> : null}
           </label>
           <label className="workflow-meta-field">
             <span>Thinking mode</span>
@@ -2378,7 +2438,7 @@ function AIAssistantModal({
               />
               <div className="ai-assistant-toggle__body">
                 <strong>{aiSettings.thinkingEnabled ? 'Enabled' : 'Disabled'}</strong>
-                <small>{describeAIThinkingMode(aiSettings.model, aiSettings.thinkingEnabled)}</small>
+                <small>{describeAIThinkingMode(selectedModel, aiSettings.thinkingEnabled)}</small>
               </div>
             </div>
           </label>
@@ -2906,6 +2966,52 @@ function readStoredValue(key: string) {
 
 function readStoredBoolean(key: string) {
   return readStoredValue(key) === 'true';
+}
+
+function ensureSelectedGeminiModelOption(options: GeminiModelOption[], selectedModel: string) {
+  if (options.some((option) => option.value === selectedModel)) {
+    return options;
+  }
+
+  return [
+    {
+      value: selectedModel,
+      label: formatGeminiModelLabel(selectedModel),
+    },
+    ...options,
+  ];
+}
+
+function getGeminiModelFetchMessage({
+  hasApiKey,
+  modelFetchState,
+  modelFetchError,
+  loadedModelCount,
+}: {
+  hasApiKey: boolean;
+  modelFetchState: 'idle' | 'loading' | 'loaded' | 'error';
+  modelFetchError: string | null;
+  loadedModelCount: number;
+}) {
+  if (!hasApiKey) {
+    return 'Enter a Gemini API key to load available models.';
+  }
+
+  if (modelFetchState === 'idle') {
+    return 'Model list will load from Gemini.';
+  }
+
+  if (modelFetchState === 'loading') {
+    return 'Loading models from Gemini...';
+  }
+
+  if (modelFetchState === 'error') {
+    return `Could not load Gemini models${modelFetchError ? `: ${modelFetchError}` : ''}. Using fallback options.`;
+  }
+
+  return loadedModelCount > 0
+    ? `${loadedModelCount} Gemini models loaded.`
+    : 'Gemini returned no generative models. Using fallback options.';
 }
 
 function describeAIThinkingMode(model: string, thinkingEnabled: boolean) {

@@ -2,6 +2,6 @@
 setlocal EnableExtensions
 
 cd /d "%~dp0"
-call npm run dev %*
+call corepack pnpm dev %*
 
 exit /b %errorlevel%

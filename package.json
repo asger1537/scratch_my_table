@@ -1,6 +1,7 @@
 {
   "name": "scratch-my-table",
   "private": true,
+  "packageManager": "pnpm@11.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",

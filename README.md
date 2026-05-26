@@ -77,18 +77,24 @@ A representative example is **Customers Messy Cleanup**, which normalizes text, 
 ### Prerequisites
 
 - Node.js 18+
-- npm
+- pnpm, via Corepack or a local pnpm installation
 
 ### Install
 
 ```bash
-npm install
+pnpm install
+```
+
+If `pnpm` is not on your PATH yet, use Corepack directly:
+
+```bash
+corepack pnpm install
 ```
 
 ### Run the app
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Then open the local Vite URL shown in the terminal.
@@ -96,19 +102,19 @@ Then open the local Vite URL shown in the terminal.
 ### Build for production
 
 ```bash
-npm run build
+pnpm build
 ```
 
 ### Preview the production build
 
 ```bash
-npm run preview
+pnpm preview
 ```
 
 ### Run tests
 
 ```bash
-npm test
+pnpm test
 ```
 
 ## Using AI drafting
